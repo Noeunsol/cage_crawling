@@ -1,0 +1,25 @@
+# 튜닝 임계값. 실제 웹/모델 튜닝 지점이므로 코드 상수가 아닌 설정 파일로 분리.
+# ponytail: 실제 수집 데이터로 보정해야 하는 값들. 지금 값은 mock 기준 초기치.
+
+date_range:
+  after: "2026-07-01"
+  before: "2026-07-14"
+
+# Phase 9 품질 필터
+quality:
+  min_body_chars: 300
+  min_korean_ratio: 0.3      # 한글 문자 비율 하한
+  min_quality_score: 0.6
+
+# Phase 10 taxonomy matching confidence 임계값
+matching:
+  auto_save_threshold: 0.8   # 이상 → pass
+  review_threshold: 0.5      # 이상 auto_save 미만 → review, 미만 → fail
+
+# 수집 전략 (키워드-only 한계 보완용 하이브리드). 순서대로 실행 후 frontier에서 dedup.
+# 구현: keyword / semantic / site_sampling. seam(미구현): seed_expansion / trend
+collection:
+  enabled:
+    - keyword
+    - semantic
+    - site_sampling

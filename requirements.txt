@@ -1,0 +1,13 @@
+pyyaml
+
+# MVP2 site parser(DOM/__NEXT_DATA__ 실제 파싱) 구현 시 활성화:
+# beautifulsoup4
+# lxml
+
+# Optional integrations for later phases (설치 대상 아님):
+# serpapi
+# tavily-python
+# exa-py
+# firecrawl-py
+# crawl4ai
+# browser-use

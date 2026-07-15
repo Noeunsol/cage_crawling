@@ -1,0 +1,72 @@
+# 도메인 → site_name / site_type / preferred_extractor 매핑.
+# site_registry.py 가 로드하여 URL 도메인 판별과 ExtractorRouter 분기에 사용.
+# preferred_extractor: site_parser | firecrawl | crawl4ai | browser_use
+sites:
+  naver_kin:
+    domains:
+      - kin.naver.com
+      - m.kin.naver.com
+    site_type: qna
+    preferred_extractor: site_parser   # MockNaverKinExtractor
+
+  dcinside:
+    domains:
+      - dcinside.com
+      - gall.dcinside.com
+    site_type: community
+    preferred_extractor: crawl4ai       # 규칙만, 1차는 firecrawl fallback
+
+  fmkorea:
+    domains:
+      - fmkorea.com
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  nate_pann:
+    domains:
+      - pann.nate.com
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  humoruniv:
+    domains:
+      - humoruniv.com
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  ruliweb:
+    domains:
+      - ruliweb.com
+      - bbs.ruliweb.com
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  clien:
+    domains:
+      - clien.net
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  inven:
+    domains:
+      - inven.co.kr
+    site_type: community
+    preferred_extractor: crawl4ai
+
+  velog:
+    domains:
+      - velog.io
+    site_type: blog
+    preferred_extractor: firecrawl
+
+  tistory:
+    domains:
+      - tistory.com
+    site_type: blog
+    preferred_extractor: firecrawl
+
+  news_generic:
+    domains:
+      - news.naver.com
+    site_type: news
+    preferred_extractor: firecrawl

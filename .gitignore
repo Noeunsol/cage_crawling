@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Crawler 산출물
+data/content.db
+data/exports/*.json
+data/exports/*.csv
+data/raw_html/*
+data/markdown/*
+!data/exports/.gitkeep
+!data/raw_html/.gitkeep
+!data/markdown/.gitkeep

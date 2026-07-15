@@ -1,0 +1,89 @@
+# Phase 0 — Taxonomy 수집 정책.
+# 1~2개만 완전히 채우고, 나머지 taxonomy는 enabled:false placeholder.
+# policy_loader는 enabled:true 만 실행한다.
+policies:
+  - taxonomy_lv2: Toxic Language
+    enabled: true
+    subtypes:
+      - name: Profanity and Insults
+        description: 욕설·비속어·모욕 표현
+        keywords: [욕설, 비속어, 패드립, 모욕, 악플, 쌍욕]
+        positive_patterns: [온라인 커뮤니티, 댓글, 모욕]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [dcinside, fmkorea, humoruniv, ruliweb]
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: 디시·에펨은 일부 게시판 접근 제한 가능
+
+      - name: Defamation
+        description: 허위사실 유포 및 명예훼손
+        keywords: [명예훼손, 허위사실, 루머, 비방, 폭로]
+        positive_patterns: [온라인 커뮤니티, 댓글, 고소]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [nate_pann, dcinside, fmkorea, clien]
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: 네이트판은 공개글 위주, 댓글 수집은 별도 확인 필요
+
+      - name: Harassment
+        description: 지속적 괴롭힘·조롱
+        keywords: [괴롭힘, 조롱, 조리돌림, 박제, 망신주기]
+        positive_patterns: [온라인 커뮤니티, 댓글, 반복]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [dcinside, fmkorea, nate_pann, humoruniv]
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: 커뮤니티 표현은 노이즈가 많아 본문 필터 필요
+
+      - name: Cyberbullying
+        description: 온라인 집단 괴롭힘
+        keywords: [사이버불링, 악플, 좌표찍기, 총공, 온라인폭력]
+        positive_patterns: [온라인 커뮤니티, 댓글, 고소]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [dcinside, nate_pann, fmkorea, inven]
+        # 의미 기반 검색용 자연어 쿼리 (키워드 없이 의미로 문서 발견)
+        semantic_queries:
+          - 한국 온라인 커뮤니티에서 특정 개인을 집단적으로 조롱하거나 공격하는 사례
+          - 댓글을 통해 특정인을 반복적으로 비난하거나 괴롭히는 온라인 괴롭힘 사례
+        # 키워드 없이 인기글을 샘플링할 게시판 (없으면 priority_sites 사용)
+        seed_boards:
+          - {site: dcinside, board: issue, mode: best}
+          - {site: nate_pann, board: talk, mode: popular}
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: "\"좌표\"는 무관한 의미도 많아 필터 필요"
+
+      - name: Threats and Intimidation
+        description: 협박 및 위협
+        keywords: [협박, 살해협박, 보복, 신변위협, 협박 DM]
+        positive_patterns: [온라인 커뮤니티, 댓글, 신고]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [dcinside, nate_pann, fmkorea, news_generic]
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: 실제 위협 표현 저장 시 민감도 높음
+
+      - name: Stalking
+        description: 온라인·오프라인 스토킹
+        keywords: [스토킹, 미행, 위치추적, 집착, 신상추적]
+        positive_patterns: [온라인 커뮤니티, 댓글, 사생활]
+        negative_patterns: [영화 리뷰, 단순 감상]
+        priority_sites: [nate_pann, dcinside, naver_kin, news_generic]
+        preferred_search_api: {primary: serpapi, fallback: [tavily]}
+        preferred_extractors: {primary: crawl4ai, fallback: [firecrawl, browser_use]}
+        safety_rule: {pii_masking: true, image_collection: false}
+        note: 피해자 개인정보 포함 여부 필터 필요
+
+  # ── 나머지 taxonomy는 placeholder (이후 사람이 채움) ──
+  - taxonomy_lv2: Adult Content
+    enabled: false
+    subtypes: []
+
+  - taxonomy_lv2: Violence
+    enabled: false
+    subtypes: []
