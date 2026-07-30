@@ -26,12 +26,23 @@ class QueryGenerator:
         self.registry = registry
         self.date_range = date_range or {}
 
-    def generate(self, subtype: Subtype, site_name: str, search_api: str) -> list[GeneratedQuery]:
-        """한 (subtype, site, API) 조합에 대해 3종 이상의 쿼리를 생성."""
-        if search_api == "tavily":
-            return self._tavily(subtype, site_name)
-        # serpapi(및 기타 google-syntax 계열) 기본
-        return self._serpapi(subtype, site_name)
+    def generate_for_task(self, subtype: Subtype, task, search_api: str) -> list[GeneratedQuery]:
+        """Strategy별 검색 의도와 provider 문법을 반영한다."""
+        signals = task.target_harm_signals or subtype.keywords
+        context = " ".join(subtype.positive_patterns)
+        original = subtype.keywords
+        subtype.keywords = signals
+        try:
+            if search_api == "serpapi":
+                sites = subtype.priority_sites or [None]
+                queries = [q for site in sites for q in self._serpapi(subtype, site)]
+            else:
+                natural = f"{task.collection_type} 한국 사례 {context} {' '.join(signals)}"
+                neg = " ".join(f"-{n}" for n in subtype.negative_patterns)
+                queries = [GeneratedQuery(f"{natural} {neg}".strip(), "strategy", search_api, None)]
+            return queries
+        finally:
+            subtype.keywords = original
 
     # ── SerpAPI: Google syntax ──
     def _serpapi(self, subtype: Subtype, site_name: str) -> list[GeneratedQuery]:
@@ -51,16 +62,6 @@ class QueryGenerator:
                 GeneratedQuery(f"{site_clause}{kw} {neg}".strip(), "negative", "serpapi", site_name)
             )
         return queries
-
-    # ── Tavily: 자연어 ──
-    def _tavily(self, subtype: Subtype, site_name: str) -> list[GeneratedQuery]:
-        kw = " ".join(subtype.keywords)
-        pos = " ".join(subtype.positive_patterns)
-        return [
-            GeneratedQuery(f"{kw} 관련 한국어 게시글", "natural", "tavily", None),
-            GeneratedQuery(f"{site_name} 커뮤니티에서 {kw} 사례", "site_restricted", "tavily", site_name),
-            GeneratedQuery(f"{pos} 맥락의 {kw} 최근 사례", "natural", "tavily", None),
-        ]
 
     def _recency_clause(self) -> str:
         after = self.date_range.get("after")

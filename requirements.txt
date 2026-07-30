@@ -1,13 +1,19 @@
 pyyaml
+serpapi
+requests
+beautifulsoup4
+lxml
+trafilatura
+streamlit
+pillow
 
-# MVP2 site parser(DOM/__NEXT_DATA__ 실제 파싱) 구현 시 활성화:
-# beautifulsoup4
-# lxml
+# gated seam (활성화 시 설치):
+# playwright        # JS 렌더 rung (playwright install --with-deps chromium 필요) → trafilatura로 추출
+# firecrawl-py      # 최후 수단(유료)
+# anthropic         # matching.llm.enabled 시 Claude Haiku 분류
 
-# Optional integrations for later phases (설치 대상 아님):
-# serpapi
+# 미채택:
 # tavily-python
 # exa-py
-# firecrawl-py
-# crawl4ai
+# crawl4ai          # Playwright+trafilatura와 중복이라 제외 (렌더+자체추출 번들)
 # browser-use

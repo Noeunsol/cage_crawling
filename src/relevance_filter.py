@@ -1,0 +1,213 @@
+"""Fast, rule-based relevance gate. It never assigns taxonomy labels.
+
+출력은 keep / discard 2-way다. keep은 LLM으로 넘기고, discard는 원문을 버린다.
+is_taxonomy_relevant는 "명확한 위험신호로 keep"인지(True), "애매해서 keep"(pii/이미지/댓글의존, False)인지 구분한다.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from urllib.parse import urlparse
+
+
+RISK_SIGNAL_KEYWORDS = {
+    "toxic_language": ["병신", "꺼져", "미친", "지랄", "개새", "쓰레기", "극혐", "비하", "조롱"],
+    "hate": ["한녀", "한남", "맘충", "틀딱", "짱깨", "조센", "전라도", "장애인 비하", "외노자", "페미충", "성별 집단"],
+    "harassment": ["근황", "저격", "박제", "사과문", "좌표", "털자", "조리돌림"],
+    "rumor_or_misinformation": ["카더라", "찌라시", "폭로", "논란", "실체", "밝혀짐", "조작", "선동"],
+    "privacy": ["신상", "실명", "주소", "전화번호", "계정", "인스타", "학교", "직장", "얼굴"],
+    "self_harm": ["자살", "자해", "극단적 선택", "극단선택", "죽고 싶", "죽고싶", "목숨 끊"],
+    "sexual": ["성희롱", "성매매", "몰카", "야짤", "몸캠", "성추행", "자궁"],
+    "violence": ["죽여", "패야", "테러", "응징", "폭행", "칼부림", "살해"],
+    "illegal_activity": ["사기", "해킹", "마약", "불법", "매크로", "우회", "대포통장", "도박"],
+    "cybersecurity": ["취약점", "익스플로잇", "악성코드", "랜섬웨어", "디도스", "ddos"],
+}
+
+# gate 위험신호 → 공식 taxonomy_lv2. risk_score/secondary_flags가 이 어휘를 그대로 쓴다.
+RELEVANCE_SIGNAL_TO_LV2 = {
+    "self_harm": "1_C_Self_Harm",
+    "sexual": "1_B_Sexual_Content",
+    "violence": "5_M_Violence_and_Extremism",
+    "illegal_activity": "5_L_Illegal_Activity",
+    "privacy": "4_I_Privacy_Infringement",
+    "cybersecurity": "6_P_Cybersecurity",
+    "hate": "2_F_Bias_and_Hate",
+    "rumor_or_misinformation": "3_G_Misinformation_and_Disinformation",
+    "toxic_language": "1_A_Toxic_Language",
+    "harassment": "1_A_Toxic_Language",
+}
+
+# 위험도 등급(1~5 스코어링용). gate 어휘와 정확히 일치해야 한다.
+SEVERITY_5 = {"self_harm", "violence", "illegal_activity", "privacy", "sexual"}
+SEVERITY_4 = {"hate", "rumor_or_misinformation", "cybersecurity"}
+SEVERITY_3 = {"toxic_language", "harassment"}
+
+NEGATIVE_CONTEXT_KEYWORDS = {
+    "prevention_policy": [
+        "예방", "대책", "점검", "보완", "정책", "정부", "관계부처", "상담", "지원",
+        "캠페인", "교육", "신고센터", "피해자 지원", "단속", "처벌 강화", "보호", "안전관리",
+    ],
+    "news_neutral_report": [
+        "기자", "보도", "발표", "회의", "국무회의", "브리핑", "관계자는", "당부했다",
+        "밝혔다", "설명했다",
+    ],
+}
+
+_DIRECT_RISK_TERMS = [
+    "죽고 싶", "죽고싶", "자살 방법", "자살방법", "동반자살", "목숨 끊", "유서",
+    "죽여", "살해하", "털자", "공개하자", "공유하자",
+]
+_TREND_TERMS = [
+    "논란", "갈등", "범죄", "사건", "사고", "폭염", "정책", "젠더", "기업", "연예",
+    "정치", "경제", "ai", "보안", "해킹", "개인정보", "불매", "사과", "의혹",
+]
+_CONTROVERSY_TERMS = ["논란", "근황", "사과문", "실베", "난리", "폭로", "저격", "반응", "불매", "해명", "사건"]
+_AD_TERMS = ["광고 문의", "협찬", "프로모션", "쿠팡 파트너스", "구매 링크", "특가 판매"]
+_URL_ONLY = re.compile(r"^(?:\s*https?://\S+\s*)+$", re.I)
+_PII = re.compile(r"(?:01[016789][-\s]?\d{3,4}[-\s]?\d{4})|(?:[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})")
+_MEDIA_EXTENSIONS = (".mp4", ".webm", ".mov", ".avi", ".mkv", ".m3u8")
+_VIDEO_HOSTS = {
+    "youtube.com", "youtu.be", "youtube-nocookie.com", "tv.naver.com",
+    "vimeo.com", "twitch.tv",
+}
+
+
+def is_textless_media_url(url: str) -> bool:
+    """텍스트 추출 대상이 아닌 동영상 URL인지 저비용으로 판정한다."""
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower().removeprefix("www.")
+    return (
+        any(host == domain or host.endswith(f".{domain}") for domain in _VIDEO_HOSTS)
+        or parsed.path.lower().endswith(_MEDIA_EXTENSIONS)
+    )
+
+
+@dataclass
+class RelevanceResult:
+    is_taxonomy_relevant: bool
+    is_trend_seed: bool
+    filter_action: str            # keep | discard
+    filter_reason: str
+    risk_signals: list[str] = field(default_factory=list)
+    matched_keywords: list[str] = field(default_factory=list)
+    negative_contexts: list[str] = field(default_factory=list)
+    needs_comment_fallback: bool = False
+
+
+def build_fast_filter_text(record) -> str:
+    body = getattr(record, "masked_text", "") or getattr(record, "body_text", "") or ""
+    limit = 800 if getattr(record, "source_type", "") == "news" else 1000
+    return "\n".join(filter(None, [
+        getattr(record, "title", "") or "",
+        getattr(record, "summary", "") or "",
+        body[:limit],
+        f"source={getattr(record, 'source', '')} source_type={getattr(record, 'source_type', '')} "
+        f"board={getattr(record, 'board_name', '')} category={getattr(record, 'category_name', '')}",
+    ])).lower()
+
+
+def detect_risk_signals(text: str) -> tuple[list[str], list[str]]:
+    found = {
+        signal: [keyword for keyword in keywords if keyword.lower() in text]
+        for signal, keywords in RISK_SIGNAL_KEYWORDS.items()
+    }
+    found = {signal: keywords for signal, keywords in found.items() if keywords}
+    return list(found), list(dict.fromkeys(k for keywords in found.values() for k in keywords))
+
+
+def detect_negative_context(text: str) -> list[str]:
+    return [
+        context for context, keywords in NEGATIVE_CONTEXT_KEYWORDS.items()
+        if any(keyword.lower() in text for keyword in keywords)
+    ]
+
+
+def decide_filter_action(record) -> RelevanceResult:
+    text = build_fast_filter_text(record)
+    body = (getattr(record, "masked_text", "") or getattr(record, "body_text", "") or "").strip()
+    title = (getattr(record, "title", "") or "").strip()
+    source_type = getattr(record, "source_type", "")
+
+    if not body and any(term in title for term in ("사진", "이미지", "짤", "움짤")):
+        return _result("keep", "image_only_needs_ocr")          # 이미지 의존 → OCR 후 LLM 판단
+    if _URL_ONLY.fullmatch(body):
+        return _result("discard", "link_only")
+    if len(f"{title}{body}".strip()) < 20:
+        return _result("discard", "too_short")
+    if any(term in text for term in _AD_TERMS):
+        return _result("discard", "advertisement")
+
+    signals, matched = detect_risk_signals(text)
+    negatives = detect_negative_context(text)
+    if getattr(record, "pii_detected", False) or _PII.search(text):
+        return _result("keep", "pii_possible", signals, matched, negatives)   # PII는 LLM/검수로
+
+    if not signals:
+        if source_type == "news" and any(term in text for term in _TREND_TERMS):
+            return _result("discard", "news_trend_seed", seed=True)
+        return _result("discard", "no_risk_signal")
+
+    prevention_hits = sum(
+        keyword.lower() in text for keyword in NEGATIVE_CONTEXT_KEYWORDS["prevention_policy"]
+    )
+    # One generic word such as "정부" must not suppress a real risk signal.
+    safe_context = prevention_hits >= 2 and not any(term in text for term in _DIRECT_RISK_TERMS)
+    if safe_context:
+        return _result(
+            "discard", "risk_keyword_but_policy_or_prevention_context",
+            signals, matched, negatives, seed=source_type == "news",
+        )
+
+    weak_signals = set(signals) <= {"harassment", "rumor_or_misinformation"}
+    fallback = weak_signals and (
+        source_type == "community"
+        and (getattr(record, "comment_count", 0) or 0) >= 50
+        and any(term in text for term in _CONTROVERSY_TERMS)
+        and len(body) < 100
+    )
+    if fallback:
+        return _result("keep", "needs_comment_fallback", signals, matched, negatives, fallback=True)
+    return _result("keep", "risk_signal_detected", signals, matched, negatives, relevant=True)
+
+
+def decide_candidate_action(candidate) -> RelevanceResult:
+    """Title/summary/meta gate used before any article or comment request."""
+    if is_textless_media_url(getattr(candidate, "source_url", "")):
+        return _result("discard", "video_without_text")
+    meta = getattr(candidate, "meta", {}) or {}
+    if not (getattr(candidate, "title", "") or "").strip():
+        return _result("keep", "missing_title_needs_body")
+    record = SimpleNamespace(
+        title=getattr(candidate, "title", "") or "",
+        summary=getattr(candidate, "snippet", "") or "",
+        body_text="",
+        masked_text="",
+        source=meta.get("source", ""),
+        source_type=meta.get("source_type", getattr(candidate, "site_type", "")),
+        board_name=meta.get("board_name", ""),
+        category_name=meta.get("category_name", ""),
+        comment_count=meta.get("comment_count"),
+        pii_detected=False,
+    )
+    result = decide_filter_action(record)
+    # Community titles are often vague; high-signal metadata must reach body extraction.
+    if record.source_type == "community" and result.filter_action == "discard":
+        bucket = meta.get("bucket", "")
+        if meta.get("is_trending") or (meta.get("comment_count") or 0) >= 20 or bucket == "high_risk_board":
+            return _result("keep", "community_metadata_needs_body")
+    return result
+
+
+def _result(action, reason, signals=None, matched=None, negatives=None,
+            fallback=False, seed=False, relevant=False):
+    return RelevanceResult(
+        is_taxonomy_relevant=relevant,
+        is_trend_seed=seed,
+        filter_action=action,          # keep | discard
+        filter_reason=reason,
+        risk_signals=signals or [],
+        matched_keywords=matched or [],
+        negative_contexts=negatives or [],
+        needs_comment_fallback=fallback,
+    )

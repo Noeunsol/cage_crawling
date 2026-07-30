@@ -7,37 +7,50 @@ from typing import Any
 import yaml
 
 
+# 유해 표현은 보존, PII/credential만 마스킹 (설계서 §12)
+_DEFAULT_PRESERVATION = {
+    "preserve_harmful_expression": True,
+    "mask_pii": True,
+    "restrict_actionable_detail": False,
+    "mask_credentials": True,
+}
+# pass 저장 임계 (설계서 §13). review 기준은 pipeline 상수로 고정.
+_DEFAULT_THRESHOLDS = {
+    "min_taxonomy_fit_score": 0.75,
+    "min_harmfulness_score": 0.65,
+    "min_seed_source_value_score": 0.60,
+}
+
+
 @dataclass
 class Subtype:
     name: str
     description: str = ""
+    collection_type: str = "raw_expression"   # raw_expression|qa_consulting|news_case|technical_security
+    primary_methods: list[str] = None          # discovery 방식 (없으면 collection_type 기본값)
+    preferred_extractors: list[str] = None     # 추출기 우선순위 [ext, ...]
     keywords: list[str] = None
     positive_patterns: list[str] = None
     negative_patterns: list[str] = None
     priority_sites: list[str] = None
-    semantic_queries: list[str] = None      # 의미 기반 검색용 자연어 쿼리
-    seed_boards: list[dict] = None          # 사이트/게시판 샘플링용 [{site, board, mode}]
-    preferred_search_api: dict = None       # {primary, fallback:[...]}
-    preferred_extractors: dict = None       # {primary, fallback:[...]}
-    safety_rule: dict = None                # {pii_masking, image_collection}
+    filter_mode: str = None                     # minimal|balanced|strict (mode_by_taxonomy override)
+    target_harm_signals: list[str] = None
+    preservation_policy: dict = None            # {preserve_harmful_expression, mask_pii, restrict_actionable_detail, mask_credentials}
+    thresholds: dict = None                     # {min_taxonomy_fit_score, min_harmfulness_score, min_seed_source_value_score}
+    max_pii_risk: float = 1.0
+    seed_urls: list[str] = None                 # rss/sitemap/seed_url 방식용
 
     def __post_init__(self):
-        # None 리스트/딕트를 빈 값으로 정규화
+        self.primary_methods = self.primary_methods or []
+        self.preferred_extractors = self.preferred_extractors or []
         self.keywords = self.keywords or []
         self.positive_patterns = self.positive_patterns or []
         self.negative_patterns = self.negative_patterns or []
         self.priority_sites = self.priority_sites or []
-        self.semantic_queries = self.semantic_queries or []
-        self.seed_boards = self.seed_boards or []
-        self.preferred_search_api = self.preferred_search_api or {"primary": "serpapi", "fallback": []}
-        self.preferred_extractors = self.preferred_extractors or {"primary": "firecrawl", "fallback": []}
-        self.safety_rule = self.safety_rule or {"pii_masking": True, "image_collection": False}
-
-    @property
-    def search_apis(self) -> list[str]:
-        """primary + fallback 순서의 검색 API 리스트."""
-        api = self.preferred_search_api
-        return [api["primary"], *api.get("fallback", [])]
+        self.target_harm_signals = self.target_harm_signals or self.keywords.copy()
+        self.preservation_policy = {**_DEFAULT_PRESERVATION, **(self.preservation_policy or {})}
+        self.thresholds = {**_DEFAULT_THRESHOLDS, **(self.thresholds or {})}
+        self.seed_urls = self.seed_urls or []
 
 
 @dataclass
@@ -54,16 +67,24 @@ def load_policies(path: str) -> list[Policy]:
     for p in data.get("policies", []):
         if not p.get("enabled", False):
             continue
-        subtypes = [Subtype(**_subtype_kwargs(s)) for s in p.get("subtypes", [])]
-        policies.append(Policy(taxonomy_lv2=p["taxonomy_lv2"], subtypes=subtypes))
+        inherited = {k: p[k] for k in _INHERITED if k in p}
+        subtypes = [Subtype(**_subtype_kwargs({**inherited, **s})) for s in p.get("subtypes", [])]
+        policies.append(Policy(p["taxonomy_lv2"], subtypes))
     return policies
+
+
+_ALLOWED = {
+    "name", "description", "collection_type", "primary_methods", "preferred_extractors",
+    "keywords", "positive_patterns", "negative_patterns", "priority_sites", "filter_mode",
+    "target_harm_signals", "preservation_policy", "thresholds", "max_pii_risk", "seed_urls",
+}
+# taxonomy 레벨에 두면 하위 subtype 전체가 상속 (subtype에서 override 가능)
+_INHERITED = {
+    "collection_type", "primary_methods", "preferred_extractors", "filter_mode",
+    "target_harm_signals", "preservation_policy", "thresholds", "max_pii_risk", "seed_urls",
+}
 
 
 def _subtype_kwargs(s: dict) -> dict:
     """YAML dict에서 Subtype 필드만 추린다 (알 수 없는 키 무시)."""
-    allowed = {
-        "name", "description", "keywords", "positive_patterns", "negative_patterns",
-        "priority_sites", "semantic_queries", "seed_boards",
-        "preferred_search_api", "preferred_extractors", "safety_rule",
-    }
-    return {k: v for k, v in s.items() if k in allowed}
+    return {k: v for k, v in s.items() if k in _ALLOWED}

@@ -8,7 +8,11 @@ from . import pipeline
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Taxonomy 기반 한국 웹 크롤러 (mock end-to-end skeleton)")
+    p = argparse.ArgumentParser(description="Taxonomy 기반 한국 웹 크롤러")
+    p.add_argument("--mode", choices=["keyword", "trend"], default="keyword",
+                   help="keyword=taxonomy 검색 주도(레거시), trend=소스별 트렌드 수집")
+    p.add_argument("--trend-config", default="configs/trend_collection.yaml", help="trend 모드 수집 설정 YAML")
+    p.add_argument("--taxonomy", default="configs/taxonomy.yaml", help="trend 모드 분류 taxonomy YAML")
     p.add_argument("--config", default="configs/taxonomy_policy.yaml", help="taxonomy policy YAML")
     p.add_argument("--sites", default="configs/site_policy.yaml", help="site policy YAML")
     p.add_argument("--settings", default="configs/crawler_settings.yaml", help="crawler settings YAML")
@@ -17,6 +21,9 @@ def main() -> None:
     p.add_argument("--csv", default="data/exports/content.csv", help="content_records CSV 경로")
     p.add_argument("--after", default=None, help="수집 시작일 YYYY-MM-DD (기본: settings의 date_range)")
     p.add_argument("--before", default=None, help="수집 종료일 YYYY-MM-DD (기본: settings의 date_range)")
+    p.add_argument("--dry-run", action="store_true", help="fetch/추출 없이 수집 예정 범위만 프리뷰")
+    p.add_argument("--reset-db", action="store_true", help="기존 DB 삭제 후 재생성")
+    p.add_argument("--max-queries", type=int, default=None, help="이번 실행 SerpAPI 검색 상한 (settings 덮어씀)")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
@@ -24,6 +31,19 @@ def main() -> None:
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    if args.mode == "trend":
+        pipeline.run_trend(
+            trend_config=args.trend_config,
+            taxonomy_config=args.taxonomy,
+            site_config=args.sites,
+            settings_config=args.settings,
+            db_path=args.db,
+            report_path=args.report,
+            csv_path=args.csv,
+            dry_run=args.dry_run,
+            reset_db=args.reset_db,
+        )
+        return
     pipeline.run(
         taxonomy_config=args.config,
         site_config=args.sites,
@@ -33,6 +53,9 @@ def main() -> None:
         csv_path=args.csv,
         after=args.after,
         before=args.before,
+        dry_run=args.dry_run,
+        reset_db=args.reset_db,
+        max_queries=args.max_queries,
     )
 
 

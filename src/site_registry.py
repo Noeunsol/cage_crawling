@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import field
 
 import yaml
 
@@ -11,9 +12,10 @@ class SiteInfo:
     site_name: str
     site_type: str
     preferred_extractor: str
+    board_discovery: dict = field(default_factory=dict)
 
 
-_UNKNOWN = SiteInfo(site_name="unknown", site_type="unknown", preferred_extractor="firecrawl")
+_UNKNOWN = SiteInfo(site_name="unknown", site_type="unknown", preferred_extractor="trafilatura")
 
 
 class SiteRegistry:
@@ -34,6 +36,7 @@ class SiteRegistry:
                 site_name=site_name,
                 site_type=cfg.get("site_type", "unknown"),
                 preferred_extractor=cfg.get("preferred_extractor", "firecrawl"),
+                board_discovery=cfg.get("board_discovery", {}),
             )
             domains = cfg.get("domains", [])
             for domain in domains:
@@ -55,3 +58,7 @@ class SiteRegistry:
     def domain_for(self, site_name: str) -> str | None:
         """site_name → 대표 도메인 (query 생성용). 미등록이면 None."""
         return self._primary_domain.get(site_name)
+
+    def site_for(self, site_name: str) -> SiteInfo | None:
+        domain = self.domain_for(site_name)
+        return self.lookup(domain) if domain else None

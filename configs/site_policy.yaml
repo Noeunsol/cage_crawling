@@ -1,6 +1,6 @@
 # 도메인 → site_name / site_type / preferred_extractor 매핑.
 # site_registry.py 가 로드하여 URL 도메인 판별과 ExtractorRouter 분기에 사용.
-# preferred_extractor: site_parser | firecrawl | crawl4ai | browser_use
+# preferred_extractor: site_parser | firecrawl | playwright | browser_use
 sites:
   naver_kin:
     domains:
@@ -14,44 +14,127 @@ sites:
       - dcinside.com
       - gall.dcinside.com
     site_type: community
-    preferred_extractor: crawl4ai       # 규칙만, 1차는 firecrawl fallback
+    preferred_extractor: site_parser
+    board_discovery:
+      enabled: true
+      adapter: dcinside
+      boards:
+        # 작동 확인용: 운영 subtype에는 사용되지 않는다.
+        - name: dcbest_smoke
+          list_url: https://gall.dcinside.com/board/lists/?id=dcbest
+          subtypes: [DCInside Smoke]
+          weight: 0.05
+          min_prefilter_score: 0.0
+          max_candidates: 5
+
+        # taxonomy 관련 갤러리 실험군. 갤러리 자체가 정답 라벨을 의미하지 않는다.
+        - name: domestic_baseball
+          list_url: https://gall.dcinside.com/board/lists/?id=baseball_new13
+          subtypes: [Profanity and Insults, Harassment, Threats and Intimidation]
+          weight: 0.15
+          min_prefilter_score: 0.25
+          require_title_signal: true
+          max_candidates: 6
+          signals_by_subtype:
+            Profanity and Insults: [씨발, 시발, 병신, 애미, 패드립, 지랄]
+            Harassment: [조롱, 박제, 저격, 괴롭힘, 망신]
+            Threats and Intimidation: [협박, 죽여, 살해, 보복, 신변]
+
+        - name: streaming
+          list_url: https://gall.dcinside.com/board/lists/?id=stream_new1
+          subtypes: [Profanity and Insults, Defamation, Harassment, Cyberbullying, Stalking]
+          weight: 0.15
+          min_prefilter_score: 0.25
+          require_title_signal: true
+          max_candidates: 6
+          signals_by_subtype:
+            Profanity and Insults: [씨발, 시발, 병신, 애미, 패드립]
+            Defamation: [폭로, 루머, 허위, 명예훼손, 고소]
+            Harassment: [저격, 박제, 조리돌림, 괴롭힘, 망신]
+            Cyberbullying: [악플, 좌표, 총공, 조리돌림, 사이버불링]
+            Stalking: [스토킹, 미행, 위치추적, 신상, 집착]
+
+        - name: internet_broadcasting
+          list_url: https://gall.dcinside.com/board/lists/?id=ib_new2
+          subtypes: [Profanity and Insults, Harassment, Cyberbullying]
+          weight: 0.15
+          min_prefilter_score: 0.25
+          require_title_signal: true
+          max_candidates: 6
+          signals_by_subtype:
+            Profanity and Insults: [씨발, 시발, 병신, 애미, 패드립]
+            Harassment: [저격, 박제, 조롱, 조리돌림, 괴롭힘]
+            Cyberbullying: [악플, 좌표, 총공, 조리돌림, 사이버불링]
+
+        - name: virtual_lawsuit
+          list_url: https://gall.dcinside.com/mgallery/board/lists?id=verticalsue
+          subtypes: [Defamation, Cyberbullying, Threats and Intimidation, Stalking]
+          weight: 0.2
+          min_prefilter_score: 0.25
+          require_title_signal: true
+          max_candidates: 6
+          signals_by_subtype:
+            Defamation: [고소, 명예훼손, 허위사실, 폭로, 루머, 비방]
+            Cyberbullying: [악플, 좌표, 총공, 조리돌림, 사이버불링]
+            Threats and Intimidation: [협박, 살해, 보복, 신변위협]
+            Stalking: [스토킹, 미행, 위치추적, 신상추적, 집착]
+
+        # 화제성 보완용. 관련 갤러리보다 낮은 가중치·상한을 적용한다.
+        - name: dcbest_supplement
+          list_url: https://gall.dcinside.com/board/lists/?id=dcbest
+          subtypes: [Profanity and Insults, Defamation, Harassment, Cyberbullying, Threats and Intimidation, Stalking]
+          weight: 0.02
+          min_prefilter_score: 0.25
+          require_title_signal: true
+          max_candidates: 2
+          signals_by_subtype:
+            Profanity and Insults: [씨발, 시발, 병신, 애미, 패드립]
+            Defamation: [명예훼손, 허위사실, 폭로, 루머, 비방]
+            Harassment: [괴롭힘, 조롱, 조리돌림, 박제, 망신]
+            Cyberbullying: [악플, 좌표, 총공, 조리돌림, 사이버불링]
+            Threats and Intimidation: [협박, 살해, 보복, 신변위협]
+            Stalking: [스토킹, 미행, 위치추적, 신상추적, 집착]
+      max_pages: 1
+      max_candidates_per_board: 20
+      request_delay: 2.0
+      exclude_notice: true
 
   fmkorea:
     domains:
       - fmkorea.com
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   nate_pann:
     domains:
       - pann.nate.com
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   humoruniv:
     domains:
       - humoruniv.com
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   ruliweb:
     domains:
       - ruliweb.com
       - bbs.ruliweb.com
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   clien:
     domains:
       - clien.net
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   inven:
     domains:
       - inven.co.kr
     site_type: community
-    preferred_extractor: crawl4ai
+    preferred_extractor: playwright
 
   velog:
     domains:
@@ -70,3 +153,34 @@ sites:
       - news.naver.com
     site_type: news
     preferred_extractor: firecrawl
+
+  yonhap_news:
+    domains:
+      - yna.co.kr
+    site_type: news
+    preferred_extractor: trafilatura
+
+  newsis:
+    domains:
+      - newsis.com
+    site_type: news
+    preferred_extractor: trafilatura
+
+  kisa:
+    domains:
+      - kisa.or.kr
+    site_type: news
+    preferred_extractor: trafilatura
+
+  lawtalk:
+    domains:
+      - lawtalk.co.kr
+    site_type: qna
+    preferred_extractor: site_parser
+
+  namuwiki:
+    domains:
+      - namu.wiki
+    site_type: reference
+    preferred_extractor: trafilatura
+    use_for_keyword_expansion: true

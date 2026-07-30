@@ -28,20 +28,68 @@ def build_report(store: Store) -> dict:
         "SELECT AVG(taxonomy_relevance_score) FROM content_records"
     ).fetchone()[0]
 
+    def average(column: str) -> float:
+        value = cur.execute(f"SELECT AVG({column}) FROM content_records").fetchone()[0]
+        return round(value or 0.0, 3)
+
+    def conversion(group: str) -> dict:
+        rows = cur.execute(f"""
+            SELECT COALESCE({group},'unknown'), COUNT(*),
+              SUM(CASE WHEN status IN ('extracted','quality_failed','matched_pass','matched_review','matched_fail','duplicate') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN status IN ('matched_pass','matched_review') THEN 1 ELSE 0 END)
+            FROM url_candidates GROUP BY {group}
+        """).fetchall()
+        return {str(k): {"discovered": d, "extracted": e or 0, "pass_review": p or 0,
+                         "conversion_rate": round((p or 0) / d, 3) if d else 0.0}
+                for k, d, e, p in rows}
+
+    all_rungs_failed = cur.execute(
+        "SELECT COUNT(*) FROM filter_logs WHERE stage='extract' AND reason LIKE 'all_extractors_failed%'"
+    ).fetchone()[0]
+    dup_events = cur.execute(
+        "SELECT COUNT(*) FROM filter_logs WHERE stage='event_dedup'"
+    ).fetchone()[0]
+
     return {
         "stored_records": total,
         "by_taxonomy": counts("SELECT taxonomy_lv2, COUNT(*) FROM content_records GROUP BY taxonomy_lv2"),
         "by_subtype": counts("SELECT subtype, COUNT(*) FROM content_records GROUP BY subtype"),
         "by_site": counts("SELECT site_name, COUNT(*) FROM content_records GROUP BY site_name"),
         "by_search_api": counts("SELECT search_api, COUNT(*) FROM content_records GROUP BY search_api"),
-        "by_collection_method": counts("SELECT collection_method, COUNT(*) FROM content_records GROUP BY collection_method"),
+        "by_collection_type": counts("SELECT collection_type, COUNT(*) FROM content_records GROUP BY collection_type"),
+        "by_discovery_method": counts("SELECT discovery_method, COUNT(*) FROM content_records GROUP BY discovery_method"),
         "by_extractor": counts("SELECT extractor, COUNT(*) FROM content_records GROUP BY extractor"),
         "by_filter_status": counts("SELECT filter_status, COUNT(*) FROM content_records GROUP BY filter_status"),
+        # 트렌드 모드 집계 (keyword 모드에선 대부분 빈 버킷)
+        "by_source": counts("SELECT source, COUNT(*) FROM content_records WHERE source!='' GROUP BY source"),
+        "by_action": counts("SELECT action, COUNT(*) FROM content_records WHERE action!='pending' GROUP BY action"),
+        "risk_score_distribution": counts(
+            "SELECT risk_score, COUNT(*) FROM content_records WHERE risk_score IS NOT NULL GROUP BY risk_score"),
+        "trend_score_distribution": counts(
+            "SELECT trend_score, COUNT(*) FROM content_records WHERE trend_score IS NOT NULL GROUP BY trend_score"),
+        "published_at_source_distribution": counts(
+            "SELECT published_at_source, COUNT(*) FROM content_records GROUP BY published_at_source"),
         "filter_fail_reasons": filter_fail,
+        "all_rungs_failed": all_rungs_failed,
+        "duplicate_event_rate": round(dup_events / (total + dup_events), 3) if (total + dup_events) else 0.0,
         "missing_published_at_ratio": round(missing_date / total, 3) if total else 0.0,
         "average_quality_score": round(avg_quality, 3) if avg_quality else 0.0,
         "average_taxonomy_confidence": round(avg_conf, 3) if avg_conf else 0.0,
+        "average_harmfulness_score": average("harmfulness_score"),
+        "average_taxonomy_fit_score": average("taxonomy_fit_score"),
+        "average_seed_source_value_score": average("seed_source_value_score"),
+        "average_pii_risk_score": average("pii_risk_score"),
+        "reference_only_ratio": _status_ratio(cur, "reference_only"),
+        "db_duplicate_rate": _status_ratio(cur, "duplicate"),
+        "collection_type_conversion": conversion("collection_type"),
+        "api_conversion": conversion("search_api"),
     }
+
+
+def _status_ratio(cur, status: str) -> float:
+    total = cur.execute("SELECT COUNT(*) FROM url_candidates").fetchone()[0]
+    count = cur.execute("SELECT COUNT(*) FROM url_candidates WHERE status=?", (status,)).fetchone()[0]
+    return round(count / total, 3) if total else 0.0
 
 
 def print_report(report: dict) -> None:
@@ -55,14 +103,19 @@ def export_report(report: dict, path: str) -> None:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
 
-def export_csv(store: Store, path: str) -> int:
-    """content_records 전체를 CSV로 내보낸다. 반환: 행 수. (Excel 호환 utf-8-sig)"""
-    cur = store.conn.execute("SELECT * FROM content_records")
-    columns = [d[0] for d in cur.description]
+# raw/cleaned는 PII를 포함할 수 있으므로 기본 export에서 제외한다.
+_RAW_COLS = {"raw_text", "raw_comments", "cleaned_text"}
+
+
+def export_csv(store: Store, path: str, include_raw: bool = False) -> int:
+    """content_records를 CSV로 내보낸다. 기본 raw_text/raw_comments 제외 (미마스킹 원문 보호)."""
+    all_cols = [row[1] for row in store.conn.execute("PRAGMA table_info(content_records)")]
+    cols = all_cols if include_raw else [c for c in all_cols if c not in _RAW_COLS]
+    cur = store.conn.execute(f"SELECT {','.join(cols)} FROM content_records")
     rows = cur.fetchall()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
-        w.writerow(columns)
+        w.writerow(cols)
         w.writerows(rows)
     return len(rows)

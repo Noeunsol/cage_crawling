@@ -4,6 +4,9 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit
+
+from .mask import MaskedEntity
 
 
 @dataclass
@@ -15,17 +18,50 @@ class UrlCandidate:
     search_api: str
     taxonomy_lv2_candidate: str
     subtype_candidate: str
+    candidate_id: str = ""
+    parent_source_url: Optional[str] = None
+    link_source: Optional[str] = None          # body | comment
+    is_supplementary: bool = False
     title: Optional[str] = None
     snippet: Optional[str] = None
     published_at_hint: Optional[str] = None
-    score: float = 0.0
-    # 어떤 수집 경로로 발견됐는지: keyword | semantic | site_sampling | seed_expansion | trend
-    collection_method: str = "keyword"
+    canonical_url: Optional[str] = None
+    site_name: str = "unknown"
+    site_type: str = "unknown"
+    score: float = 0.0                    # frontier 정렬 우선순위(= value_score)
+    value_score: float = 0.0              # escalation 게이트용 taxonomy 가치 점수
+    extraction_likelihood: float = 1.0    # 정적 추출 성공 가능성 heuristic (0~1)
+    # collection_type: raw_expression | qa_consulting | news_case | technical_security
+    collection_type: str = "raw_expression"
+    discovery_method: str = "serpapi_site"  # board_list|serpapi_site|rss|sitemap|seed_url|tavily|exa|github
+    initial_score: float = 0.0
+    taxonomy_fit_url_score: float = 0.0
+    harm_signal_url_score: float = 0.0
+    source_priority_score: float = 0.0
+    reference_page_penalty: float = 0.0
+    filter_reason: Optional[str] = None
     # frontier 상태: pending/filtered_out/extracting/extracted/failed/matched/stored/review
     status: str = "pending"
+    # 트렌드 모드 부가 메타(source/board_name/bucket/is_trending/view_count/comment_count/like_count).
+    # 저장 컬럼이 아니라 extract 후 ContentRecord로 옮기기 위한 운반용.
+    meta: dict = field(default_factory=dict)
 
     def dedup_key(self) -> str:
         return canonicalize_url(self.source_url)
+
+
+@dataclass
+class ExtractedContent:
+    """추출기 반환 중간 타입. 저장 스키마(ContentRecord)와 분리해 추출 관심사만 담는다."""
+    title: str
+    body_text: str
+    comments: list = field(default_factory=list)
+    published_at: Optional[str] = None
+    published_at_source: Optional[str] = None   # serpapi_date|metadata|html_parser|url_pattern|unknown
+    author_hint: Optional[str] = None
+    view_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    image_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -40,31 +76,87 @@ class ContentRecord:
     subtype_candidate: str
 
     title: str
-    body_text: str
+    body_text: str          # = masked_text 별칭 (기존 report/CSV/test 호환)
     collected_at: str
     search_query: str
     search_api: str
     extractor: str
 
+    # raw 보존 3단: 욕설·협박은 보존, PII/광고/노이즈만 제거 (Toxic Language raw 가치)
+    raw_text: str = ""              # 추출 직후 원문 (미정제, export 기본 제외)
+    cleaned_text: str = ""          # boilerplate/메뉴/푸터만 제거
+    masked_text: str = ""           # cleaned + PII 마스킹 (matcher/LLM 입력)
+    raw_comments: Optional[list] = None
+    masked_comments: Optional[list] = None
+
     published_at: Optional[str] = None
+    published_at_source: Optional[str] = None
     canonical_url: Optional[str] = None
-    collection_method: str = "keyword"
+    collection_type: str = "raw_expression"
+    discovery_method: str = "serpapi_site"
+    value_score: float = 0.0
+    extraction_likelihood: float = 0.0
 
     language: Optional[str] = None
     korea_relevance_score: Optional[float] = None
     taxonomy_relevance_score: Optional[float] = None
     quality_score: Optional[float] = None
+    harmfulness_score: Optional[float] = None
+    taxonomy_fit_score: Optional[float] = None
+    seed_source_value_score: Optional[float] = None
+    pii_detected: bool = False
+    pii_types: list[str] = field(default_factory=list)
+    pii_risk_score: Optional[float] = None
+    masking_version: str = ""
+    masking_warnings: list[str] = field(default_factory=list)
+    masked_entities: list[MaskedEntity] = field(default_factory=list)
 
     # 매칭 확정 taxonomy (Phase 10 이후 채워짐)
     taxonomy_lv2: Optional[str] = None
     subtype: Optional[str] = None
 
     dedup_hash: str = ""
+    simhash: str = ""                # 본문 near-dup (동일 사건) 판별
+    event_key: str = ""              # 보조 사건 키 (title+date+site)
+    duplicate_of: Optional[str] = None
     filter_status: str = "pending"   # pass / review / fail / pending
     filter_reason: Optional[str] = None
+    llm_escalation_reason: Optional[str] = None
 
-    raw_html_path: Optional[str] = None
-    markdown_path: Optional[str] = None
+    # ── 트렌드 수집 모드 (설계서 v2) ──
+    source: str = ""                 # dcinside | fmkorea | natepann | news_rss
+    source_type: str = ""            # community | news
+    board_name: str = ""             # 갤러리/게시판명
+    category_name: str = ""          # 게시판/언론사 카테고리 (taxonomy 아님)
+    category: Optional[str] = None    # 공식 taxonomy 하위 라벨 1개 (단일매핑)
+    is_risk_candidate: bool = False   # 2차 위험신호 후보 통과 여부
+    view_count: Optional[int] = None
+    like_count: Optional[int] = None
+    dislike_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    image_urls: list[str] = field(default_factory=list)   # 이미지 의존 콘텐츠 OCR 대상
+    is_trending: bool = False
+    risk_score: Optional[int] = None   # 1~5
+    trend_score: Optional[int] = None  # 1~5
+    confidence: Optional[int] = None   # 1~5 (매처 confidence 0~1 → 1~5)
+    action: str = "pending"           # accepted | review | excluded
+    is_taxonomy_relevant: bool = False
+    is_trend_seed: bool = False
+    filter_action: str = "pending"    # 1차 relevance gate: keep | discard
+    negative_contexts: list[str] = field(default_factory=list)
+    needs_comment_fallback: bool = False
+    # 후처리/분류 부가정보 (v8)
+    risk_signals: list[str] = field(default_factory=list)      # 감지된 위험신호(toxic/hate/...)
+    matched_keywords: list[str] = field(default_factory=list)  # primary category에서 적중한 키워드
+    secondary_flags: list[str] = field(default_factory=list)   # 복합 위험(primary 외 신호)
+    classification_source: str = "none"   # rule | llm | manual | none
+    classification_reason: str = ""       # 왜 이 taxonomy인지
+    contains_korean_context: Optional[bool] = None
+    crawl_status: str = "success"         # success | failed | skipped
+    raw_html_path: str = ""               # 원본 HTML 저장 경로(현재 미저장, 예약)
+    parent_source_url: Optional[str] = None
+    link_source: Optional[str] = None
+    is_supplementary: bool = False
 
     content_id: str = ""
 
@@ -94,19 +186,23 @@ class MatchResult:
     confidence: float
     reason: str
     safety_flags: list = field(default_factory=list)
+    matched_keywords: list = field(default_factory=list)  # primary category 적중 키워드
+    source: str = "rule"                                  # rule | llm | manual
 
 
 def canonicalize_url(url: str) -> str:
-    """중복 판별용 정규화: 쿼리스트링/fragment/trailing slash/scheme·www 제거.
-
-    ponytail: 규칙 기반 정규화. tracking 파라미터별 예외가 필요해지면 확장.
-    """
-    u = url.strip().lower()
-    for prefix in ("https://", "http://"):
-        if u.startswith(prefix):
-            u = u[len(prefix):]
-            break
-    if u.startswith("www."):
-        u = u[4:]
-    u = u.split("#", 1)[0].split("?", 1)[0]
-    return u.rstrip("/")
+    """중복 판별용 정규화. 글 식별 query는 보존하고 tracking query만 제거한다."""
+    parsed = urlsplit(url.strip())
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    tracking = {"fbclid", "gclid", "ref", "source"}
+    if host.endswith("dcinside.com") and parsed.path.rstrip("/").endswith("/board/view"):
+        tracking.update({"page", "t", "_dcbest"})
+    query = sorted(
+        (key.lower(), value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in tracking
+    )
+    suffix = f"?{urlencode(query)}" if query else ""
+    return f"{host}{parsed.path.rstrip('/')}{suffix}"

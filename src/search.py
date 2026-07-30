@@ -1,16 +1,23 @@
 """Phase 2 — Search API Router.
 
 Search API는 URL 후보를 '발견'만 한다 (본문 추출은 Extractor 역할, §9).
-policy.preferred_search_api 의 primary → fallback 순으로 시도, 결과가 나오면 멈춤.
-실제 SDK 호출 없이 결정론적 mock 후보를 생성한다.
+DiscoveryRouter가 discovery_method(serpapi_site/tavily/...)에 맞는 client를 골라 호출한다.
+SerpAPI는 실제 SDK를 사용하고, Tavily는 아직 mock이다.
 """
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
+from urllib.parse import urlparse
+
+import serpapi
 
 from .policy import Subtype
 from .schema import UrlCandidate
 from .site_registry import SiteRegistry
+
+log = logging.getLogger(__name__)
 
 # 사이트 제한이 없는 쿼리가 퍼질 대표 도메인 풀 (여러 extractor 경로를 태우기 위함)
 _GENERIC_DOMAIN_POOL = ["kin.naver.com", "dcinside.com", "news.naver.com"]
@@ -60,8 +67,40 @@ class _MockClient(SearchClient):
         return _GENERIC_DOMAIN_POOL[: self.results_per_query + 1]
 
 
-class MockSerpapi(_MockClient):
+class SerpApiClient(SearchClient):
     name = "serpapi"
+
+    def search(self, query, taxonomy_lv2, subtype, registry):
+        api_key = os.getenv("SERPAPI_KEY")
+        if not api_key:
+            raise RuntimeError("SERPAPI_KEY 환경변수가 필요합니다")
+
+        results = serpapi.Client(api_key=api_key, timeout=20).search({
+            "engine": "google",
+            "q": query.text,
+            "hl": "ko",
+            "gl": "kr",
+            "num": 10,
+        })
+        candidates = []
+        for position, item in enumerate(results.get("organic_results", []), start=1):
+            url = item.get("link")
+            if not url:
+                continue
+            candidates.append(UrlCandidate(
+                source_url=url,
+                domain=urlparse(url).netloc.lower(),
+                search_query=query.text,
+                search_api=self.name,
+                taxonomy_lv2_candidate=taxonomy_lv2,
+                subtype_candidate=subtype.name,
+                title=item.get("title"),
+                snippet=item.get("snippet"),
+                # "3 days ago" 같은 비정규 날짜는 본문 추출 후 확정한다.
+                published_at_hint=None,
+                score=max(0.0, 1.0 - (position - 1) * 0.05),
+            ))
+        return candidates
 
 
 class MockTavily(_MockClient):
@@ -70,7 +109,7 @@ class MockTavily(_MockClient):
 
 # Exa는 seam만 (AI/보안 문서용, 1차 미구현)
 _CLIENTS: dict[str, SearchClient] = {
-    "serpapi": MockSerpapi(),
+    "serpapi": SerpApiClient(),
     "tavily": MockTavily(),
 }
 
@@ -81,12 +120,22 @@ def get_client(name: str) -> SearchClient | None:
 
 
 def run_client(client: SearchClient, queries, taxonomy_lv2: str, subtype: Subtype,
-               registry: SiteRegistry, collection_method: str) -> list[UrlCandidate]:
-    """쿼리 목록을 client로 실행하고 collection_method 태그를 붙여 반환."""
+               registry: SiteRegistry, collection_type: str,
+               discovery_method: str | None = None, limit: int | None = None,
+               max_queries: int | None = None) -> list[UrlCandidate]:
+    """쿼리 목록을 client로 실행하고 collection_type/discovery_method 태그를 붙여 반환."""
     out: list[UrlCandidate] = []
-    for q in queries:
-        for c in client.search(q, taxonomy_lv2, subtype, registry):
-            c.collection_method = collection_method
+    for q in queries[:max_queries]:
+        try:
+            results = client.search(q, taxonomy_lv2, subtype, registry)
+        except Exception as exc:
+            log.warning("search provider 실패 api=%s query=%r: %s", client.name, q.text, exc)
+            continue
+        for c in results[:limit]:
+            c.collection_type = collection_type
+            c.discovery_method = discovery_method or client.name
+            info = registry.lookup(c.domain)
+            c.site_name, c.site_type = info.site_name, info.site_type
             out.append(c)
     return out
 

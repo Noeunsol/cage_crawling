@@ -1,0 +1,218 @@
+# 신규 Risk Taxonomy 정본 (트렌드 모드 classify 전용).
+# taxonomy_lv2 = 상위 라벨(19개), subtype.name = 공식 category 하위 라벨.
+# 각 콘텐츠는 이 닫힌 어휘에서 (taxonomy_lv2 1개 + category 1개)로만 단일 매핑된다.
+# keywords/negative_patterns는 rule 분류용 한국어 초안 — 이후 사람 검수·보정 대상.
+# ponytail: 레이블 집합은 정본, 키워드 값은 mock 초기치. 실데이터로 보정 필요.
+policies:
+  - taxonomy_lv2: 1_A_Toxic_Language
+    enabled: true
+    subtypes:
+      - name: cyberbullying_and_harassment
+        keywords: [악플, 좌표, 좌표찍기, 총공, 조리돌림, 사이버불링, 집단괴롭힘, 박제, 저격, 신상털기]
+        negative_patterns: [영화 리뷰, 드라마 감상]
+      - name: cyberstalking
+        keywords: [스토킹, 미행, 위치추적, 집착, 신상추적, 뒷조사, 계정추적]
+      - name: defamation
+        keywords: [명예훼손, 허위사실, 루머, 비방, 폭로, 카더라, 고소, 뒷담화]
+      - name: profanity_and_insults
+        keywords: [씨발, 시발, 병신, 애미, 패드립, 개새끼, 지랄, 모욕, 쌍욕, 비속어]
+        negative_patterns: [영화 리뷰, 단순 감상]
+      - name: threats_and_intimidation
+        keywords: [협박, 죽여, 살해, 보복, 신변위협, 죽인다, 패버린다, 테러, 응징]
+
+  - taxonomy_lv2: 1_B_Sexual_Content
+    enabled: true
+    subtypes:
+      - name: explicit_sexual_content
+        keywords: [야동, 음란물, 성인물, 노출, 자위, 19금, 야설]
+      - name: non_consensual_intimate_imagery
+        keywords: [지인능욕, 딥페이크, 불법촬영, 몰카, 유출영상, 리벤지포르노, 합성사진]
+      - name: sexual_coercion_and_manipulation
+        keywords: [성착취, 그루밍, 몸캠, 성적협박, 협박성관계]
+      - name: sexual_solicitation_and_prostitution
+        keywords: [조건만남, 성매매, 출장, 오피, 유흥알바, 성인알바]
+
+  - taxonomy_lv2: 1_C_Self_Harm
+    enabled: true
+    subtypes:
+      - name: eating_disorder
+        keywords: [거식증, 폭식증, 프로아나, 씹뱉, 개말라, 뼈말라, 다이어트약]
+      - name: self_injury
+        keywords: [자해, 손목긋기, 리스트컷, 자해인증, 커팅]
+      - name: suicide
+        keywords: [자살, 극단선택, 죽고싶다, 자살방법, 동반자살, 유서, 목매]
+
+  - taxonomy_lv2: 1_D_Child_Exploitation
+    enabled: true
+    subtypes:
+      - name: child_endangerment
+        keywords: [아동학대, 아동방임, 미성년위험]
+      - name: child_trafficking
+        keywords: [아동인신매매, 미성년매매]
+      - name: csam_distribution
+        keywords: [아청물, 아동음란물, 미성년성착취물]
+      - name: online_grooming
+        keywords: [그루밍, 미성년꼬임, 아동유인]
+
+  - taxonomy_lv2: 2_E_Discrimination
+    enabled: true
+    subtypes:
+      - name: discriminatory_activity
+        keywords: [차별, 채용차별, 배제, 불이익, 차별대우]
+
+  - taxonomy_lv2: 2_F_Bias_and_Hate
+    enabled: true
+    subtypes:
+      - name: age
+        keywords: [틀딱, 노인충, 잼민이, 급식충, 나이차별]
+      - name: beliefs
+        keywords: [좌좀, 수꼴, 개딸, 극우, 극좌, 사상검증, 정치성향비하]
+      - name: color
+        keywords: [피부색비하, 흑형, 백인우월]
+      - name: disability
+        keywords: [장애인비하, 애자, 정신병자, 불구, 지체장애비하]
+      - name: gender
+        keywords: [김치녀, 한남, 한녀, 한녀충, 된장녀, 페미, 보슬아치, 여혐, 남혐, 여성혐오, 남성혐오, 쿠먼, 성차별]
+      - name: geographic_region
+        keywords: [전라디언, 홍어, 개쌍도, 지역감정, 지역비하]
+      - name: nationality
+        keywords: [짱깨, 짱개, 쪽바리, 조선족, 외노자, 다문화비하]
+      - name: occupation
+        keywords: [직업비하, 배달거지, 알바충, 노가다비하]
+      - name: race_and_ethnicity
+        keywords: [인종차별, 흑인비하, 검둥이, 니그로]
+      - name: religion
+        keywords: [개독, 개슬람, 종교비하, 이단몰이]
+      - name: sexual_orientation
+        keywords: [게이비하, 호모, 똥꼬충, 동성애혐오, 성소수자비하]
+
+  - taxonomy_lv2: 3_G_Misinformation_and_Disinformation
+    enabled: true
+    subtypes:
+      - name: false_news
+        keywords: [가짜뉴스, 허위보도, 오보, 조작뉴스]
+      - name: misinterpretation_or_wrong_context
+        keywords: [짜깁기, 왜곡, 편집조작, 맥락무시]
+      - name: propaganda
+        keywords: [선동, 여론조작, 프로파간다, 댓글부대, 여론전]
+      - name: rumors
+        keywords: [카더라, 찌라시, 루머, 소문, 확인되지않은, 폭로성]
+
+  - taxonomy_lv2: 3_H_Prohibited_Advisory
+    enabled: true
+    subtypes:
+      - name: financial_advice
+        keywords: [주식리딩, 코인추천, 투자보장, 원금보장, 리딩방]
+      - name: legal_advice
+        keywords: [무료법률조언, 소송방법, 셀프소송]
+      - name: medical_advice
+        keywords: [약처방, 자가진단, 민간요법, 의료조언]
+
+  - taxonomy_lv2: 4_I_Privacy_Infringement
+    enabled: true
+    subtypes:
+      - name: privacy_violation
+        keywords: [신상, 신상공개, 개인정보유출, 실명공개, 얼굴공개, 신상털이, 주소공개, 전화번호유출]
+
+  - taxonomy_lv2: 4_J_Public_Sensitive_Info_Leakage
+    enabled: true
+    subtypes:
+      - name: confidential_operations
+        keywords: [기밀작전, 내부작전, 보안작전]
+      - name: cybersecurity_vulnerabilities
+        keywords: [보안취약점, 제로데이, 취약점공개, 익스플로잇]
+      - name: financial_and_budgetary_information
+        keywords: [내부예산유출, 비공개재무, 기밀예산]
+      - name: internal_communications
+        keywords: [내부메신저유출, 사내메일유출, 내부대화유출]
+      - name: internal_policies_and_classified_documents
+        keywords: [내부문서, 기밀문서, 대외비, 유출자료]
+      - name: legal_information
+        keywords: [비공개판결문, 수사자료유출, 기밀법률자료]
+      - name: sensitive_technological_details
+        keywords: [소스코드유출, 설계도유출, 기술유출, 영업기밀유출]
+
+  - taxonomy_lv2: 4_K_Intellectual_Property_Infringement
+    enabled: true
+    subtypes:
+      - name: copyright_piracy
+        keywords: [불법다운로드, 토렌트, 무료다운, 불법공유, 웹하드, 자막공유]
+      - name: counterfeit_trademark
+        keywords: [짝퉁, 가품, 이미테이션, 위조상품]
+      - name: patent_infringement
+        keywords: [특허침해, 무단복제기술]
+      - name: trade_secret_theft
+        keywords: [영업비밀유출, 기술탈취, 기밀탈취]
+
+  - taxonomy_lv2: 5_L_Illegal_Activity
+    enabled: true
+    subtypes:
+      - name: facilitating_criminal_activities
+        keywords: [범죄모의, 대포통장, 대포폰, 장물]
+      - name: fraudulent_schemes_and_deception
+        keywords: [사기, 보이스피싱, 피싱, 다단계, 폰지, 투자사기]
+      - name: illegal_services_exploitation
+        keywords: [불법도박, 사설토토, 마약, 대마, 필로폰, 불법총기]
+
+  - taxonomy_lv2: 5_M_Violence_and_Extremism
+    enabled: true
+    subtypes:
+      - name: depicting_violence
+        keywords: [폭력영상, 잔혹영상, 고어, 참수]
+      - name: supporting_malicious_organized_groups
+        keywords: [테러단체, 극단주의, 조직폭력, 이슬람국가]
+      - name: violent_crimes_and_acts
+        keywords: [폭행, 살인, 방화, 흉기난동, 묻지마범죄]
+
+  - taxonomy_lv2: 5_N_Encouraging_Unethical_Actions
+    enabled: true
+    subtypes:
+      - name: cheating_and_academic_dishonesty
+        keywords: [대리시험, 논문표절, 커닝, 과제대행, 시험부정]
+      - name: deception_and_fraud
+        keywords: [허위후기, 조작후기, 속임수, 기만행위]
+      - name: manipulative_persuasion
+        keywords: [가스라이팅, 세뇌, 심리조작, 조작적설득, 회유]
+
+  - taxonomy_lv2: 6_O_CBRNE
+    enabled: true
+    subtypes:
+      - name: biological
+        keywords: [생물무기, 탄저균, 세균무기, 독소무기]
+      - name: chemical
+        keywords: [화학무기, 사린, 독가스, 신경작용제]
+      - name: explosive
+        keywords: [폭탄제조, 사제폭탄, 폭발물제조]
+      - name: nuclear
+        keywords: [핵무기, 농축우라늄, 핵물질]
+      - name: radiological
+        keywords: [방사능무기, 더티밤, 방사성물질]
+
+  - taxonomy_lv2: 6_P_Cybersecurity
+    enabled: true
+    subtypes:
+      - name: cyber_attack
+        keywords: [해킹, 디도스, ddos, 침투, 크래킹]
+      - name: malware_generation
+        keywords: [악성코드, 랜섬웨어, 바이러스제작, 키로거]
+      - name: weapon_usage_development
+        keywords: [사이버무기, 익스플로잇개발]
+
+  # 6_Q/R/S: LLM 상호작용 위험. 스크랩 콘텐츠엔 거의 안 나타남(정상). 닫힌 어휘 완결성 위해 포함.
+  - taxonomy_lv2: 6_Q_Prompt_Attack
+    enabled: true
+    subtypes:
+      - name: prompt_attack
+        keywords: [프롬프트인젝션, 탈옥, jailbreak, 프롬프트해킹]
+
+  - taxonomy_lv2: 6_R_System_Leakage
+    enabled: true
+    subtypes:
+      - name: system_leakage
+        keywords: [시스템프롬프트유출, 내부지침유출]
+
+  - taxonomy_lv2: 6_S_Unbounded_Consumption
+    enabled: true
+    subtypes:
+      - name: unbounded_consumption
+        keywords: [무한요청, 자원고갈, 토큰남용]

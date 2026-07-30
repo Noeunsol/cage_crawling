@@ -218,7 +218,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Crawler 산출물
-data/content.db
+data/*.db
+data/*.db-journal
 data/exports/*.json
 data/exports/*.csv
 data/raw_html/*

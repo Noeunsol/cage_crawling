@@ -7,19 +7,103 @@ date_range:
 
 # Phase 9 품질 필터
 quality:
-  min_body_chars: 300
+  min_body_chars: 200      # 본문+댓글 합산 기준 (커뮤니티 raw 보존)
   min_korean_ratio: 0.3      # 한글 문자 비율 하한
   min_quality_score: 0.6
 
-# Phase 10 taxonomy matching confidence 임계값
+# Phase 10: 1차 relevance gate 통과 콘텐츠의 LLM taxonomy 분류
 matching:
-  auto_save_threshold: 0.8   # 이상 → pass
-  review_threshold: 0.5      # 이상 auto_save 미만 → review, 미만 → fail
+  auto_save_threshold: 0.8
+  review_threshold: 0.5
+  min_korea_relevance: 0.3   # LLM 판정 korea_relevance_score 하한. 미만이면 최종 excluded.
+  llm:
+    enabled: true            # keep 전체 호출. 키 없음/실패 시 pending(llm_failed)
+    model: claude-haiku-4-5
+    input_text_field: masked_text   # LLM 입력은 masked만 (raw 미전송)
+    include_comments: true
+    max_chars: 4000
 
-# 수집 전략 (키워드-only 한계 보완용 하이브리드). 순서대로 실행 후 frontier에서 dedup.
-# 구현: keyword / semantic / site_sampling. seam(미구현): seed_expansion / trend
-collection:
-  enabled:
-    - keyword
-    - semantic
-    - site_sampling
+# Phase 5-7 추출 사다리. success_criteria는 site_type별로 다름.
+extraction:
+  min_extract_chars: 200
+  success_criteria:
+    news:      {min_body_chars: 400, require_title: true,  require_date: false}
+    blog:      {min_body_chars: 400, require_title: true,  require_date: false}
+    tech:      {min_body_chars: 400, require_title: true,  require_date: false}
+    qna:       {min_body_chars: 200, require_title: true,  allow_answers_as_body: true}
+    community: {min_body_chars: 80,  min_comment_chars: 100, require_title: false, allow_comment_only: true}
+  comments: {max_comments: 200, max_comment_chars: 500}
+  # 1차 keep + 이미지 존재 + 짧은 본문인 글만 로컬 OCR (이미지 의존 콘텐츠).
+  # API 비용 없음. 실행 환경에 tesseract(kor 언어팩)와 Pillow가 필요하다.
+  image_ocr:
+    enabled: true
+    keep_only: true           # 1차 keep 콘텐츠만 OCR (구 accepted_only 호환)
+    body_threshold: 200
+    max_images: 5
+    max_dimension: 4000       # 이미지 한 변 상한(px). 초과 시 다운스케일 후 OCR.
+    max_tiles: 8              # 세로 타일 수 상한 (조기 종료)
+    tile_height: 2000
+    overlap: 100
+    workers: 2
+    max_ocr_chars: 6000
+    min_meaningful_chars: 15  # OCR 결과가 이보다 짧거나 의미없으면 버림
+    language: kor+eng
+  playwright: {enabled: false}                 # seam (JS 렌더 → trafilatura)
+  firecrawl:  {enabled: false, min_value: 0.8} # seam + value 게이트 (유료 최후 수단)
+
+# HTTP fetcher (정중한 수집)
+http:
+  timeout: 20
+  per_domain_delay: 1.0
+  respect_robots: true
+  user_agent: "Mozilla/5.0 (compatible; taxonomy-research-crawler/0.1; +contact@example.com)"
+
+# Phase 4 필터 강도 (Toxic raw 수집은 minimal + strong matcher)
+filtering:
+  mode_by_taxonomy:
+    Toxic Language: minimal
+  hard_negative_patterns: [쿠팡 파트너스, 제휴 링크, 광고 문의, 스폰서]
+
+# 단계9 동일 사건 near-dup
+dedup:
+  event_hamming_threshold: 3
+
+# 라이브 실행 안전 상한 (비용 사고 방지)
+run_limits:
+  max_queries_per_run: 3     # run당 실제 SerpAPI 검색 호출 상한. 첫 실행은 낮게, 운영 시 상향.
+  max_urls_per_query: 5      # (예약) 쿼리당 후보 상한
+  max_extracts_per_run: 10   # subtype당 fetch/추출 상한
+
+# 명시적 global/taxonomy/collection_type quota. run_limits는 이전 설정 호환용이다.
+budget:
+  global_max_queries: 100
+  global_max_extracts: 500
+  per_taxonomy:
+    Toxic Language: {max_queries: 60, max_extracts: 300}
+  per_collection_type:
+    raw_expression: {max_queries: 30, max_extracts: 150}
+    qa_consulting: {max_queries: 15, max_extracts: 80}
+    news_case: {max_queries: 15, max_extracts: 80}
+    technical_security: {max_queries: 10, max_extracts: 50}
+
+# raw_text/raw_comments는 export 기본 제외 (미마스킹 원문 보호)
+export:
+  include_raw: false
+
+privacy:
+  enabled: true
+  masking_version: "v1_regex_basic"
+  save_raw_text: true
+  export_raw_text: false
+  default_export_text_field: masked_text
+  mask_types:
+    phone: true
+    email: true
+    rrn: true
+    card: true
+    account_number: true
+    address: true
+    credential: true
+    account_id: true
+  person_name:
+    auto_mask: false

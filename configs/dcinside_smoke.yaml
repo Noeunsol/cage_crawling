@@ -1,0 +1,21 @@
+policies:
+  - taxonomy_lv2: Toxic Language
+    enabled: true
+    collection_type: raw_expression
+    primary_methods: [board_list]
+    preferred_extractors: [site_parser]
+    filter_mode: minimal
+    preservation_policy:
+      preserve_harmful_expression: true
+      mask_pii: true
+      mask_credentials: true
+    thresholds:
+      min_taxonomy_fit_score: 0.0
+      min_harmfulness_score: 0.0
+      min_seed_source_value_score: 0.0
+    max_pii_risk: 1.0
+    subtypes:
+      - name: DCInside Smoke
+        keywords: [욕설, 악플, 조롱, 협박, 혐오]
+        positive_patterns: [댓글, 커뮤니티]
+        priority_sites: [dcinside]
