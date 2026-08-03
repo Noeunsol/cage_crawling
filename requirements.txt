@@ -6,11 +6,13 @@ lxml
 trafilatura
 streamlit
 pillow
+openai
+python-dotenv
 
 # gated seam (활성화 시 설치):
 # playwright        # JS 렌더 rung (playwright install --with-deps chromium 필요) → trafilatura로 추출
 # firecrawl-py      # 최후 수단(유료)
-# anthropic         # matching.llm.enabled 시 Claude Haiku 분류
+# anthropic         # provider=anthropic 사용 시
 
 # 미채택:
 # tavily-python

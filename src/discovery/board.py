@@ -79,6 +79,7 @@ def parse_dcinside_list(html: str, list_url: str, task, subtype, registry,
 
 def discover(task, subtype, registry, fetcher) -> list:
     out = []
+    cap = 20
     for site_name in subtype.priority_sites:
         site = registry.site_for(site_name)
         cfg = site.board_discovery if site else {}
@@ -87,7 +88,7 @@ def discover(task, subtype, registry, fetcher) -> list:
         fetcher.per_domain_delay = max(
             fetcher.per_domain_delay, float(cfg.get("request_delay", 2.0))
         )
-        cap = int(cfg.get("max_candidates_per_board", 20))
+        cap = int(cfg.get("max_candidates_per_board", cap))
         for board in cfg.get("boards", []):
             allowed_subtypes = board.get("subtypes", ["*"])
             if "*" not in allowed_subtypes and subtype.name not in allowed_subtypes:
@@ -166,7 +167,7 @@ def parse_dcinside_trend(html, list_url, registry, bucket, board_name,
 
 
 def discover_dcinside_trend(galleries, registry, fetcher, max_pages: int = 1,
-                            exclude_notice: bool = True) -> list:
+                            exclude_notice: bool = True, start_page: int = 1) -> list:
     """config의 갤러리 목록을 순회해 버킷 태깅된 후보를 수집한다(추출/분류 이전)."""
     out = []
     for g in galleries:
@@ -175,7 +176,7 @@ def discover_dcinside_trend(galleries, registry, fetcher, max_pages: int = 1,
         trending = g.get("trending")   # 명시 플래그(dcbest=실베 등). 없으면 bucket으로 하위호환
         board_name = g.get("name") or g.get("id")
         cands = []
-        for page in range(1, max_pages + 1):
+        for page in range(start_page, start_page + max_pages):
             html = fetcher.fetch(_page_url(list_url, page))
             if not html:
                 log.info("DCInside 트렌드 목록 fetch 실패 gallery=%s page=%s", board_name, page)

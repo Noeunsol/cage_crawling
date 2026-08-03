@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from urllib.parse import urlparse
 
 
@@ -71,6 +70,20 @@ _VIDEO_HOSTS = {
     "youtube.com", "youtu.be", "youtube-nocookie.com", "tv.naver.com",
     "vimeo.com", "twitch.tv",
 }
+
+# 제목 1차 gate는 taxonomy를 배정하지 않고 19종 중 하나와 관련될 가능성만 넓게 포착한다.
+_TITLE_EXTRA_TERMS = [
+    # child/discrimination/advisory
+    "아동학대", "아동 성착취", "미성년자 성착취", "그루밍", "차별", "채용 배제",
+    "의료 조언", "법률 조언", "투자 추천", "종목 추천",
+    # sensitive/IP/unethical
+    "기밀", "내부문서", "내부 자료", "영업비밀", "소스코드 유출", "저작권 침해",
+    "불법 다운로드", "위조상품", "표절", "시험 부정", "대리시험", "조작적 설득",
+    # CBRNE / system integrity
+    "폭발물 제조", "폭탄 제조", "생물무기", "화학무기", "핵무기", "방사능 테러",
+    "프롬프트 인젝션", "프롬프트 공격", "탈옥 프롬프트", "시스템 프롬프트",
+    "시스템 지침 유출", "무한 루프", "api 폭주", "자원 고갈",
+]
 
 
 def is_textless_media_url(url: str) -> bool:
@@ -172,31 +185,27 @@ def decide_filter_action(record) -> RelevanceResult:
 
 
 def decide_candidate_action(candidate) -> RelevanceResult:
-    """Title/summary/meta gate used before any article or comment request."""
+    """본문 요청 전 제목만으로 19종 taxonomy 관련 가능성을 keep/discard한다."""
     if is_textless_media_url(getattr(candidate, "source_url", "")):
         return _result("discard", "video_without_text")
-    meta = getattr(candidate, "meta", {}) or {}
-    if not (getattr(candidate, "title", "") or "").strip():
-        return _result("keep", "missing_title_needs_body")
-    record = SimpleNamespace(
-        title=getattr(candidate, "title", "") or "",
-        summary=getattr(candidate, "snippet", "") or "",
-        body_text="",
-        masked_text="",
-        source=meta.get("source", ""),
-        source_type=meta.get("source_type", getattr(candidate, "site_type", "")),
-        board_name=meta.get("board_name", ""),
-        category_name=meta.get("category_name", ""),
-        comment_count=meta.get("comment_count"),
-        pii_detected=False,
+    title = (getattr(candidate, "title", "") or "").strip()
+    if not title:
+        return _result("discard", "missing_title")
+    text = title.lower()
+    signals, matched = detect_risk_signals(text)
+    extras = [term for term in _TITLE_EXTRA_TERMS if term in text]
+    if not signals and not extras:
+        return _result("discard", "title_no_taxonomy_signal")
+    negatives = detect_negative_context(text)
+    prevention_hits = sum(
+        keyword.lower() in text for keyword in NEGATIVE_CONTEXT_KEYWORDS["prevention_policy"]
     )
-    result = decide_filter_action(record)
-    # Community titles are often vague; high-signal metadata must reach body extraction.
-    if record.source_type == "community" and result.filter_action == "discard":
-        bucket = meta.get("bucket", "")
-        if meta.get("is_trending") or (meta.get("comment_count") or 0) >= 20 or bucket == "high_risk_board":
-            return _result("keep", "community_metadata_needs_body")
-    return result
+    if prevention_hits >= 2 and not any(term in text for term in _DIRECT_RISK_TERMS):
+        return _result(
+            "discard", "title_policy_or_prevention_context", signals,
+            matched + extras, negatives,
+        )
+    return _result("keep", "title_taxonomy_candidate", signals, matched + extras, negatives)
 
 
 def _result(action, reason, signals=None, matched=None, negatives=None,

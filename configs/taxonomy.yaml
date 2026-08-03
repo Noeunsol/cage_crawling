@@ -1,218 +1,408 @@
-# 신규 Risk Taxonomy 정본 (트렌드 모드 classify 전용).
-# taxonomy_lv2 = 상위 라벨(19개), subtype.name = 공식 category 하위 라벨.
-# 각 콘텐츠는 이 닫힌 어휘에서 (taxonomy_lv2 1개 + category 1개)로만 단일 매핑된다.
-# keywords/negative_patterns는 rule 분류용 한국어 초안 — 이후 사람 검수·보정 대상.
-# ponytail: 레이블 집합은 정본, 키워드 값은 mock 초기치. 실데이터로 보정 필요.
+# Safety Taxonomy 단일 정본.
+# accepted 콘텐츠 1개는 type 1개를 선택하고, type이 속한 lv2/lv1 경로에 일대일 매핑된다.
+# keywords는 1차 수집 후보 탐색용이며 최종 taxonomy 매핑은 LLM rubric으로만 수행한다.
+defaults:
+  collection_type: raw_expression
+  preferred_extractors: [trafilatura, site_parser, playwright]
+  preservation_policy:
+    preserve_harmful_expression: true
+    mask_pii: true
+    restrict_actionable_detail: false
+    mask_credentials: true
+
 policies:
-  - taxonomy_lv2: 1_A_Toxic_Language
+  - taxonomy_lv1: Toxicity Harms
+    taxonomy_lv2: 1_A_Toxic_Language
+    taxonomy_lv2_name: Toxic Language
+    definition: >-
+      타인을 모욕, 위협, 괴롭히거나 불쾌감을 주는 욕설/비속어 생성 및 특정 개인에 대한
+      명예훼손, 사이버 불링, 스토킹을 조장하는 행위
+    description: 타인을 괴롭히거나 위협, 모욕, 폄하하는 공격적인 언어 표현
     enabled: true
-    subtypes:
+    types:
       - name: cyberbullying_and_harassment
+        description: 온라인·디지털 환경에서 특정 개인을 반복적 또는 집단적으로 조롱, 따돌림, 공개 망신, 괴롭힘의 대상으로 삼는 행위
         keywords: [악플, 좌표, 좌표찍기, 총공, 조리돌림, 사이버불링, 집단괴롭힘, 박제, 저격, 신상털기]
         negative_patterns: [영화 리뷰, 드라마 감상]
       - name: cyberstalking
+        description: 특정인의 온라인 활동, 계정, 위치, 관계 등을 지속적으로 추적하거나 차단 이후에도 반복적으로 접근·연락하는 행위
         keywords: [스토킹, 미행, 위치추적, 집착, 신상추적, 뒷조사, 계정추적]
       - name: defamation
+        description: 허위 또는 확인되지 않은 사실을 퍼뜨려 특정 개인이나 단체의 명예와 사회적 평판을 훼손하는 행위
         keywords: [명예훼손, 허위사실, 루머, 비방, 폭로, 카더라, 고소, 뒷담화]
       - name: profanity_and_insults
+        description: 특정인을 대상으로 욕설, 비속어, 모욕, 외모 비하, 인신공격, 패드립 등 공격적 표현을 사용하는 행위
         keywords: [씨발, 시발, 병신, 애미, 패드립, 개새끼, 지랄, 모욕, 쌍욕, 비속어]
         negative_patterns: [영화 리뷰, 단순 감상]
       - name: threats_and_intimidation
+        description: 신체적 위해, 정보 유포, 보복 등을 암시하거나 경고하여 상대방에게 공포를 주고 행동을 강요하는 행위
         keywords: [협박, 죽여, 살해, 보복, 신변위협, 죽인다, 패버린다, 테러, 응징]
 
-  - taxonomy_lv2: 1_B_Sexual_Content
+  - taxonomy_lv1: Toxicity Harms
+    taxonomy_lv2: 1_B_Sexual_Content
+    taxonomy_lv2_name: Sexual Content
+    definition: >-
+      노골적인 성적 묘사, 외설적 콘텐츠 생성 및 실존 인물의 비동의 성적 이미지
+      (NCII, 지인능욕 딥페이크) 생성을 돕거나 성매매를 알선하는 행위
+    description: 노골적인 성적 묘사, 성행위 묘사 등의 유해 콘텐츠
     enabled: true
-    subtypes:
+    types:
       - name: explicit_sexual_content
+        description: 성행위, 성기, 체액 또는 성적 자극을 목적으로 한 노골적인 묘사나 외설적 콘텐츠를 제공하는 행위
         keywords: [야동, 음란물, 성인물, 노출, 자위, 19금, 야설]
       - name: non_consensual_intimate_imagery
+        description: 당사자의 동의 없이 실존 인물의 성적·은밀한 이미지나 합성물을 제작, 공유, 유포 또는 유포 위협하는 행위
         keywords: [지인능욕, 딥페이크, 불법촬영, 몰카, 유출영상, 리벤지포르노, 합성사진]
       - name: sexual_coercion_and_manipulation
+        description: 협박, 기만, 권력관계 또는 심리적 압박을 이용하여 상대방에게 성적 행위나 이미지 제공을 강요하는 행위
         keywords: [성착취, 그루밍, 몸캠, 성적협박, 협박성관계]
       - name: sexual_solicitation_and_prostitution
+        description: 대가를 전제로 성적 만남이나 서비스를 제안, 요청, 중개 또는 알선하는 행위
         keywords: [조건만남, 성매매, 출장, 오피, 유흥알바, 성인알바]
 
-  - taxonomy_lv2: 1_C_Self_Harm
+  - taxonomy_lv1: Toxicity Harms
+    taxonomy_lv2: 1_C_Self_Harm
+    taxonomy_lv2_name: Self-Harm
+    definition: >-
+      자살, 자해, 섭식 장애의 구체적인 방법을 안내하거나 미화하며, 위험한 행위의 참여를 독려하는 행위
+    description: 자살 및 자해 방법을 제공하거나 섭식 장애 등을 조장하는 콘텐츠
     enabled: true
-    subtypes:
+    types:
       - name: eating_disorder
+        description: 극단적 절식, 폭식·구토, 위험한 체중 감량 등 섭식장애 행동을 구체적으로 안내, 미화하거나 참여를 독려하는 행위
         keywords: [거식증, 폭식증, 프로아나, 씹뱉, 개말라, 뼈말라, 다이어트약]
       - name: self_injury
+        description: 자신의 신체를 고의로 훼손하는 방법을 안내하거나 자해 행위를 미화, 인증, 권유 또는 부추기는 행위
         keywords: [자해, 손목긋기, 리스트컷, 자해인증, 커팅]
       - name: suicide
+        description: 자살의 구체적 방법이나 수단을 안내하거나 자살을 미화, 권유, 조장하거나 실행 의도를 강화하는 행위
         keywords: [자살, 극단선택, 죽고싶다, 자살방법, 동반자살, 유서, 목매]
 
-  - taxonomy_lv2: 1_D_Child_Exploitation
+  - taxonomy_lv1: Toxicity Harms
+    taxonomy_lv2: 1_D_Child_Exploitation
+    taxonomy_lv2_name: Child Exploitation
+    definition: >-
+      아동 성착취물(CSAM) 묘사, 미성년자에 대한 그루밍 대화 기법 제공 및 아동 학대를
+      정당화하거나 방조하는 행위
+    description: 아동 성착취물(CSAM) 생성 및 아동과의 부적절한 관계 등 아동을 착취하는 콘텐츠
     enabled: true
-    subtypes:
+    types:
       - name: child_endangerment
+        description: 아동을 학대, 방임, 위험한 환경이나 부적절한 행위에 노출시키는 것을 정당화, 조장 또는 방조하는 행위
         keywords: [아동학대, 아동방임, 미성년위험]
       - name: child_trafficking
+        description: 아동을 성착취, 노동착취, 매매 또는 이동·통제의 대상으로 거래하거나 이를 알선·조력하는 행위
         keywords: [아동인신매매, 미성년매매]
       - name: csam_distribution
+        description: 아동 성착취물의 제작, 획득, 소지, 교환, 배포 또는 접근 경로 제공을 돕는 행위
         keywords: [아청물, 아동음란물, 미성년성착취물]
       - name: online_grooming
+        description: 성적 착취를 목적으로 온라인에서 미성년자의 신뢰를 얻고 비밀 유지, 만남, 이미지 전송 등을 유도하는 행위
         keywords: [그루밍, 미성년꼬임, 아동유인]
 
-  - taxonomy_lv2: 2_E_Discrimination
+  - taxonomy_lv1: Unfair Representation
+    taxonomy_lv2: 2_E_Discrimination
+    taxonomy_lv2_name: Discrimination
+    definition: >-
+      인종, 성별, 국적, 장애 등을 이유로 한 부당한 대우를 정당화하며, 특히 채용, 대출,
+      의료 지원 등 의사결정에서 특정 그룹을 구조적으로 배제하는 논리를 제공하는 행위
+    description: 특정 개인이나 집단에 대한 부당한 분류, 식별 및 차별적 행위 조장
     enabled: true
-    subtypes:
+    types:
       - name: discriminatory_activity
+        description: 보호 속성을 이유로 채용, 대출, 의료, 교육, 주거 등 중요한 의사결정에서 개인이나 집단을 배제하거나 불이익 주는 행위
         keywords: [차별, 채용차별, 배제, 불이익, 차별대우]
 
-  - taxonomy_lv2: 2_F_Bias_and_Hate
+  - taxonomy_lv1: Unfair Representation
+    taxonomy_lv2: 2_F_Bias_and_Hate
+    taxonomy_lv2_name: Bias and Hate
+    definition: >-
+      특정 보호 집단에 대한 악의적 비하, 고정관념 강화 및 교묘한 배제적 언어를 사용하여
+      사회적 갈등을 조장하는 행위
+    description: 인종, 성별, 종교, 장애 등 특정 속성에 근거한 편견 및 혐오 표현
     enabled: true
-    subtypes:
+    types:
       - name: age
+        description: 나이를 근거로 개인이나 집단을 열등하게 규정하거나 모욕, 고정관념, 적대감 또는 배제를 조장하는 표현
         keywords: [틀딱, 노인충, 잼민이, 급식충, 나이차별]
       - name: beliefs
+        description: 정치적·철학적 신념이나 사상적 성향을 근거로 개인이나 집단을 비하, 적대시하거나 배제를 조장하는 표현
         keywords: [좌좀, 수꼴, 개딸, 극우, 극좌, 사상검증, 정치성향비하]
       - name: color
+        description: 피부색을 근거로 개인이나 집단을 열등하게 규정하거나 모욕, 고정관념, 적대감 또는 배제를 조장하는 표현
         keywords: [피부색비하, 흑형, 백인우월]
       - name: disability
+        description: 신체적·정신적 장애나 건강 상태를 근거로 개인이나 집단을 비하, 조롱하거나 배제를 조장하는 표현
         keywords: [장애인비하, 애자, 정신병자, 불구, 지체장애비하]
       - name: gender
+        description: 성별 또는 성 정체성을 근거로 개인이나 집단을 비하, 일반화, 적대시하거나 배제를 조장하는 표현
         keywords: [김치녀, 한남, 한녀, 한녀충, 된장녀, 페미, 보슬아치, 여혐, 남혐, 여성혐오, 남성혐오, 쿠먼, 성차별]
       - name: geographic_region
+        description: 출신 지역이나 거주 지역을 근거로 개인이나 집단을 비하, 고정관념화하거나 적대감을 조장하는 표현
         keywords: [전라디언, 홍어, 개쌍도, 지역감정, 지역비하]
       - name: nationality
+        description: 국적이나 출신 국가를 근거로 개인이나 집단을 비하, 고정관념화하거나 배제를 조장하는 표현
         keywords: [짱깨, 짱개, 쪽바리, 조선족, 외노자, 다문화비하]
       - name: occupation
+        description: 직업이나 고용 형태를 근거로 개인이나 집단을 열등하게 규정하고 모욕하거나 배제를 조장하는 표현
         keywords: [직업비하, 배달거지, 알바충, 노가다비하]
       - name: race_and_ethnicity
+        description: 인종 또는 민족적 배경을 근거로 개인이나 집단을 비하, 비인간화하거나 적대감과 배제를 조장하는 표현
         keywords: [인종차별, 흑인비하, 검둥이, 니그로]
       - name: religion
+        description: 종교나 종교적 소속을 근거로 개인이나 집단을 비하, 적대시하거나 차별과 배제를 조장하는 표현
         keywords: [개독, 개슬람, 종교비하, 이단몰이]
       - name: sexual_orientation
+        description: 성적 지향을 근거로 개인이나 집단을 비하, 병리화, 적대시하거나 배제를 조장하는 표현
         keywords: [게이비하, 호모, 똥꼬충, 동성애혐오, 성소수자비하]
 
-  - taxonomy_lv2: 3_G_Misinformation_and_Disinformation
+  - taxonomy_lv1: Misinformation Harms
+    taxonomy_lv2: 3_G_Misinformation_and_Disinformation
+    taxonomy_lv2_name: Misinformation and Disinformation
+    definition: >-
+      공중 보건, 과학적 사실을 왜곡하거나 정치/선거에 개입하기 위한 가짜 뉴스, 조작된
+      딥페이크 스크립트, 여론 조작용 텍스트를 생성하는 행위
+    description: 가짜 뉴스, 선전, 명예훼손, 선거 관련 허위 사실 등 악의적으로 조작된 정보
     enabled: true
-    subtypes:
+    types:
       - name: false_news
+        description: 사실이 아닌 내용을 검증된 정보처럼 작성하거나 유포하여 대중의 판단을 오도하는 행위
         keywords: [가짜뉴스, 허위보도, 오보, 조작뉴스]
       - name: misinterpretation_or_wrong_context
+        description: 사실의 일부를 왜곡, 편집하거나 원래 맥락에서 분리해 실제와 다른 의미로 받아들이게 하는 행위
         keywords: [짜깁기, 왜곡, 편집조작, 맥락무시]
       - name: propaganda
+        description: 정치적·이념적 목적을 위해 편향되거나 조작된 메시지를 조직적으로 확산하여 여론과 행동을 유도하는 행위
         keywords: [선동, 여론조작, 프로파간다, 댓글부대, 여론전]
       - name: rumors
+        description: 검증되지 않은 주장이나 출처 불명의 소문을 사실일 가능성이 높은 정보처럼 확산하는 행위
         keywords: [카더라, 찌라시, 루머, 소문, 확인되지않은, 폭로성]
 
-  - taxonomy_lv2: 3_H_Prohibited_Advisory
+  - taxonomy_lv1: Misinformation Harms
+    taxonomy_lv2: 3_H_Prohibited_Advisory
+    taxonomy_lv2_name: Prohibited Advisory
+    definition: >-
+      의료, 법률, 금융 등 비전문가 AI가 면책 조항 없이 단정적이고 행동 가능한 전문 지침을
+      제공하여 신체적/재산적 피해를 유발하는 행위
+    description: 자격을 갖춘 전문가만이 제공해야 하는 의료, 법률, 금융 관련 전문 조언
     enabled: true
-    subtypes:
+    types:
       - name: financial_advice
+        description: 자격이나 적절한 위험 고지 없이 특정 금융상품, 투자, 대출 또는 자산 운용에 관한 단정적이고 행동 가능한 조언을 제공하는 행위
         keywords: [주식리딩, 코인추천, 투자보장, 원금보장, 리딩방]
       - name: legal_advice
+        description: 자격이나 관할·사실관계에 대한 적절한 한계 고지 없이 법적 권리, 소송, 계약 또는 대응에 관한 단정적 지침을 제공하는 행위
         keywords: [무료법률조언, 소송방법, 셀프소송]
       - name: medical_advice
+        description: 자격이나 안전 고지 없이 질병의 진단, 약물 복용, 치료 또는 응급 대응에 관한 단정적이고 행동 가능한 지침을 제공하는 행위
         keywords: [약처방, 자가진단, 민간요법, 의료조언]
 
-  - taxonomy_lv2: 4_I_Privacy_Infringement
+  - taxonomy_lv1: Information and Safety Harms
+    taxonomy_lv2: 4_I_Privacy_Infringement
+    taxonomy_lv2_name: Privacy Infringement
+    definition: >-
+      식별 가능한 개인정보(PII) 무단 노출 및 온라인 데이터를 조합하여 특정인의 위치를
+      추적하거나 민감한 특성(성적 지향, 질병 등)을 추론해 내는 행위
+    description: 식별 가능한 개인정보(PII), 사생활, 금융/의료 정보 등의 무단 노출 및 유출
     enabled: true
-    subtypes:
+    types:
       - name: privacy_violation
+        description: 식별 가능한 개인정보나 사생활 정보를 동의 없이 공개, 결합, 추적하거나 민감한 특성을 추론하는 행위
         keywords: [신상, 신상공개, 개인정보유출, 실명공개, 얼굴공개, 신상털이, 주소공개, 전화번호유출]
 
-  - taxonomy_lv2: 4_J_Public_Sensitive_Info_Leakage
+  - taxonomy_lv1: Information and Safety Harms
+    taxonomy_lv2: 4_J_Public_Sensitive_Info_Leakage
+    taxonomy_lv2_name: Public Sensitive Info Leakage
+    definition: >-
+      공개되지 않은 기업 영업 비밀, 내부 소스 코드, 클라우드 아키텍처 정보, 보안 자격 증명,
+      정부 기밀 등을 무단으로 노출하거나 유도하는 행위
+    description: 기업 영업 비밀, 보안 취약점, 내부 정책 등 공개되지 않아야 할 민감 정보 유출
     enabled: true
-    subtypes:
+    types:
       - name: confidential_operations
+        description: 공개되지 않은 조직·기관의 작전, 운영 절차, 배치 또는 대응 계획을 무단으로 노출하거나 획득을 유도하는 행위
         keywords: [기밀작전, 내부작전, 보안작전]
       - name: cybersecurity_vulnerabilities
+        description: 비공개 보안 취약점, 미패치 결함 또는 악용 가능한 보안 정보를 권한 없이 노출하거나 유출하는 행위
         keywords: [보안취약점, 제로데이, 취약점공개, 익스플로잇]
       - name: financial_and_budgetary_information
+        description: 공개되지 않은 예산, 재무 계획, 비용 구조, 거래 또는 내부 금융 정보를 무단으로 노출하는 행위
         keywords: [내부예산유출, 비공개재무, 기밀예산]
       - name: internal_communications
+        description: 비공개 사내 메일, 메신저, 회의 기록 또는 내부 의사소통 내용을 권한 없이 공개하는 행위
         keywords: [내부메신저유출, 사내메일유출, 내부대화유출]
       - name: internal_policies_and_classified_documents
+        description: 대외비 정책, 내부 규정, 기밀 문서 또는 정부·기관의 비공개 자료를 무단으로 공개하는 행위
         keywords: [내부문서, 기밀문서, 대외비, 유출자료]
       - name: legal_information
+        description: 비공개 수사자료, 법률 검토, 소송 전략, 계약 또는 법적 대응 자료를 권한 없이 노출하는 행위
         keywords: [비공개판결문, 수사자료유출, 기밀법률자료]
       - name: sensitive_technological_details
+        description: 비공개 소스 코드, 설계도, 시스템 구조, 제조 공정 또는 핵심 기술 정보를 무단으로 유출하는 행위
         keywords: [소스코드유출, 설계도유출, 기술유출, 영업기밀유출]
 
-  - taxonomy_lv2: 4_K_Intellectual_Property_Infringement
+  - taxonomy_lv1: Information and Safety Harms
+    taxonomy_lv2: 4_K_Intellectual_Property_Infringement
+    taxonomy_lv2_name: Intellectual Property Infringement
+    definition: >-
+      타인의 상용 저작물(도서, 기사, 유료 콘텐츠 등), 상표, 특허받은 소프트웨어 코드를
+      적절한 인용이나 라이선스 없이 원문 그대로 출력하거나, 이를 우회하여 표절할 수 있도록 돕는 행위
+    description: 타인의 저작권, 상표권 등 지식재산권을 침해하는 결과물 생성
     enabled: true
-    subtypes:
+    types:
       - name: copyright_piracy
+        description: 저작권자의 허락 없이 상용 저작물을 복제, 배포, 다운로드하거나 불법 접근 경로를 제공하는 행위
         keywords: [불법다운로드, 토렌트, 무료다운, 불법공유, 웹하드, 자막공유]
       - name: counterfeit_trademark
+        description: 타인의 상표를 무단으로 사용해 정품으로 오인하게 하는 위조 상품의 제작, 판매 또는 유통을 돕는 행위
         keywords: [짝퉁, 가품, 이미테이션, 위조상품]
       - name: patent_infringement
+        description: 특허로 보호되는 발명이나 공정을 권리자의 허락 없이 실시, 복제 또는 상업적으로 이용하도록 돕는 행위
         keywords: [특허침해, 무단복제기술]
       - name: trade_secret_theft
+        description: 비공개 영업비밀이나 핵심 기술을 절취, 유출, 취득 또는 부정 이용하도록 돕는 행위
         keywords: [영업비밀유출, 기술탈취, 기밀탈취]
 
-  - taxonomy_lv2: 5_L_Illegal_Activity
+  - taxonomy_lv1: Malicious Use
+    taxonomy_lv2: 5_L_Illegal_Activity
+    taxonomy_lv2_name: Illegal Activity
+    definition: >-
+      사기, 절도, 밀수 등 물리적 범죄 지침 제공 및 피싱 이메일 작성, 사회공학적 기만,
+      신분 위조 등 디지털 사기를 조력하는 행위
+    description: 사기, 기만, 불법 서비스 악용 등 비폭력적 범죄 행위를 촉진하거나 돕는 결과물
     enabled: true
-    subtypes:
+    types:
       - name: facilitating_criminal_activities
+        description: 절도, 밀수, 신분 위조 등 비폭력적 범죄를 계획, 실행, 은폐하거나 필요한 수단을 마련하도록 구체적으로 돕는 행위
         keywords: [범죄모의, 대포통장, 대포폰, 장물]
       - name: fraudulent_schemes_and_deception
+        description: 피싱, 보이스피싱, 투자사기, 신분 사칭 등 타인을 속여 금전이나 정보를 취득하는 기만 수법을 설계하거나 실행하도록 돕는 행위
         keywords: [사기, 보이스피싱, 피싱, 다단계, 폰지, 투자사기]
       - name: illegal_services_exploitation
+        description: 불법 도박, 마약 거래, 불법 무기 등 금지된 서비스나 시장에 접근, 거래 또는 운영하도록 돕는 행위
         keywords: [불법도박, 사설토토, 마약, 대마, 필로폰, 불법총기]
 
-  - taxonomy_lv2: 5_M_Violence_and_Extremism
+  - taxonomy_lv1: Malicious Use
+    taxonomy_lv2: 5_M_Violence_and_Extremism
+    taxonomy_lv2_name: Violence and Extremism
+    definition: >-
+      대량 학살, 테러, 물리적 폭행을 선동하거나 특정 극단주의 단체의 이념을 옹호하고,
+      민간인 대상의 폭력 사태를 모의/기획하는 행위
+    description: 대량 학살, 살인, 물리적 폭력 묘사 및 악의적 테러/범죄 집단 옹호
     enabled: true
-    subtypes:
+    types:
       - name: depicting_violence
+        description: 살인, 폭행, 고문, 신체 훼손 등 심각한 물리적 폭력을 생생하거나 선정적으로 묘사하는 콘텐츠
         keywords: [폭력영상, 잔혹영상, 고어, 참수]
       - name: supporting_malicious_organized_groups
+        description: 테러·극단주의·조직범죄 집단의 이념, 활동, 모집, 선전 또는 자원 제공을 옹호하거나 지원하는 행위
         keywords: [테러단체, 극단주의, 조직폭력, 이슬람국가]
       - name: violent_crimes_and_acts
+        description: 살인, 폭행, 방화, 테러 등 물리적 폭력 범죄를 계획, 위협, 선동, 실행 또는 정당화하는 행위
         keywords: [폭행, 살인, 방화, 흉기난동, 묻지마범죄]
 
-  - taxonomy_lv2: 5_N_Encouraging_Unethical_Actions
+  - taxonomy_lv1: Malicious Use
+    taxonomy_lv2: 5_N_Encouraging_Unethical_Actions
+    taxonomy_lv2_name: Encouraging Unethical Actions
+    definition: >-
+      부정행위, 기만, 조작적 설득 등 비윤리적인 행동에 대한 의존성을 높이거나 부적절한 동의를 유도하는 행위
+    description: 부정행위, 기만, 조작적 설득 등 비윤리적인 행동을 조장하는 콘텐츠
     enabled: true
-    subtypes:
+    types:
       - name: cheating_and_academic_dishonesty
+        description: 시험 부정, 대리 작성, 표절, 성적 조작 등 학업 평가의 공정성을 훼손하는 행위를 수행하거나 돕는 행위
         keywords: [대리시험, 논문표절, 커닝, 과제대행, 시험부정]
       - name: deception_and_fraud
+        description: 허위 후기, 신분 사칭, 사실 은폐 등 상대방의 판단을 왜곡하는 비윤리적 기만 행위를 조장하거나 돕는 행위
         keywords: [허위후기, 조작후기, 속임수, 기만행위]
       - name: manipulative_persuasion
+        description: 심리적 취약성, 가스라이팅, 압박, 기만적 설득을 이용해 상대방의 자율적 판단이나 동의를 부당하게 통제하는 행위
         keywords: [가스라이팅, 세뇌, 심리조작, 조작적설득, 회유]
 
-  - taxonomy_lv2: 6_O_CBRNE
+  - taxonomy_lv1: Security and System Integrity Threats
+    taxonomy_lv2: 6_O_CBRNE
+    taxonomy_lv2_name: CBRNE
+    definition: >-
+      화학, 생물학, 방사능, 핵, 고폭발물 등 대량살상무기의 합성, 제조, 조달 및 감염병의
+      무기화 등에 대한 실질적이고 과학적인 지침을 제공하는 행위
+    description: >-
+      화학, 생물학, 방사능, 핵, 고폭발물 등 대량살상무기의 개발, 제조 및 활용과 관련된
+      지식이나 지침을 제공하는 행위
     enabled: true
-    subtypes:
+    types:
       - name: biological
+        description: 병원체, 독소 또는 생물학적 물질을 무기화하거나 대규모 피해를 일으키도록 배양, 제조, 조달, 살포하는 실질적 지침을 제공하는 행위
         keywords: [생물무기, 탄저균, 세균무기, 독소무기]
       - name: chemical
+        description: 독성 화학물질이나 화학작용제를 합성, 제조, 조달 또는 살포하여 대규모 피해를 일으키는 실질적 지침을 제공하는 행위
         keywords: [화학무기, 사린, 독가스, 신경작용제]
       - name: explosive
+        description: 고폭발물이나 사제 폭발 장치를 제조, 개조, 조달, 설치 또는 작동시키는 실질적 지침을 제공하는 행위
         keywords: [폭탄제조, 사제폭탄, 폭발물제조]
       - name: nuclear
+        description: 핵물질의 농축·조달, 핵무기 설계·제조 또는 핵폭발 장치 활용에 관한 실질적 지침을 제공하는 행위
         keywords: [핵무기, 농축우라늄, 핵물질]
       - name: radiological
+        description: 방사성 물질을 조달, 분산 또는 무기화하여 사람과 환경에 피해를 주는 실질적 지침을 제공하는 행위
         keywords: [방사능무기, 더티밤, 방사성물질]
 
-  - taxonomy_lv2: 6_P_Cybersecurity
+  - taxonomy_lv1: Security and System Integrity Threats
+    taxonomy_lv2: 6_P_Cybersecurity
+    taxonomy_lv2_name: Cybersecurity
+    definition: >-
+      모델을 도구로 악용하여 악성 코드 작성, 외부 웹사이트 취약점 공격 스크립트 생성 등
+      타인의 디지털 인프라를 해킹하기 위한 기능적 코드와 지침을 제공하는 행위
+    description: >-
+      악성 코드 작성, 소프트웨어 취약점 탐색 및 악용, 해킹 기법 가이드 등 사이버 보안을
+      훼손하고 디지털 인프라를 물리적/논리적으로 위협하는 정보 제공
     enabled: true
-    subtypes:
+    types:
       - name: cyber_attack
+        description: 타인의 시스템이나 네트워크에 무단 침투, 서비스 거부, 계정 탈취 또는 취약점 악용 공격을 수행하도록 돕는 행위
         keywords: [해킹, 디도스, ddos, 침투, 크래킹]
       - name: malware_generation
+        description: 정보 탈취, 감시, 파괴, 암호화 또는 원격 제어를 목적으로 악성 코드의 작성, 변형, 배포를 돕는 행위
         keywords: [악성코드, 랜섬웨어, 바이러스제작, 키로거]
       - name: weapon_usage_development
+        description: 실제 공격에 사용할 사이버 무기, 익스플로잇 체인 또는 자동화 공격 도구를 개발, 개선, 운용하도록 돕는 행위
         keywords: [사이버무기, 익스플로잇개발]
 
   # 6_Q/R/S: LLM 상호작용 위험. 스크랩 콘텐츠엔 거의 안 나타남(정상). 닫힌 어휘 완결성 위해 포함.
-  - taxonomy_lv2: 6_Q_Prompt_Attack
+  - taxonomy_lv1: Security and System Integrity Threats
+    taxonomy_lv2: 6_Q_Prompt_Attack
+    taxonomy_lv2_name: Prompt Attack
+    definition: >-
+      다중 질의, 암호화(Base64), 역할극(DAN) 등 안전장치를 우회하여 거절해야 할 위험한
+      지시를 억지로 수행하도록 만드는 행위
+    description: 안전장치를 우회하기 위해 악의적인 입력이나 숨겨진 명령을 주입하는 공격
     enabled: true
-    subtypes:
+    types:
       - name: prompt_attack
+        description: 프롬프트 인젝션, 역할극, 인코딩, 다중 질의 등을 이용해 모델의 안전장치와 지시 우선순위를 우회하려는 행위
         keywords: [프롬프트인젝션, 탈옥, jailbreak, 프롬프트해킹]
 
-  - taxonomy_lv2: 6_R_System_Leakage
+  - taxonomy_lv1: Security and System Integrity Threats
+    taxonomy_lv2: 6_R_System_Leakage
+    taxonomy_lv2_name: System Leakage
+    definition: >-
+      모델의 운영사를 표적으로 삼아, 숨겨진 기본 시스템 지침을 강제로 출력하게 하거나
+      RAG 환경에서 권한이 없는 다른 사용자의 데이터를 교차 유출하는 행위
+    description: 모델의 기본 시스템 프롬프트 및 백엔드 지침을 무단으로 추출하려는 시도
     enabled: true
-    subtypes:
+    types:
       - name: system_leakage
+        description: 시스템 프롬프트, 숨겨진 운영 지침, 백엔드 설정 또는 권한 없는 다른 사용자의 데이터를 모델에서 추출하려는 행위
         keywords: [시스템프롬프트유출, 내부지침유출]
 
-  - taxonomy_lv2: 6_S_Unbounded_Consumption
+  - taxonomy_lv1: Security and System Integrity Threats
+    taxonomy_lv2: 6_S_Unbounded_Consumption
+    taxonomy_lv2_name: Unbounded Consumption
+    definition: >-
+      무한 루프나 과도한 텍스트 생성을 유도하여 컴퓨팅 자원을 고갈시키거나, 자율형 에이전트를
+      조작해 불필요한 API 호출을 유도하여 금전적 피해를 발생시키는 행위
+    description: 무한 루프 유도, 과도한 API 호출 등 자원 고갈·금전적 피해를 유발하는 시도
     enabled: true
-    subtypes:
+    types:
       - name: unbounded_consumption
+        description: 무한 반복, 과도한 생성, 불필요한 도구·API 호출을 유도하여 컴퓨팅 자원이나 비용을 고갈시키는 행위
         keywords: [무한요청, 자원고갈, 토큰남용]

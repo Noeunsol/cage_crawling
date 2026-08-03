@@ -14,17 +14,19 @@ from pathlib import Path
 
 from .schema import ContentRecord, UrlCandidate
 
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 17
 
 # (컬럼명, 타입) — CREATE와 마이그레이션 공용
 _CONTENT_COLS = [
     ("content_id", "TEXT PRIMARY KEY"),
-    ("taxonomy_lv2", "TEXT"), ("subtype", "TEXT"),
+    ("taxonomy_lv1", "TEXT"), ("taxonomy_lv2", "TEXT"), ("subtype", "TEXT"),
     ("source_url", "TEXT"), ("canonical_url", "TEXT"), ("domain", "TEXT"),
     ("site_name", "TEXT"), ("site_type", "TEXT"),
     ("title", "TEXT"), ("body_text", "TEXT"),
     ("raw_text", "TEXT"), ("cleaned_text", "TEXT"), ("masked_text", "TEXT"),
     ("raw_comments", "TEXT"), ("masked_comments", "TEXT"),
+    ("original_comment_count", "INTEGER"), ("kept_comment_count", "INTEGER"),
+    ("duplicate_comments_removed", "INTEGER"), ("unrelated_comments_removed", "INTEGER"),
     ("published_at", "TEXT"), ("published_at_source", "TEXT"), ("collected_at", "TEXT"),
     ("search_query", "TEXT"), ("search_api", "TEXT"), ("extractor", "TEXT"),
     ("collection_type", "TEXT"), ("discovery_method", "TEXT"),
@@ -41,6 +43,7 @@ _CONTENT_COLS = [
     ("source", "TEXT"), ("source_type", "TEXT"), ("board_name", "TEXT"), ("category_name", "TEXT"),
     ("category", "TEXT"), ("is_risk_candidate", "INTEGER"),
     ("view_count", "INTEGER"), ("like_count", "INTEGER"), ("dislike_count", "INTEGER"), ("comment_count", "INTEGER"),
+    ("ocr_image_count", "INTEGER"), ("ocr_char_count", "INTEGER"),
     ("is_trending", "INTEGER"),
     ("risk_score", "INTEGER"), ("trend_score", "INTEGER"), ("confidence", "INTEGER"), ("action", "TEXT"),
     ("is_taxonomy_relevant", "INTEGER"), ("is_trend_seed", "INTEGER"),
@@ -48,8 +51,13 @@ _CONTENT_COLS = [
     # v8 후처리/분류 부가정보
     ("risk_signals", "TEXT"), ("matched_keywords", "TEXT"), ("secondary_flags", "TEXT"),
     ("classification_source", "TEXT"), ("classification_reason", "TEXT"),
+    ("llm_model", "TEXT"), ("llm_input_tokens", "INTEGER"),
+    ("llm_cached_input_tokens", "INTEGER"), ("llm_output_tokens", "INTEGER"),
+    ("llm_total_tokens", "INTEGER"), ("llm_estimated_cost_usd", "REAL"),
+    ("is_harmful", "INTEGER"), ("concrete_context_score", "REAL"),
+    ("evidence_spans", "TEXT"),
     ("contains_korean_context", "INTEGER"),
-    ("crawl_status", "TEXT"), ("raw_html_path", "TEXT"),
+    ("crawl_status", "TEXT"),
     ("parent_source_url", "TEXT"), ("link_source", "TEXT"), ("is_supplementary", "INTEGER"),
 ]
 
@@ -63,7 +71,11 @@ _CANDIDATE_COLS = [
     ("is_trend_seed", "INTEGER"),
     ("parent_source_url", "TEXT"), ("link_source", "TEXT"), ("is_supplementary", "INTEGER"),
     ("value_score", "REAL"), ("taxonomy_fit_url_score", "REAL"),
-    ("harm_signal_url_score", "REAL"), ("filter_reason", "TEXT"), ("status", "TEXT"), ("score", "REAL"),
+    ("harm_signal_url_score", "REAL"),
+    ("llm_model", "TEXT"), ("llm_input_tokens", "INTEGER"),
+    ("llm_cached_input_tokens", "INTEGER"), ("llm_output_tokens", "INTEGER"),
+    ("llm_total_tokens", "INTEGER"), ("llm_estimated_cost_usd", "REAL"),
+    ("filter_reason", "TEXT"), ("status", "TEXT"), ("score", "REAL"),
 ]
 
 _OTHER_SCHEMA = """
@@ -150,10 +162,12 @@ class Store:
         row["contains_korean_context"] = (
             int(rec.contains_korean_context) if rec.contains_korean_context is not None else None
         )
+        row["is_harmful"] = int(rec.is_harmful) if rec.is_harmful is not None else None
         row["pii_types"] = json.dumps(rec.pii_types, ensure_ascii=False)
         row["risk_signals"] = json.dumps(rec.risk_signals, ensure_ascii=False)
         row["matched_keywords"] = json.dumps(rec.matched_keywords, ensure_ascii=False)
         row["secondary_flags"] = json.dumps(rec.secondary_flags, ensure_ascii=False)
+        row["evidence_spans"] = json.dumps(rec.evidence_spans, ensure_ascii=False)
         row["negative_contexts"] = json.dumps(rec.negative_contexts, ensure_ascii=False)
         row["masking_warnings"] = json.dumps(rec.masking_warnings, ensure_ascii=False)
         row["masked_entities"] = json.dumps(

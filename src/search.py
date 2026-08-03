@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import serpapi
 
 from .policy import Subtype
+from .query import GeneratedQuery
 from .schema import UrlCandidate
 from .site_registry import SiteRegistry
 

@@ -27,6 +27,26 @@ def build_report(store: Store) -> dict:
     avg_conf = cur.execute(
         "SELECT AVG(taxonomy_relevance_score) FROM content_records"
     ).fetchone()[0]
+    by_action = {
+        "accepted": cur.execute(
+            "SELECT COUNT(*) FROM content_records WHERE action='accepted' AND COALESCE(is_supplementary,0)=0"
+        ).fetchone()[0],
+        "review": cur.execute(
+            "SELECT COUNT(*) FROM content_records WHERE action='review' AND COALESCE(is_supplementary,0)=0"
+        ).fetchone()[0],
+        "pending": cur.execute(
+            "SELECT COUNT(*) FROM content_records WHERE action='pending' AND COALESCE(is_supplementary,0)=0"
+        ).fetchone()[0],
+        "excluded": cur.execute(
+            "SELECT COUNT(*) FROM url_candidates WHERE status IN ('trend_excluded','matched_fail')"
+        ).fetchone()[0],
+        "discard": cur.execute(
+            "SELECT COUNT(*) FROM url_candidates WHERE status IN ('prefilter_discarded','trend_discard')"
+        ).fetchone()[0],
+        "supplementary": cur.execute(
+            "SELECT COUNT(*) FROM content_records WHERE is_supplementary=1"
+        ).fetchone()[0],
+    }
 
     def average(column: str) -> float:
         value = cur.execute(f"SELECT AVG({column}) FROM content_records").fetchone()[0]
@@ -62,7 +82,7 @@ def build_report(store: Store) -> dict:
         "by_filter_status": counts("SELECT filter_status, COUNT(*) FROM content_records GROUP BY filter_status"),
         # 트렌드 모드 집계 (keyword 모드에선 대부분 빈 버킷)
         "by_source": counts("SELECT source, COUNT(*) FROM content_records WHERE source!='' GROUP BY source"),
-        "by_action": counts("SELECT action, COUNT(*) FROM content_records WHERE action!='pending' GROUP BY action"),
+        "by_action": by_action,
         "risk_score_distribution": counts(
             "SELECT risk_score, COUNT(*) FROM content_records WHERE risk_score IS NOT NULL GROUP BY risk_score"),
         "trend_score_distribution": counts(

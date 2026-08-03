@@ -8,7 +8,7 @@ Tavily/Firecrawl 등 나머지 외부 연동은 아직 결정론적 mock이다.
 
 ```bash
 pip install -r requirements.txt
-brew install tesseract tesseract-lang          # macOS: 디시 이미지 한국어 OCR
+# 1차 대량 수집은 OCR을 사용하지 않으므로 Tesseract 설치가 필요 없다.
 export SERPAPI_KEY=...                       # keyword 검색(real). 없으면 검색 단계 실패
 python -m src.main -v                         # 실제 수집 (SerpAPI + fetch)
 python -m src.main --dry-run                  # fetch 없이 수집 예정 범위·도메인 분포 프리뷰
@@ -35,7 +35,7 @@ PII 메타데이터와 단계별 전환율만 표시한다. raw 본문과 raw �
 ## 파이프라인 (설계서 §3)
 
 ```
-taxonomy_policy(Phase0) → QueryGenerator(1) → SearchRouter(2) → UrlFrontier(3)
+taxonomy.yaml(Phase0) → QueryGenerator(1) → SearchRouter(2) → UrlFrontier(3)
 → URL filter(4) → ExtractorRouter(5-7) → clean+PII(8) → QualityFilter(9)
 → TaxonomyMatcher(10) → sqlite(11) → Report(12)
 ```

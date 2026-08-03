@@ -57,6 +57,10 @@ class Subtype:
 class Policy:
     taxonomy_lv2: str
     subtypes: list[Subtype]
+    taxonomy_lv1: str = ""
+    taxonomy_lv2_name: str = ""
+    definition: str = ""
+    description: str = ""
 
 
 def load_policies(path: str) -> list[Policy]:
@@ -64,12 +68,31 @@ def load_policies(path: str) -> list[Policy]:
         data: dict[str, Any] = yaml.safe_load(f)
 
     policies: list[Policy] = []
+    defaults = data.get("defaults", {})
     for p in data.get("policies", []):
         if not p.get("enabled", False):
             continue
-        inherited = {k: p[k] for k in _INHERITED if k in p}
-        subtypes = [Subtype(**_subtype_kwargs({**inherited, **s})) for s in p.get("subtypes", [])]
-        policies.append(Policy(p["taxonomy_lv2"], subtypes))
+        inherited = {
+            k: p.get(k, defaults[k])
+            for k in _INHERITED
+            if k in p or k in defaults
+        }
+        type_rows = p.get("types", p.get("subtypes", []))
+        if not type_rows:
+            # 명시적 type이 없는 정책은 Lv2 자체를 단일 type으로 사용한다.
+            type_rows = [{
+                "name": p.get("taxonomy_lv2_name") or p["taxonomy_lv2"],
+                "description": p.get("description") or p.get("definition", ""),
+            }]
+        subtypes = [Subtype(**_subtype_kwargs({**inherited, **s})) for s in type_rows]
+        policies.append(Policy(
+            taxonomy_lv2=p["taxonomy_lv2"],
+            subtypes=subtypes,
+            taxonomy_lv1=p.get("taxonomy_lv1", ""),
+            taxonomy_lv2_name=p.get("taxonomy_lv2_name", ""),
+            definition=p.get("definition", ""),
+            description=p.get("description", ""),
+        ))
     return policies
 
 

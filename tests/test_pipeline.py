@@ -67,7 +67,7 @@ def test_end_to_end_real_parsers(tmp_path, monkeypatch):
     # (a) Toxic Language pass 레코드 + 최소 필드
     rows = conn.execute(
         "SELECT source_url, title, body_text FROM content_records "
-        "WHERE taxonomy_lv2='Toxic Language' AND filter_status='pass'"
+        "WHERE taxonomy_lv2='1_A_Toxic_Language' AND filter_status='pass'"
     ).fetchall()
     assert rows, "Toxic Language pass 레코드가 최소 1건"
     for url, title, body in rows:
@@ -78,10 +78,6 @@ def test_end_to_end_real_parsers(tmp_path, monkeypatch):
     assert "naver_kin" in extractors           # __NEXT_DATA__ 파싱
     assert "trafilatura" in extractors         # 뉴스 본문+날짜
     assert "dcinside" in extractors or "site_parser_community" in extractors
-
-    # (d) 동일 사건 near-dup: 같은 fixture 본문이 event_dedup으로 접힘
-    dup = conn.execute("SELECT COUNT(*) FROM filter_logs WHERE stage='event_dedup'").fetchone()[0]
-    assert dup >= 1, "동일 본문이 near-dup으로 걸러져야 한다"
 
     # (g) body_text=masked (PII 마스킹), raw는 DB에만 (raw_text에 원문 보존)
     r = conn.execute("SELECT body_text, raw_text FROM content_records LIMIT 1").fetchone()

@@ -73,14 +73,25 @@ def _apply_side_scores(rec: ContentRecord, text: str, subtype: Subtype, confiden
 
 
 def build_taxonomy_index(policies: list[Policy]) -> tuple[set[tuple[str, str]], list[str]]:
-    """(lv2, category) 유효쌍 집합 + LLM 프롬프트용 taxonomy 나열 줄."""
+    """(lv2, type) 유효쌍 + LLM system rubric용 정본 설명."""
     valid: set[tuple[str, str]] = set()
     lines: list[str] = []
     for p in policies:
         cats = [s.name for s in p.subtypes]
         for c in cats:
             valid.add((p.taxonomy_lv2, c))
-        lines.append(f"- {p.taxonomy_lv2}: {', '.join(cats)}")
+        label = f"{p.taxonomy_lv1} > {p.taxonomy_lv2}"
+        if p.taxonomy_lv2_name:
+            label += f" ({p.taxonomy_lv2_name})"
+        lines.append(
+            f"- {label}\n"
+            f"  Definition: {p.definition}\n"
+            f"  Description: {p.description}\n"
+            "  types:\n" + "\n".join(
+                f"    - {s.name}: {s.description or p.description or p.definition}"
+                for s in p.subtypes
+            )
+        )
     return valid, lines
 
 
@@ -156,15 +167,19 @@ class RuleBasedMatcher(TaxonomyMatcher):
 class LLMMatcher(TaxonomyMatcher):
     """LLM 분류기. provider=anthropic(Claude)|openai(gpt-4o-mini). 실패/검증오류 시 None(→rule fallback)."""
     def __init__(self, model: str = "claude-haiku-4-5", max_chars: int = 4000,
-                 include_comments: bool = True, provider: str = "anthropic"):
+                 provider: str = "anthropic", pricing: dict | None = None):
         self.model = model
         self.max_chars = max_chars
-        self.include_comments = include_comments
         self.provider = provider
+        self.pricing = pricing or {}
+        self.last_usage = {"input": 0, "cached": 0, "output": 0, "total": 0}
+        self.last_error = ""
         self._client = None
 
     def _get_client(self):
         if self._client is None:
+            from dotenv import load_dotenv
+            load_dotenv()  # 프로젝트 .env; 기존 환경변수는 덮어쓰지 않는다.
             if self.provider == "openai":
                 from openai import OpenAI   # lazy: 필요할 때만 dep
                 self._client = OpenAI()
@@ -174,6 +189,8 @@ class LLMMatcher(TaxonomyMatcher):
         return self._client
 
     def _complete_json(self, system: str, user: str, schema: dict) -> dict | None:
+        self.last_usage = {"input": 0, "cached": 0, "output": 0, "total": 0}
+        self.last_error = ""
         try:
             if self.provider == "openai":
                 resp = self._get_client().chat.completions.create(
@@ -182,6 +199,14 @@ class LLMMatcher(TaxonomyMatcher):
                     response_format={"type": "json_schema",
                                      "json_schema": {"name": "cls", "strict": True, "schema": schema}},
                 )
+                usage = resp.usage
+                details = getattr(usage, "prompt_tokens_details", None)
+                self.last_usage = {
+                    "input": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "cached": int(getattr(details, "cached_tokens", 0) or 0),
+                    "output": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "total": int(getattr(usage, "total_tokens", 0) or 0),
+                }
                 return json.loads(resp.choices[0].message.content)
             resp = self._get_client().messages.create(
                 model=self.model, max_tokens=512, system=system,
@@ -189,28 +214,49 @@ class LLMMatcher(TaxonomyMatcher):
                 output_config={"format": {"type": "json_schema", "schema": schema}},
             )
             text = next(b.text for b in resp.content if b.type == "text")
+            usage = getattr(resp, "usage", None)
+            self.last_usage = {
+                "input": int(getattr(usage, "input_tokens", 0) or 0),
+                "cached": 0,
+                "output": int(getattr(usage, "output_tokens", 0) or 0),
+                "total": int(getattr(usage, "input_tokens", 0) or 0)
+                         + int(getattr(usage, "output_tokens", 0) or 0),
+            }
             return json.loads(text)
         except Exception as e:  # noqa: BLE001 (API/파싱 오류 → rule fallback)
+            self.last_error = f"llm_api_or_json_error:{type(e).__name__}"
             log.info("LLM 호출 실패(%s) → rule fallback", e)
             return None
 
+    def _record_usage(self, rec) -> None:
+        usage = self.last_usage
+        rec.llm_model = self.model
+        rec.llm_input_tokens = usage["input"]
+        rec.llm_cached_input_tokens = usage["cached"]
+        rec.llm_output_tokens = usage["output"]
+        rec.llm_total_tokens = usage["total"] or usage["input"] + usage["output"]
+        uncached = max(0, usage["input"] - usage["cached"])
+        cost = (
+            uncached * float(self.pricing.get("input_per_million_usd", 0))
+            + usage["cached"] * float(self.pricing.get("cached_input_per_million_usd", 0))
+            + usage["output"] * float(self.pricing.get("output_per_million_usd", 0))
+        ) / 1_000_000
+        rec.llm_estimated_cost_usd = round(cost, 8)
+
     def _user_text(self, rec) -> str:
         body = (rec.masked_text or rec.body_text)[: self.max_chars]
-        user = f"제목: {rec.title}\n본문:\n{body}"
-        if self.include_comments and rec.masked_comments:
-            user += "\n\n댓글:\n" + "\n".join(rec.masked_comments)[:1000]
-        return user
+        return f"제목: {rec.title}\n본문:\n{body}"
 
     def match(self, taxonomy_lv2, subtype, rec) -> MatchResult | None:
         system = (
             f"{_INJECTION_DEFENSE}\n\n"
             f"taxonomy_lv2='{taxonomy_lv2}', subtype='{subtype.name}': {subtype.description}\n"
-            f"keywords={subtype.keywords}, positive={subtype.positive_patterns}, negative={subtype.negative_patterns}\n"
-            "이 본문이 해당 subtype에 실제로 부합하는지 판단하라."
+            "단어 출현 여부가 아니라 콘텐츠의 중심 행위와 맥락이 해당 정의에 부합하는지 판단하라."
         )
         data = self._complete_json(system, self._user_text(rec), _LLM_SCHEMA)
         if data is None:
             return None
+        self._record_usage(rec)
         conf = round(float(data.get("confidence", 0.0)), 3)
         rec.taxonomy_relevance_score = conf
         rec.taxonomy_fit_score = conf
@@ -220,54 +266,89 @@ class LLMMatcher(TaxonomyMatcher):
             reason=f"llm: {data.get('reason', '')}", safety_flags=list(data.get("safety_flags", [])),
         )
 
-    def classify(self, rec, policies, valid_pairs, taxo_lines) -> MatchResult | None:
+    def classify(self, rec, policies, valid_pairs=None, taxo_lines=None) -> MatchResult | None:
         """관련성·19종 taxonomy·유해성·한국 맥락을 한 번에 판정한다."""
+        canonical_pairs, canonical_lines = build_taxonomy_index(policies)
+        valid_pairs = valid_pairs or canonical_pairs
+        taxo_lines = taxo_lines or canonical_lines
+        path_by_type = {
+            st.name: (p.taxonomy_lv1, p.taxonomy_lv2)
+            for p in policies for st in p.subtypes
+        }
         schema = {
             "type": "object",
             "properties": {
                 "is_taxonomy_relevant": {"type": "boolean"},
-                "taxonomy_lv2": {"type": ["string", "null"]},
-                "category": {"type": ["string", "null"]},
+                "filter_status": {"type": "string", "enum": ["pass", "review", "fail"]},
+                "category": {"enum": [None, *sorted(path_by_type)]},
                 "is_harmful": {"type": "boolean"},
                 "harmfulness_score": {"type": "number"},
                 "contains_korean_context": {"type": "boolean"},
                 "korea_relevance_score": {"type": "number"},
+                "concrete_context_score": {"type": "number"},
                 "confidence": {"type": "number"},
                 "reason": {"type": "string"},
+                "evidence_spans": {"type": "array", "items": {"type": "string"}},
+                "fail_reason": {"type": ["string", "null"]},
             },
             "required": [
-                "is_taxonomy_relevant", "taxonomy_lv2", "category", "is_harmful",
+                "is_taxonomy_relevant", "filter_status", "category", "is_harmful",
                 "harmfulness_score", "contains_korean_context", "korea_relevance_score",
-                "confidence", "reason",
+                "concrete_context_score", "confidence", "reason", "evidence_spans",
+                "fail_reason",
             ],
             "additionalProperties": False,
         }
         system = (
-            f"{_INJECTION_DEFENSE}\n\n이 콘텐츠의 Risk Taxonomy 관련성, 실제 유해성, 한국 사회·언어·제도 "
-            "맥락 포함 여부를 각각 판단하라. 관련 있으면 아래 목록에서 taxonomy_lv2/category 한 쌍만 "
-            "고르고, 관련 없으면 두 라벨을 null로 반환하라. 점수는 0~1 범위다.\n" + "\n".join(taxo_lines)
+            f"{_INJECTION_DEFENSE}\n\n당신은 한국어 AI Safety 콘텐츠 taxonomy 분류기다. "
+            "아래 19개 정의와 type 설명을 비교하여 정확히 하나의 primary category(type)만 선택하라. "
+            "taxonomy_lv1과 taxonomy_lv2는 category를 기준으로 시스템이 결정하므로 출력하지 마라. "
+            "키워드 일치나 단어 출현 횟수로 분류하지 말고 Definition과 Description을 기준으로 중심 행위, "
+            "의도, 피해자, 대상과 전체 맥락을 판단하라. 여러 위험이 있더라도 사건의 중심 위험 하나만 "
+            "primary로 선택하라. 예방·상담·정책·"
+            "중립 설명·단순 보도는 구체적 유해 행위나 위험한 요청이 없으면 fail로 판정하라. 애매하면 review, "
+            "관련 없으면 category를 null로 반환하라. evidence_spans에는 입력에서 짧은 근거만 "
+            "인용하라. 제공된 라벨 외에는 만들지 말고 모든 점수는 0~1 범위로 반환하라.\n\nTaxonomy definitions:\n"
+            + "\n".join(taxo_lines)
         )
         data = self._complete_json(system, self._user_text(rec), schema)
         if data is None:
             return None
-        lv2, cat = data.get("taxonomy_lv2"), data.get("category")
+        self._record_usage(rec)
+        cat = data.get("category")
         relevant = bool(data.get("is_taxonomy_relevant"))
-        if relevant and (lv2, cat) not in valid_pairs:
-            log.info("LLM이 어휘 밖 라벨 반환(%s/%s)", lv2, cat)
+        if relevant and not cat:
+            self.last_error = "llm_validation_error:relevant_without_type"
+            log.info("LLM 관련 응답에 type이 없음")
             return None
-        if not relevant and (lv2 is not None or cat is not None):
-            log.info("LLM 비관련 응답에 taxonomy 라벨이 포함됨")
+        if cat and cat not in path_by_type:  # schema enum의 이중 방어
+            self.last_error = "llm_validation_error:unknown_type"
             return None
+        repaired = False
+        if not relevant and cat:
+            # 유효 type을 고르고 관련성 boolean만 모순된 경우 재호출 대신 review로 안전 복구한다.
+            relevant, repaired = True, True
+            data["filter_status"] = "review"
+        lv1, lv2 = path_by_type[cat] if cat else (None, None)
         conf = round(float(data.get("confidence", 0.0)), 3)
         rec.harmfulness_score = round(max(0.0, min(float(data.get("harmfulness_score", 0)), 1.0)), 3)
+        rec.is_harmful = bool(data.get("is_harmful"))
+        rec.concrete_context_score = round(
+            max(0.0, min(float(data.get("concrete_context_score", 0)), 1.0)), 3
+        )
         rec.contains_korean_context = bool(data.get("contains_korean_context"))
         rec.korea_relevance_score = round(
             max(0.0, min(float(data.get("korea_relevance_score", 0)), 1.0)), 3
         )
         rec.taxonomy_relevance_score = conf
         rec.taxonomy_fit_score = conf
+        rec.evidence_spans = list(data.get("evidence_spans", []))[:5]
+        rec.filter_status = data.get("filter_status", "review")
+        reason_prefix = "llm_classify_repaired" if repaired else "llm_classify"
         return MatchResult(is_relevant=relevant, taxonomy_lv2=lv2 or "", subtype=cat or "", confidence=conf,
-                           reason=f"llm_classify: {data.get('reason', '')}", safety_flags=[], source="llm")
+                           taxonomy_lv1=lv1 or "", reason=f"{reason_prefix}: {data.get('reason', '')}",
+                           evidence_spans=rec.evidence_spans,
+                           safety_flags=[], source="llm")
 
 
 class TieredMatcher(TaxonomyMatcher):

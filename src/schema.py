@@ -37,6 +37,12 @@ class UrlCandidate:
     initial_score: float = 0.0
     taxonomy_fit_url_score: float = 0.0
     harm_signal_url_score: float = 0.0
+    llm_model: str = ""
+    llm_input_tokens: int = 0
+    llm_cached_input_tokens: int = 0
+    llm_output_tokens: int = 0
+    llm_total_tokens: int = 0
+    llm_estimated_cost_usd: float = 0.0
     source_priority_score: float = 0.0
     reference_page_penalty: float = 0.0
     filter_reason: Optional[str] = None
@@ -62,6 +68,8 @@ class ExtractedContent:
     view_count: Optional[int] = None
     comment_count: Optional[int] = None
     image_urls: list[str] = field(default_factory=list)
+    ocr_image_count: int = 0
+    ocr_char_count: int = 0
 
 
 @dataclass
@@ -88,6 +96,10 @@ class ContentRecord:
     masked_text: str = ""           # cleaned + PII 마스킹 (matcher/LLM 입력)
     raw_comments: Optional[list] = None
     masked_comments: Optional[list] = None
+    original_comment_count: int = 0
+    kept_comment_count: int = 0
+    duplicate_comments_removed: int = 0
+    unrelated_comments_removed: int = 0
 
     published_at: Optional[str] = None
     published_at_source: Optional[str] = None
@@ -112,6 +124,7 @@ class ContentRecord:
     masked_entities: list[MaskedEntity] = field(default_factory=list)
 
     # 매칭 확정 taxonomy (Phase 10 이후 채워짐)
+    taxonomy_lv1: Optional[str] = None
     taxonomy_lv2: Optional[str] = None
     subtype: Optional[str] = None
 
@@ -135,6 +148,8 @@ class ContentRecord:
     dislike_count: Optional[int] = None
     comment_count: Optional[int] = None
     image_urls: list[str] = field(default_factory=list)   # 이미지 의존 콘텐츠 OCR 대상
+    ocr_image_count: int = 0
+    ocr_char_count: int = 0
     is_trending: bool = False
     risk_score: Optional[int] = None   # 1~5
     trend_score: Optional[int] = None  # 1~5
@@ -151,9 +166,17 @@ class ContentRecord:
     secondary_flags: list[str] = field(default_factory=list)   # 복합 위험(primary 외 신호)
     classification_source: str = "none"   # rule | llm | manual | none
     classification_reason: str = ""       # 왜 이 taxonomy인지
+    llm_model: str = ""
+    llm_input_tokens: int = 0
+    llm_cached_input_tokens: int = 0
+    llm_output_tokens: int = 0
+    llm_total_tokens: int = 0
+    llm_estimated_cost_usd: float = 0.0
+    is_harmful: Optional[bool] = None
+    concrete_context_score: Optional[float] = None
+    evidence_spans: list[str] = field(default_factory=list)
     contains_korean_context: Optional[bool] = None
     crawl_status: str = "success"         # success | failed | skipped
-    raw_html_path: str = ""               # 원본 HTML 저장 경로(현재 미저장, 예약)
     parent_source_url: Optional[str] = None
     link_source: Optional[str] = None
     is_supplementary: bool = False
@@ -185,8 +208,10 @@ class MatchResult:
     subtype: str
     confidence: float
     reason: str
+    taxonomy_lv1: str = ""
     safety_flags: list = field(default_factory=list)
     matched_keywords: list = field(default_factory=list)  # primary category 적중 키워드
+    evidence_spans: list = field(default_factory=list)
     source: str = "rule"                                  # rule | llm | manual
 
 

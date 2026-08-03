@@ -13,7 +13,7 @@ def main() -> None:
                    help="keyword=taxonomy 검색 주도(레거시), trend=소스별 트렌드 수집")
     p.add_argument("--trend-config", default="configs/trend_collection.yaml", help="trend 모드 수집 설정 YAML")
     p.add_argument("--taxonomy", default="configs/taxonomy.yaml", help="trend 모드 분류 taxonomy YAML")
-    p.add_argument("--config", default="configs/taxonomy_policy.yaml", help="taxonomy policy YAML")
+    p.add_argument("--config", default="configs/taxonomy.yaml", help="taxonomy YAML (--taxonomy와 동일 정본)")
     p.add_argument("--sites", default="configs/site_policy.yaml", help="site policy YAML")
     p.add_argument("--settings", default="configs/crawler_settings.yaml", help="crawler settings YAML")
     p.add_argument("--db", default="data/content.db", help="sqlite DB 경로")

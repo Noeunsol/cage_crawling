@@ -21,6 +21,20 @@ from src.site_registry import SiteRegistry
 
 TAXO = "configs/taxonomy.yaml"
 
+
+def test_taxonomy_canonical_file_has_19_lv2_and_67_types():
+    policies = load_policies(TAXO)
+    assert len(policies) == 19
+    assert sum(len(policy.subtypes) for policy in policies) == 67
+    assert all(
+        policy.taxonomy_lv1
+        and policy.taxonomy_lv2_name
+        and policy.definition
+        and policy.description
+        for policy in policies
+    )
+    assert all(subtype.description for policy in policies for subtype in policy.subtypes)
+
 LIST_HTML = """
 <table>
   <tr class="ub-content" data-no="1" data-type="icon_notice">
@@ -79,6 +93,37 @@ def test_allocate_buckets_splits_by_ratio():
     from collections import Counter
     dist = Counter(c.meta["bucket"] for c in picked)
     assert dist["trending"] == 50 and dist["latest"] == 25 and dist["high_comment"] == 15
+
+
+def test_candidate_pool_keeps_replacements_for_later_discards():
+    titles = [
+        "오늘 전국의 평범한 날씨와 주말 기온을 자세히 알아봅니다",
+        "특정인의 신상과 전화번호를 찾아서 모두 공개하자는 게시물",
+        "봄철에 즐기기 좋은 평범한 점심 메뉴와 맛집 정보를 소개합니다",
+        "외부 사이트 해킹 방법과 취약점 공격 절차를 자세히 공유합니다",
+    ]
+    cands = []
+    for i, title in enumerate(titles):
+        cand = UrlCandidate(f"https://example.com/{i}", "example.com", "", "rss", "", "",
+                            title=title)
+        cand.meta = {"source": "news_rss", "source_type": "news"}
+        cands.append(cand)
+
+    selected, seen = [], set()
+    pipeline._append_unique_candidates(cands, selected, seen, scan_cap=3)
+
+    assert len(selected) == 3
+
+
+def test_candidates_are_interleaved_by_source():
+    def candidate(url):
+        return UrlCandidate(url, "example.com", "", "rss", "", "")
+
+    out = pipeline._round_robin_candidates({
+        "dcinside": [candidate("dc1"), candidate("dc2")],
+        "news_rss": [candidate("news1"), candidate("news2")],
+    })
+    assert [c.source_url for c in out] == ["dc1", "news1", "dc2", "news2"]
 
 
 def test_parse_dcinside_trend_tags_meta():
@@ -212,20 +257,100 @@ def test_llm_classify_records_harmfulness_and_korean_context(monkeypatch):
     matcher = LLMMatcher()
     monkeypatch.setattr(matcher, "_complete_json", lambda *_: {
         "is_taxonomy_relevant": True,
-        "taxonomy_lv2": "1_C_Self_Harm",
+        "filter_status": "pass",
         "category": "suicide",
         "is_harmful": True,
         "harmfulness_score": 0.9,
         "contains_korean_context": True,
         "korea_relevance_score": 0.8,
+        "concrete_context_score": 0.9,
         "confidence": 0.95,
         "reason": "직접적인 자살 의도",
+        "evidence_spans": ["죽고 싶다"],
+        "fail_reason": None,
     })
     rec = _rec(masked_text="죽고 싶다")
     result = matcher.classify(rec, policies, valid, lines)
     assert result.is_relevant and result.taxonomy_lv2 == "1_C_Self_Harm"
+    assert result.taxonomy_lv1 == "Toxicity Harms"
     assert rec.harmfulness_score == 0.9
+    assert rec.concrete_context_score == 0.9 and rec.evidence_spans == ["죽고 싶다"]
     assert rec.contains_korean_context is True and rec.korea_relevance_score == 0.8
+
+
+def test_llm_type_derives_path_and_repairs_relevance_contradiction(monkeypatch):
+    policies = load_policies(TAXO)
+    matcher = LLMMatcher()
+    monkeypatch.setattr(matcher, "_complete_json", lambda *_: {
+        "is_taxonomy_relevant": False,
+        "filter_status": "fail",
+        "category": "gender",
+        "is_harmful": True,
+        "harmfulness_score": 0.8,
+        "contains_korean_context": True,
+        "korea_relevance_score": 1.0,
+        "concrete_context_score": 0.8,
+        "confidence": 0.8,
+        "reason": "성별 집단 비하",
+        "evidence_spans": ["한녀"],
+        "fail_reason": None,
+    })
+    rec = _rec(masked_text="성별 집단을 비하하는 글")
+    result = matcher.classify(rec, policies)
+    assert result.is_relevant
+    assert (result.taxonomy_lv1, result.taxonomy_lv2, result.subtype) == (
+        "Unfair Representation", "2_F_Bias_and_Hate", "gender",
+    )
+    assert rec.filter_status == "review"
+    assert result.reason.startswith("llm_classify_repaired")
+
+
+def test_llm_input_uses_title_and_body_only():
+    matcher = LLMMatcher()
+    rec = _rec(title="제목", masked_text="본문", masked_comments=["댓글 비밀 문맥"])
+    user_text = matcher._user_text(rec)
+    assert "제목" in user_text and "본문" in user_text
+    assert "댓글" not in user_text and "비밀 문맥" not in user_text
+
+
+def test_llm_usage_and_cost_are_recorded():
+    matcher = LLMMatcher(
+        model="gpt-4o-mini", provider="openai",
+        pricing={"input_per_million_usd": 0.15,
+                 "cached_input_per_million_usd": 0.075,
+                 "output_per_million_usd": 0.60},
+    )
+    matcher.last_usage = {"input": 1000, "cached": 200, "output": 500, "total": 1500}
+    rec = _rec()
+    matcher._record_usage(rec)
+    assert rec.llm_total_tokens == 1500 and rec.llm_cached_input_tokens == 200
+    assert rec.llm_estimated_cost_usd == 0.000435
+
+
+def test_llm_rubric_uses_definitions_not_keyword_rules():
+    policies = load_policies(TAXO)
+    _, lines = build_taxonomy_index(policies)
+    rubric = "\n".join(lines)
+    assert len(lines) == 19
+    assert "Definition:" in rubric and "Description:" in rubric and "types:" in rubric
+    assert "cyberbullying_and_harassment: 온라인·디지털 환경에서" in rubric
+    assert "positive=" not in rubric and "negative=" not in rubric and "keywords=" not in rubric
+
+
+def test_policy_without_types_uses_lv2_as_single_type(tmp_path):
+    cfg = tmp_path / "taxonomy.yaml"
+    cfg.write_text(yaml.safe_dump({"policies": [{
+        "enabled": True,
+        "taxonomy_lv1": "Example Harms",
+        "taxonomy_lv2": "X_Example",
+        "taxonomy_lv2_name": "Example",
+        "definition": "예시 정의",
+        "description": "예시 설명",
+    }]}, allow_unicode=True), encoding="utf-8")
+    policy = load_policies(str(cfg))[0]
+    assert len(policy.subtypes) == 1
+    assert policy.subtypes[0].name == "Example"
+    assert policy.subtypes[0].description == "예시 설명"
 
 
 # ── (f) 본문 링크 추출 + follow ──
@@ -309,6 +434,7 @@ def test_run_trend_end_to_end(tmp_path, monkeypatch):
         db_path=str(db), report_path=str(tmp_path / "r.json"), csv_path=str(tmp_path / "c.csv"),
     )
     assert report["stored_records"] >= 1
+    assert report["collection_goal"]["total_target"] == 5  # disabled news 목표는 합산하지 않음
 
     conn = sqlite3.connect(db)
     rows = conn.execute(

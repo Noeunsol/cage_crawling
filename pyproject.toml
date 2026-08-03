@@ -3,7 +3,7 @@ name = "taxonomy-crawler"
 version = "0.1.0"
 description = "Taxonomy 기반 한국 웹 콘텐츠 Focused Crawler (cost-escalation ladder)"
 requires-python = ">=3.10"
-dependencies = ["pyyaml", "serpapi", "requests", "beautifulsoup4", "lxml", "trafilatura", "streamlit", "pillow"]
+dependencies = ["pyyaml", "serpapi", "requests", "beautifulsoup4", "lxml", "trafilatura", "streamlit", "pillow", "openai", "python-dotenv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

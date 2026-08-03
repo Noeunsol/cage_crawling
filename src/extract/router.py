@@ -138,7 +138,9 @@ class ExtractorRouter:
 
     def _to_record(self, c, site, content: ExtractedContent, extractor_name, collected_at) -> ContentRecord:
         # 댓글 상한 적용 (count는 원래 값 보존)
-        comments = [x[: self.max_comment_chars] for x in (content.comments or [])[: self.max_comments]]
+        comments = list((content.comments or [])[: self.max_comments])
+        if self.max_comment_chars > 0:  # 0이면 댓글 전문 보존
+            comments = [x[: self.max_comment_chars] for x in comments]
         rec = ContentRecord(
             source_url=c.source_url,
             domain=c.domain,
@@ -161,6 +163,8 @@ class ExtractorRouter:
             value_score=c.value_score,
             extraction_likelihood=c.extraction_likelihood,
             image_urls=list(getattr(content, "image_urls", []) or []),
+            ocr_image_count=int(getattr(content, "ocr_image_count", 0) or 0),
+            ocr_char_count=int(getattr(content, "ocr_char_count", 0) or 0),
             parent_source_url=getattr(c, "parent_source_url", None),
             link_source=getattr(c, "link_source", None),
             is_supplementary=bool(getattr(c, "is_supplementary", False)),

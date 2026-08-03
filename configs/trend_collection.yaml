@@ -8,11 +8,26 @@ collection:
   priority_window_days: 3
   exclude_older_than_days: 14
 
-# 수집할 게시물 수량 목표 (각 source별로 target_by_source에 정의)
+# source별 accepted 우선 목표. 합계가 전체 accepted 목표가 된다.
 target_by_source:
   dcinside: 500
   news_rss: 300
   # 다음 단계: fmkorea 400, natepann 300
+
+# accepted만 최종 목표에 포함한다. source별 수치는 우선 배분이며 부족분은 다른 source가 보충한다.
+target_policy:
+  action: accepted
+  # total 미지정 시 target_by_source 합계를 사용한다(Streamlit 10+10 → 전체 accepted 20).
+  allow_cross_source_fill: true
+
+# target은 발견 URL이나 제목 keep 수가 아니라 최종 accepted 수다.
+# 공급 부족·사이트 장애 때 무한 탐색하지 않도록 아래 상한에서 중단하고 shortfall을 보고한다.
+discovery_limits:
+  max_scan_multiplier: 10      # 목표 10건이면 source별 최대 100개 후보까지 상세 처리
+  max_pages_per_gallery: 20
+  max_candidates_by_source:
+    dcinside: 2500             # 목표×배수보다 먼저 적용되지 않는 절대 안전 상한
+    news_rss: 1500
 
 # 본문/댓글 속 링크도 1단계(depth 1) 추가 수집. 이미지/미디어·중복 제외, 상한 적용.
 follow_body_links:

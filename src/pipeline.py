@@ -17,7 +17,6 @@ from .discovery.board import discover_dcinside_trend
 from .discovery.rss import discover_news_trend
 from .extract import ExtractorRouter
 from .frontier import UrlFrontier
-from .image_ocr import ImageOCR
 from .matcher import (LLMMatcher, RuleBasedMatcher, TieredMatcher, build_taxonomy_index,
                       confidence_bucket, risk_score_of, trend_score_of)
 from .mask import BasicPIIMasker
@@ -44,7 +43,7 @@ log = logging.getLogger(__name__)
 
 
 def run(
-    taxonomy_config: str = "configs/taxonomy_policy.yaml",
+    taxonomy_config: str = "configs/taxonomy.yaml",
     site_config: str = "configs/site_policy.yaml",
     settings_config: str = "configs/crawler_settings.yaml",
     db_path: str = "data/content.db",
@@ -98,7 +97,8 @@ def run(
     store = Store(db_path, reset=reset_db)
     ctx = _Ctx(url_filter, extractor, quality, matcher, masker, deduper, store, budget,
                _dt.date.today().isoformat(), dedup_threshold,
-               settings.get("privacy", {}).get("save_raw_text", True))
+               settings.get("privacy", {}).get("save_raw_text", True),
+               settings.get("extraction", {}).get("comments", {}))
 
     for policy in policies:
         for subtype in policy.subtypes:
@@ -120,7 +120,7 @@ def run(
 class _Ctx:
     """subtype 실행에 필요한 컴포넌트 묶음."""
     def __init__(self, url_filter, extractor, quality, matcher, masker, deduper, store, budget,
-                 collected_at, dedup_threshold, save_raw_text):
+                 collected_at, dedup_threshold, save_raw_text, comment_config):
         self.url_filter = url_filter
         self.extractor = extractor
         self.quality = quality
@@ -132,6 +132,7 @@ class _Ctx:
         self.collected_at = collected_at
         self.dedup_threshold = dedup_threshold
         self.save_raw_text = save_raw_text
+        self.comment_config = comment_config
 
 
 def _build_matcher(settings, auto_save, review_th):
@@ -143,8 +144,8 @@ def _build_matcher(settings, auto_save, review_th):
         default_model = "gpt-4o-mini" if provider == "openai" else "claude-haiku-4-5"
         llm = LLMMatcher(model=llm_cfg.get("model", default_model),
                          max_chars=llm_cfg.get("max_chars", 4000),
-                         include_comments=llm_cfg.get("include_comments", True),
-                         provider=provider)
+                         provider=provider,
+                         pricing=llm_cfg.get("pricing", {}))
     return TieredMatcher(rule, llm, auto_save, review_th)
 
 
@@ -176,7 +177,7 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
         cand.status = "extracting"
         outcome = ctx.extractor.extract(cand, ctx.collected_at, task)
         if outcome.record is None:
-            cand.status = "extraction_failed"
+            cand.status, cand.filter_reason = "extraction_failed", outcome.reason
             ctx.store.save_candidate(cand)
             ctx.store.log_filter(cand.source_url, "extract", "fail",
                                  f"{outcome.reason}; tried={outcome.tried}", taxonomy_lv2, subtype.name)
@@ -186,7 +187,7 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
         rec = outcome.record
 
         # Phase 8: 정제 + PII 마스킹 (raw/cleaned/masked). preservation_policy로 마스킹 범위 결정
-        clean_record(rec, task.preservation_policy, ctx.masker)
+        clean_record(rec, task.preservation_policy, ctx.masker, ctx.comment_config)
 
         # Phase 8.5: 추출로 확정된 날짜가 수집 기간 밖이면 버림 (URL 힌트 없이 통과한 건 차단).
         #            날짜 누락(published_at=None)은 기존대로 허용.
@@ -207,6 +208,7 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
 
         # Phase 10: 2단계 taxonomy matching
         match = ctx.matcher.match(taxonomy_lv2, subtype, rec)
+        _copy_llm_usage(rec, cand)
         rec.taxonomy_lv2 = match.taxonomy_lv2
         rec.subtype = match.subtype
         rec.filter_reason = match.reason
@@ -267,6 +269,34 @@ def _classification_status(match, rec, thresholds: dict, max_pii_risk: float) ->
     return "fail"
 
 
+def _trend_classification_action(match, rec, settings: dict) -> str:
+    """LLM 점수를 로컬 기준으로 재판정한다: accepted | review | excluded."""
+    if not match.is_relevant:
+        return "excluded"
+    m = settings.get("matching", {})
+    confidence = match.confidence
+    fit = rec.taxonomy_fit_score or 0
+    harm = rec.harmfulness_score or 0
+    concrete = rec.concrete_context_score or 0
+    korea = rec.korea_relevance_score or 0
+    if korea < float(m.get("min_korea_relevance", 0.3)):
+        return "excluded"
+    # LLM이 애매하다고 명시한 결과를 로컬 threshold가 excluded로 덮어쓰지 않는다.
+    if rec.filter_status == "review":
+        return "review"
+    if rec.filter_status == "fail":
+        return "excluded"
+    if (confidence >= float(m.get("accepted_confidence", 0.75))
+            and fit >= float(m.get("accepted_taxonomy_fit", 0.70))
+            and harm >= float(m.get("accepted_harmfulness", 0.60))
+            and concrete >= float(m.get("accepted_concrete_context", 0.50))):
+        return "accepted"
+    if (confidence >= float(m.get("review_confidence", 0.50))
+            and fit >= float(m.get("review_taxonomy_fit", 0.50))):
+        return "review"
+    return "excluded"
+
+
 # ────────────────────────── 트렌드 수집 모드 ──────────────────────────
 def run_trend(
     trend_config: str = "configs/trend_collection.yaml",
@@ -290,6 +320,11 @@ def run_trend(
         trend.setdefault("target_by_source", {}).update(overrides.get("target_by_source", {}))
         for name, enabled in overrides.get("enabled", {}).items():
             trend.setdefault("sources", {}).setdefault(name, {})["enabled"] = enabled
+        trend.setdefault("discovery_limits", {}).update(overrides.get("discovery_limits", {}))
+        if overrides.get("comment_filter"):
+            settings.setdefault("extraction", {}).setdefault("comments", {}).setdefault(
+                "relevance_filter", {}
+            ).update(overrides["comment_filter"])
 
     registry = SiteRegistry.load(site_config)
     policies = load_policies(taxonomy_config)
@@ -297,38 +332,85 @@ def run_trend(
     window = trend.get("collection", {})
     exclude_days = window.get("exclude_older_than_days", 14)
     targets = trend.get("target_by_source", {})
-    ratios = trend.get("sampling_ratio", {})
     srcs = trend.get("sources", {})
+    target_policy = trend.get("target_policy", {})
+    target_action = target_policy.get("action", "accepted")
+    allow_cross_fill = bool(target_policy.get("allow_cross_source_fill", True))
+    enabled_target = sum(
+        int(value) for source, value in targets.items()
+        if srcs.get(source, {}).get("enabled", False)
+    )
+    total_target = int(target_policy.get("total", enabled_target))
+    ratios = trend.get("sampling_ratio", {})
 
     extractor = ExtractorRouter(registry, settings)   # 자체 Fetcher(robots/throttle) 보유
 
-    # ── 수집 (소스별 discovery + 샘플링 할당) ──
-    candidates = []
+    # ── 목록 후보 풀 구성. 최종 accepted 목표는 상세 처리 루프에서 판정한다. ──
+    source_candidates = {}
+    collection_targets = {}
+    discovery_limits = trend.get("discovery_limits", {})
+    scan_multiplier = max(1, int(discovery_limits.get("max_scan_multiplier", 5)))
     dc = srcs.get("dcinside", {})
     if dc.get("enabled"):
-        raw = discover_dcinside_trend(dc.get("galleries", []), registry, extractor.fetcher,
-                                      int(dc.get("max_pages", 1)))
-        candidates += _allocate_buckets(raw, int(targets.get("dcinside", 0)), ratios)
+        target = int(targets.get("dcinside", 0))
+        hard_cap = int(discovery_limits.get("max_candidates_by_source", {}).get("dcinside", 2500))
+        scan_cap = min(hard_cap, target * scan_multiplier) if target else hard_cap
+        max_pages = int(discovery_limits.get(
+            "max_pages_per_gallery", dc.get("max_pages", 1)))
+        selected, seen = [], set()
+        for page in range(1, max_pages + 1):
+            raw = discover_dcinside_trend(
+                dc.get("galleries", []), registry, extractor.fetcher,
+                max_pages=1, start_page=page,
+            )
+            ordered = _allocate_buckets(raw, len(raw), ratios)
+            _append_unique_candidates(ordered, selected, seen, scan_cap)
+            if len(selected) >= scan_cap or not raw:
+                break
+        source_candidates["dcinside"] = selected
+        collection_targets["dcinside"] = _target_stats(target, len(selected), scan_cap)
     nr = srcs.get("news_rss", {})
     if nr.get("enabled"):
+        target = int(targets.get("news_rss", 0))
+        hard_cap = int(discovery_limits.get("max_candidates_by_source", {}).get("news_rss", 1500))
+        scan_cap = min(hard_cap, target * scan_multiplier) if target else hard_cap
         raw = discover_news_trend(nr.get("feeds", []), registry, exclude_days)
-        candidates += _allocate_news_categories(
-            raw, int(targets.get("news_rss", 0)), nr.get("category_sampling", {})
+        ordered = _allocate_news_categories(
+            raw, min(len(raw), scan_cap), nr.get("category_sampling", {})
         )
+        selected, seen = [], set()
+        _append_unique_candidates(ordered, selected, seen, scan_cap)
+        source_candidates["news_rss"] = selected
+        collection_targets["news_rss"] = _target_stats(target, len(selected), scan_cap)
+
+    # 한 소스가 먼저 전체 목표를 독점하지 않도록 원문 후보를 번갈아 처리한다.
+    candidates = _round_robin_candidates(source_candidates)
 
     if dry_run:
         by_src: defaultdict = defaultdict(lambda: defaultdict(int))
         for c in candidates:
-            by_src[c.meta.get("source", "?")][c.meta.get("bucket", "?")] += 1
-        report = {"dry_run": True, "mode": "trend", "would_extract": len(candidates),
+            source = c.meta.get("source", "?")
+            by_src[source][c.meta.get("bucket", "?")] += 1
+            stats = collection_targets.get(source)
+            if stats:
+                stats["scanned"] += 1
+                if decide_candidate_action(c).filter_action == "keep":
+                    stats["title_keep"] += 1
+                else:
+                    stats["prefilter_discard"] += 1
+        report = {"dry_run": True, "mode": "trend",
+                  "would_extract": sum(x["title_keep"] for x in collection_targets.values()),
+                  "collection_targets": collection_targets,
+                  "collection_goal": {
+                      "action": target_action, "total_target": total_target,
+                      "allow_cross_source_fill": allow_cross_fill,
+                  },
                   "by_source": {k: dict(v) for k, v in by_src.items()}}
         print_report(report)
         return report
 
     m = settings.get("matching", {})
     matcher = _build_matcher(settings, m.get("auto_save_threshold", 0.8), m.get("review_threshold", 0.5))
-    min_korea = float(m.get("min_korea_relevance", 0.3))   # 최종 판정 한국 관련성 하한
-    ocr = ImageOCR(extractor.fetcher, settings.get("extraction", {}).get("image_ocr", {}))
     masker = BasicPIIMasker(settings.get("privacy", {}))
     dedup_threshold = settings.get("dedup", {}).get("event_hamming_threshold", 3)
     deduper = EventDeduper(dedup_threshold)
@@ -350,6 +432,18 @@ def run_trend(
         i += 1
         if on_progress:
             on_progress(i, len(candidates))
+        source = cand.meta.get("source", "")
+        stats = collection_targets.get(source)
+        is_root = not cand.meta.get("is_supplementary") and cand.meta.get("depth", 0) == 0
+        total_collected = sum(x.get(target_action, 0) for x in collection_targets.values())
+        # accepted 전체 목표 달성 뒤 남은 원문은 요청하지 않는다. 보조 링크는 계속 처리한다.
+        if is_root and total_target and total_collected >= total_target:
+            continue
+        if (is_root and not allow_cross_fill and stats and stats["target"]
+                and stats.get(target_action, 0) >= stats["target"]):
+            continue
+        if is_root and stats:
+            stats["scanned"] += 1
         cand.status = "discovered"
         store.save_candidate(cand)
         pre = decide_candidate_action(cand)
@@ -357,6 +451,8 @@ def run_trend(
         cand.is_trend_seed = pre.is_trend_seed
         cand.filter_reason = pre.filter_reason
         if pre.filter_action == "discard":
+            if is_root and stats:
+                stats["prefilter_discard"] += 1
             cand.status = "prefilter_discarded"
             store.save_candidate(cand)
             store.log_filter(
@@ -365,29 +461,22 @@ def run_trend(
                 pre.filter_reason, "", "",
             )
             continue
+        if is_root and stats:
+            stats["title_keep"] += 1
         outcome = extractor.extract(cand, collected_at)
         if outcome.record is None:
-            cand.status = "extraction_failed"
+            if is_root and stats:
+                stats["extraction_failed"] += 1
+            cand.status, cand.filter_reason = "extraction_failed", outcome.reason
             store.save_candidate(cand)
             store.log_filter(cand.source_url, "extract", "fail", outcome.reason, "", "")
             continue
         rec = outcome.record
         _apply_trend_meta(rec, cand.meta)
-        clean_record(rec, _TREND_PRESERVATION, masker)
-
-        # 본문/댓글 속 링크를 후속 후보로 등록 (원글=depth0에서만, 상한 내에서)
-        if follow_enabled and cand.meta.get("depth", 0) == 0 and followed < max_total_links:
-            for link, link_source in _extract_links(rec.raw_text, rec.raw_comments)[:max_per_post]:
-                key = canonicalize_url(link)
-                if key in seen_urls:
-                    continue
-                seen_urls.add(key)
-                candidates.append(_link_candidate(
-                    link, registry, cand.meta.get("source", ""), cand.source_url, link_source,
-                ))
-                followed += 1
-                if followed >= max_total_links:
-                    break
+        clean_record(
+            rec, _TREND_PRESERVATION, masker,
+            settings.get("extraction", {}).get("comments", {}),
+        )
 
         # 본문/댓글 링크는 독립 taxonomy 대상이 아니라 원문의 보조 콘텐츠로 보존한다.
         if rec.is_supplementary:
@@ -407,12 +496,14 @@ def run_trend(
         # 수집 윈도우 초과 → 1차 discard
         days_old = _days_old(rec.published_at, today)
         if days_old is not None and days_old > exclude_days:
+            if is_root and stats:
+                stats["content_discard"] += 1
             rec.filter_action = rec.action = "discard"
             rec.filter_reason = f"out_of_window:{days_old}d"
             _finalize(store, cand, rec, save_raw_text, store_content=False)
             continue
 
-        # ── 1차 relevance gate → keep / discard (taxonomy는 고르지 않음) ──
+        # 본문 gate는 감사용 신호만 추출한다. taxonomy 관련성은 제목 gate와 LLM이 판정한다.
         gate = decide_filter_action(rec)
         rec.is_taxonomy_relevant = gate.is_taxonomy_relevant
         rec.is_trend_seed = gate.is_trend_seed
@@ -421,43 +512,43 @@ def run_trend(
         rec.negative_contexts = gate.negative_contexts
         rec.needs_comment_fallback = gate.needs_comment_fallback
         rec.is_risk_candidate = bool(gate.risk_signals)
-        keep = gate.filter_action == "keep"
-        rec.filter_action = "keep" if keep else "discard"
+        hard_discard = gate.filter_reason in {"link_only", "too_short", "advertisement"}
+        rec.filter_action = "discard" if hard_discard else "keep"
         rec.filter_reason = gate.filter_reason
-        if not keep:
+        if hard_discard:
+            if is_root and stats:
+                stats["content_discard"] += 1
             rec.action = "discard"
             _finalize(store, cand, rec, save_raw_text, store_content=False)
             continue
 
-        # 이미지 의존 콘텐츠면 로컬 OCR로 본문 보강(LLM 입력 전, keep 대상만). OCR 텍스트는 마스킹.
-        ocr_text = ocr.enrich(rec, "keep")
-        if ocr_text:
-            rec.raw_text = "\n\n".join(filter(None, [rec.raw_text, ocr_text]))
-            masked_ocr = masker.mask(ocr_text).masked_text
-            rec.masked_text = "\n\n".join(filter(None, [rec.masked_text, masked_ocr]))
-            rec.body_text = rec.masked_text
-
         # ── 2차: keep 전체를 LLM으로 → 최종 accepted / excluded / pending ──
         match = matcher.llm.classify(rec, policies, valid_pairs, taxo_lines) if matcher.llm else None
         if match is None:                                # LLM 미설정/실패 → 재처리 대상
+            if is_root and stats:
+                stats["pending"] += 1
+            if matcher.llm and matcher.llm.last_usage.get("total"):
+                matcher.llm._record_usage(rec)
+                _copy_llm_usage(rec, cand)
             rec.action = "pending"
-            rec.filter_reason = "llm_failed"
+            rec.filter_reason = matcher.llm.last_error or "llm_failed"
             _finalize(store, cand, rec, save_raw_text, store_content=True)
             continue
-        if not match.is_relevant:                        # LLM: taxonomy 무관 → 제외
-            rec.action = "excluded"
-            rec.filter_reason = f"llm_not_relevant: {match.reason}"
-            _finalize(store, cand, rec, save_raw_text, store_content=False)
-            continue
-        if (rec.korea_relevance_score or 0) < min_korea:  # 한국 관련성 임계값 → 제외
-            rec.action = "excluded"
-            rec.filter_reason = f"low_korea_relevance:{rec.korea_relevance_score}"
+        _copy_llm_usage(rec, cand)
+        # 최종 단일 경로 확정 후 로컬 threshold로 accepted/review/excluded 판정
+        rec.taxonomy_lv1 = match.taxonomy_lv1 or None
+        rec.taxonomy_lv2 = match.taxonomy_lv2
+        rec.category = rec.subtype = match.subtype   # subtype은 store/index/dedup 호환용 별칭
+        rec.action = _trend_classification_action(match, rec, settings)
+        rec.filter_status = {"accepted": "pass", "review": "review", "excluded": "fail"}[rec.action]
+        rec.filter_reason = match.reason
+        if rec.action == "excluded":
+            if is_root and stats:
+                stats["excluded"] += 1
             _finalize(store, cand, rec, save_raw_text, store_content=False)
             continue
 
-        # 최종 accepted: taxonomy 확정 + 스코어링
-        rec.taxonomy_lv2 = match.taxonomy_lv2
-        rec.category = rec.subtype = match.subtype   # subtype은 store/index/dedup 호환용 별칭
+        # accepted/review: taxonomy와 감사 근거를 저장
         signals = set(gate.risk_signals)
         rec.risk_signals = sorted(signals)
         rec.matched_keywords = match.matched_keywords or gate.matched_keywords
@@ -468,8 +559,6 @@ def run_trend(
         rec.risk_score = risk_score_of(signals, rec.harmfulness_score)
         rec.trend_score = trend_score_of(days_old, rec.comment_count, rec.is_trending)
         rec.confidence = confidence_bucket(match.confidence)
-        rec.action = "accepted"
-        rec.filter_status = "pass"
 
         # near-dup (URL-dedup과 별도)
         rec.simhash = str(simhash(rec.masked_text or rec.body_text))
@@ -478,6 +567,8 @@ def run_trend(
         group = rec.taxonomy_lv2 or "trend"
         dup = store.find_duplicate(rec, dedup_threshold) or deduper.check(group, int(rec.simhash), rec.event_key)
         if dup:
+            if is_root and stats:
+                stats["duplicate"] += 1
             rec.duplicate_of = dup
             cand.status, cand.filter_reason = "duplicate", f"duplicate_of:{dup}"
             store.save_candidate(cand)
@@ -486,9 +577,26 @@ def run_trend(
             continue
         deduper.add(group, int(rec.simhash), rec.event_key, rec.source_url)
 
+        # 보조 링크는 최종 usable 원문에서만 수집한다. 관련 없는 글의 링크 요청을 방지한다.
+        if follow_enabled and cand.meta.get("depth", 0) == 0 and followed < max_total_links:
+            for link, link_source in _extract_links(rec.raw_text, rec.raw_comments)[:max_per_post]:
+                key = canonicalize_url(link)
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                candidates.append(_link_candidate(
+                    link, registry, cand.meta.get("source", ""), cand.source_url, link_source,
+                ))
+                followed += 1
+                if followed >= max_total_links:
+                    break
         if not save_raw_text:
             rec.raw_text, rec.raw_comments = "", None
         store.save_content(rec)
+        if is_root and stats:
+            stats[rec.action] += 1
+            if rec.action == target_action:
+                stats["usable"] += 1
         cand.status = f"trend_{rec.action}"
         store.save_candidate(cand)
         store.log_filter(cand.source_url, "trend_classify", rec.filter_status,
@@ -499,6 +607,18 @@ def run_trend(
     n = export_csv(store, csv_path, include_raw=include_raw)
     report = build_report(store)
     report["csv_rows"] = n
+    for stats in collection_targets.values():
+        stats["shortfall"] = max(0, stats["target"] - stats["usable"])
+    report["collection_targets"] = collection_targets
+    total_accepted = sum(x["accepted"] for x in collection_targets.values())
+    report["collection_goal"] = {
+        "action": target_action,
+        "total_target": total_target,
+        "accepted": total_accepted,
+        "review": sum(x["review"] for x in collection_targets.values()),
+        "shortfall": max(0, total_target - total_accepted),
+        "allow_cross_source_fill": allow_cross_fill,
+    }
     export_report(report, report_path)
     print_report(report)
     store.close()
@@ -520,6 +640,46 @@ def _allocate_buckets(cands: list, target: int, ratios: dict) -> list:
     if len(picked) < target:
         picked.extend(leftover[: target - len(picked)])
     return picked[:target]
+
+
+def _append_unique_candidates(cands, selected, seen, scan_cap):
+    """목록 후보를 URL 중복 없이 안전 상한까지 추가한다."""
+    for cand in cands:
+        key = cand.dedup_key()
+        if key in seen:
+            continue
+        if len(selected) >= scan_cap:
+            break
+        seen.add(key)
+        selected.append(cand)
+
+
+def _round_robin_candidates(by_source: dict[str, list]) -> list:
+    """소스별 후보를 한 건씩 번갈아 배치한다."""
+    groups = list(by_source.values())
+    return [group[i] for i in range(max(map(len, groups), default=0))
+            for group in groups if i < len(group)]
+
+
+def _target_stats(target, available, scan_cap):
+    stats = {
+        "target": target,
+        "available": available,
+        "scanned": 0,
+        "title_keep": 0,
+        "prefilter_discard": 0,
+        "content_discard": 0,
+        "extraction_failed": 0,
+        "excluded": 0,
+        "pending": 0,
+        "duplicate": 0,
+        "accepted": 0,
+        "review": 0,
+        "usable": 0,
+        "shortfall": target,
+        "scan_cap": scan_cap,
+    }
+    return stats
 
 
 def _allocate_news_categories(cands: list, target: int, ratios: dict) -> list:
@@ -551,6 +711,15 @@ def _apply_trend_meta(rec, meta: dict) -> None:
     rec.is_trending = bool(meta.get("is_trending", False))
     rec.collection_type = meta.get("bucket") or rec.collection_type   # 스펙: 버킷(trending/latest/rss)
     rec.crawl_status = "success"
+
+
+def _copy_llm_usage(rec, cand) -> None:
+    """excluded 콘텐츠까지 전체 사용량을 집계할 수 있도록 후보에도 usage를 기록한다."""
+    for name in (
+        "llm_model", "llm_input_tokens", "llm_cached_input_tokens",
+        "llm_output_tokens", "llm_total_tokens", "llm_estimated_cost_usd",
+    ):
+        setattr(cand, name, getattr(rec, name, 0))
 
 
 def _finalize(store, cand, rec, save_raw_text, store_content: bool) -> None:

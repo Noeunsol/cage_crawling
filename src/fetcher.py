@@ -15,6 +15,10 @@ import requests
 log = logging.getLogger(__name__)
 
 _DEFAULT_UA = "Mozilla/5.0 (compatible; taxonomy-research-crawler/0.1; +contact@example.com)"
+_BROWSER_IMAGE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138 Safari/537.36"
+)
 
 
 class Fetcher:
@@ -60,14 +64,22 @@ class Fetcher:
             self.last_failure = "robots_disallowed"
             return None
         self._throttle(domain)
+        headers = {}
+        if domain.endswith("dcinside.co.kr"):
+            # dcimg CDN은 일반 브라우저 이미지 요청이 아니면 존재하는 URL도 404로 응답한다.
+            headers = {
+                "User-Agent": _BROWSER_IMAGE_UA,
+                "Referer": "https://gall.dcinside.com/",
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            }
         try:
-            response = self._session.get(url, timeout=self.timeout)
+            response = self._session.get(url, timeout=self.timeout, headers=headers)
             response.raise_for_status()
         except requests.RequestException:
             self.last_failure = "network_error"
             return None
         content_type = response.headers.get("Content-Type", "")
-        if not content_type.startswith("image/"):
+        if not (content_type.startswith("image/") or content_type.startswith("application/octet-stream")):
             self.last_failure = "not_image"
             return None
         return response.content
