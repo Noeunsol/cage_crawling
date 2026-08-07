@@ -4,16 +4,16 @@ from src.clean import clean_record
 from src.discovery import DiscoveryRouter
 from src.extract import ExtractorRouter
 from src.mask import apply_preservation_policy
-from src.matcher import RuleBasedMatcher
-from src.strategy import Budget, StrategyRouter, StrategyTask
-from src.frontier import UrlFrontier
+from src.classify.matcher import RuleBasedMatcher
+from src.keyword_discovery.strategy import Budget, StrategyRouter, StrategyTask
+from src.keyword_discovery.frontier import UrlFrontier
 from src.pipeline import _classification_status
 from src.policy import Subtype
-from src.query import QueryGenerator
-from src.report import build_report
+from src.keyword_discovery.query import QueryGenerator
+from src.reporting.report import build_report
 from src.schema import ContentRecord, MatchResult, UrlCandidate
 from src.site_registry import SiteRegistry
-from src.store import Store
+from src.storage.store import Store
 
 
 def _registry():
@@ -52,7 +52,7 @@ def test_provider_failure_continues_to_next_discovery_method(monkeypatch):
         name = "serpapi"
         def search(self, *args):
             raise RuntimeError("down")
-    from src import search
+    from src.keyword_discovery import search
     monkeypatch.setitem(search._CLIENTS, "serpapi", Failing())
     task = StrategyTask("T", "S", "news_case", discovery_methods=["serpapi_site", "tavily"])
     found = DiscoveryRouter(_registry(), QueryGenerator(_registry()), Budget({"global_max_queries": 10})).discover(
@@ -111,7 +111,7 @@ def test_report_contains_collection_type_and_api_conversion(tmp_path):
                      collection_type="news_case", discovery_method="tavily", status="matched_pass")
     store.save_candidate(c)
     report = build_report(store)
-    assert report["collection_type_conversion"]["news_case"]["pass_review"] == 1
+    assert report["collection_type_conversion"]["news_case"]["accepted"] == 1
     assert report["api_conversion"]["tavily"]["conversion_rate"] == 1.0
     store.close()
 

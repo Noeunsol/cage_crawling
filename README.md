@@ -21,6 +21,9 @@ python -m src.main --reset-db                 # 기존 DB 삭제 후 재생성(�
 streamlit run streamlit_app.py
 ```
 
+Trend 수집은 기본적으로 최근 1일(24시간)을 대상으로 하며 Streamlit의 `최근 며칠`에서 조절한다.
+건수 목표를 채우지 않고 기간 내 가용 후보를 제목 필터 → 본문 수집 → LLM taxonomy 순으로 처리한다.
+
 대시보드는 `data/content.db`를 read-only로 열며 masked 본문, 후보 상태, 실패 사유,
 PII 메타데이터와 단계별 전환율만 표시한다. raw 본문과 raw 댓글은 표시하지 않는다.
 
@@ -96,6 +99,27 @@ Playwright/Firecrawl은 config로 gated(기본 off), lib은 lazy import. Firecra
 ## 검색 도구
 
 - 검색: **SerpAPI** (real API) + **Tavily** (mock). Exa는 라우터 seam만.
+
+## 2차 semantic 보강 수집 (`--mode targeted`)
+
+1차 trend 수집이 남긴 부족 taxonomy를 **의미 기반으로 정밀 보강**한다. 키워드/`site:` 검색이 아니라
+`taxonomy.yaml 기준 → 자연어 collection intent → Tavily 후보 발견 → LLM rerank(fetch 전) →
+기존 fetch/extract/mask/LLM 재분류 → 한국 관련성 검증`으로 저장 여부를 결정한다. API snippet/
+content_hint는 discovery 메타로만 쓰고 **본문으로 저장하지 않는다**.
+
+```bash
+export TAVILY_API_KEY=...   # 없으면 Mock provider(오프라인). 분류는 OPENAI_API_KEY 사용
+python -m src.main --mode targeted --dry-run   # 부족 LV2 랭킹 + LV2별 자연어 intent 프리뷰
+python -m src.main --mode targeted -v          # deficit까지 실제 보강 수집
+```
+
+튜닝은 **Streamlit 파일럿 러너**(페이지 하단 "🎯 2차 타깃 수집") 중심 — ① Intent Preview →
+② Discovery Preview(Tavily 품질·rerank threshold 육안 튜닝) → ③ Small Run(scratch DB 기본, limit
+소량)로 "조절 → 실행 → 확인 → 재조정"을 반복한다. 설정: `configs/phase2_semantic_collection.yaml`
+(부족 판정 `min_accepted_per_lv2`/`targets_by_lv2`, LV2별 `collection_intents_by_lv2`, `sensitive_overlay`,
+rerank·acceptance threshold, 실행 상한 `limits`). target(`taxonomy_lv2_candidate`) vs predicted
+(`taxonomy_lv2`)는 분리 저장되고, 리포트에 `provider_performance`(target_match_rate·
+korea_relevance_pass_rate·cost_per_accepted)와 `coverage`(before→after)가 포함된다.
 
 ## 저장 정책
 

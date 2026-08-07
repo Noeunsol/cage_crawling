@@ -3,7 +3,7 @@ from src.extract.site_parser import DcinsidePostExtractor
 from src.policy import Subtype
 from src.schema import canonicalize_url
 from src.site_registry import SiteRegistry
-from src.strategy import StrategyTask
+from src.keyword_discovery.strategy import StrategyTask
 
 
 LIST_HTML = """

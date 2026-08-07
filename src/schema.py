@@ -45,6 +45,15 @@ class UrlCandidate:
     llm_estimated_cost_usd: float = 0.0
     source_priority_score: float = 0.0
     reference_page_penalty: float = 0.0
+    # ── 2차 semantic discovery (phase-2) ──
+    run_id: str = ""
+    collection_phase: int = 1                    # 1=trend/keyword, 2=targeted
+    query_id: str = ""                           # sha1(discovery_query)[:12]
+    discovery_provider: str = ""                 # tavily | exa | serpapi
+    discovery_query: Optional[str] = None        # 자연어 collection intent
+    discovery_relevance_score: float = 0.0       # rerank 점수 (fetch 전)
+    korea_relevance_score: float = 0.0           # rerank 한국 관련성 근사
+    content_hint: Optional[str] = None           # provider snippet/content = discovery 메타(본문 아님)
     filter_reason: Optional[str] = None
     # frontier 상태: pending/filtered_out/extracting/extracted/failed/matched/stored/review
     status: str = "pending"
@@ -181,6 +190,14 @@ class ContentRecord:
     link_source: Optional[str] = None
     is_supplementary: bool = False
 
+    # ── 2차 semantic discovery provenance (phase-2). content_hint는 저장하지 않는다(candidate만). ──
+    run_id: str = ""
+    collection_phase: int = 1                    # 1=trend/keyword, 2=targeted
+    query_id: str = ""
+    discovery_provider: str = ""                 # tavily | exa | serpapi
+    discovery_query: Optional[str] = None        # 자연어 collection intent
+    discovery_relevance_score: Optional[float] = None   # rerank 점수(감사용)
+
     content_id: str = ""
 
     def compute_dedup_hash(self) -> str:
@@ -213,6 +230,11 @@ class MatchResult:
     matched_keywords: list = field(default_factory=list)  # primary category 적중 키워드
     evidence_spans: list = field(default_factory=list)
     source: str = "rule"                                  # rule | llm | manual
+
+
+def content_id_for(url: str) -> str:
+    """source_url → 결정론적 content_id (content_records PK · 단계별 파일 저장 키). 16-hex sha1."""
+    return hashlib.sha1((url or "").encode("utf-8")).hexdigest()[:16]
 
 
 def canonicalize_url(url: str) -> str:

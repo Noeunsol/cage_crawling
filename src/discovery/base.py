@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import requests
 
 from ..schema import UrlCandidate
-from ..search import get_client, run_client
+from ..keyword_discovery.search import get_client, run_client
 
 
 def make_candidate(registry, url, task, method, subtype, title=None) -> UrlCandidate:

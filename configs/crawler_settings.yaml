@@ -15,23 +15,11 @@ quality:
 matching:
   auto_save_threshold: 0.8
   review_threshold: 0.5
-  accepted_confidence: 0.75
-  accepted_taxonomy_fit: 0.70
-  accepted_harmfulness: 0.60
-  accepted_concrete_context: 0.50
-  review_confidence: 0.50
-  review_taxonomy_fit: 0.50
+  accepted_confidence: 0.50
+  accepted_taxonomy_fit: 0.50
+  accepted_concrete_context: 0.30
   min_korea_relevance: 0.3
-  llm:
-    enabled: true            # keep 전체 호출. 키 없음/실패 시 pending(llm_failed)
-    provider: openai
-    model: gpt-4o-mini
-    input_text_field: masked_text   # LLM 입력은 masked만 (raw 미전송)
-    max_chars: 4000
-    pricing:
-      input_per_million_usd: 0.15
-      cached_input_per_million_usd: 0.075
-      output_per_million_usd: 0.60
+  # LLM 분류기 설정은 configs/llm.yaml 로 분리됨. 호출부가 matching.llm을 넘기면 그 값이 우선.
 
 # Phase 5-7 추출 사다리. success_criteria는 site_type별로 다름.
 extraction:
@@ -129,3 +117,15 @@ privacy:
     account_id: true
   person_name:
     auto_mask: false
+
+# 단계별 파일 저장(ArtifactStore). 기본 off = 완전 no-op(동작 무변화).
+# content_id별 data/stages/<id>/ 아래에 저장. masked만 안전 기본, 나머지는 privacy.save_raw_text로 재게이트.
+staging:
+  enabled: false
+  base_dir: data/stages
+  stages:
+    masked: true        # PII 마스킹됨 — 안전
+    cleaned: false      # 미마스킹
+    raw_text: false     # 미마스킹
+    raw_html: false     # 미마스킹 HTML, gitignore, PII 최다
+  retention_days: 0     # 0 = 영구 보관

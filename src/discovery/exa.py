@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from ..search import get_client
+from ..keyword_discovery.search import get_client
 from .base import search_discover
 
 log = logging.getLogger(__name__)

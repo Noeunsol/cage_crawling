@@ -7,6 +7,25 @@ from typing import Any
 import yaml
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """설정 오타로 같은 YAML 키가 덮어써지는 것을 차단한다."""
+
+
+def _construct_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ValueError(f"중복 YAML 키: {key}")
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_mapping
+)
+
+
 # 유해 표현은 보존, PII/credential만 마스킹 (설계서 §12)
 _DEFAULT_PRESERVATION = {
     "preserve_harmful_expression": True,
@@ -65,7 +84,7 @@ class Policy:
 
 def load_policies(path: str) -> list[Policy]:
     with open(path, encoding="utf-8") as f:
-        data: dict[str, Any] = yaml.safe_load(f)
+        data: dict[str, Any] = yaml.load(f, Loader=_UniqueKeyLoader)
 
     policies: list[Policy] = []
     defaults = data.get("defaults", {})
@@ -93,6 +112,11 @@ def load_policies(path: str) -> list[Policy]:
             definition=p.get("definition", ""),
             description=p.get("description", ""),
         ))
+    lv2s = [p.taxonomy_lv2 for p in policies]
+    if len(lv2s) != len(set(lv2s)):
+        raise ValueError("중복 taxonomy_lv2가 있습니다")
+    if not policies:
+        raise ValueError("활성화된 taxonomy policy가 없습니다")
     return policies
 
 

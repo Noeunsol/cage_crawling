@@ -12,14 +12,16 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from .schema import ContentRecord, UrlCandidate
+from ..schema import ContentRecord, UrlCandidate, canonicalize_url, content_id_for
 
-_SCHEMA_VERSION = 17
+_SCHEMA_VERSION = 18
 
 # (컬럼명, 타입) — CREATE와 마이그레이션 공용
 _CONTENT_COLS = [
     ("content_id", "TEXT PRIMARY KEY"),
     ("taxonomy_lv1", "TEXT"), ("taxonomy_lv2", "TEXT"), ("subtype", "TEXT"),
+    # target(검색 시 의도한 LV2) vs predicted(taxonomy_lv2) 분리 저장 — 2차 target-match 비교용
+    ("taxonomy_lv2_candidate", "TEXT"), ("subtype_candidate", "TEXT"),
     ("source_url", "TEXT"), ("canonical_url", "TEXT"), ("domain", "TEXT"),
     ("site_name", "TEXT"), ("site_type", "TEXT"),
     ("title", "TEXT"), ("body_text", "TEXT"),
@@ -59,6 +61,9 @@ _CONTENT_COLS = [
     ("contains_korean_context", "INTEGER"),
     ("crawl_status", "TEXT"),
     ("parent_source_url", "TEXT"), ("link_source", "TEXT"), ("is_supplementary", "INTEGER"),
+    # v18 2차 semantic discovery provenance
+    ("run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
+    ("discovery_provider", "TEXT"), ("discovery_query", "TEXT"), ("discovery_relevance_score", "REAL"),
 ]
 
 _CANDIDATE_COLS = [
@@ -76,6 +81,11 @@ _CANDIDATE_COLS = [
     ("llm_cached_input_tokens", "INTEGER"), ("llm_output_tokens", "INTEGER"),
     ("llm_total_tokens", "INTEGER"), ("llm_estimated_cost_usd", "REAL"),
     ("filter_reason", "TEXT"), ("status", "TEXT"), ("score", "REAL"),
+    # v18 2차 semantic discovery provenance + rerank 메타(content_hint는 후보에만 보관)
+    ("run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
+    ("discovery_provider", "TEXT"), ("discovery_query", "TEXT"),
+    ("discovery_relevance_score", "REAL"), ("korea_relevance_score", "REAL"),
+    ("content_hint", "TEXT"),
 ]
 
 _OTHER_SCHEMA = """
@@ -218,6 +228,27 @@ class Store:
                 return content_id
         return None
 
+    def existing_canonical_urls(self) -> set[str]:
+        """저장된 콘텐츠의 canonical URL 집합. 2차 pre-fetch 중복 제거용(인덱스 있음)."""
+        return {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT canonical_url FROM content_records WHERE canonical_url IS NOT NULL"
+            )
+        }
+
+    def processed_url_keys(self) -> set[str]:
+        """1차 수집에서 최종 처리된 URL. 실패·표본 미선택 항목은 재시도한다."""
+        urls = [row[0] for row in self.conn.execute(
+            "SELECT COALESCE(canonical_url,source_url) FROM content_records"
+        )]
+        urls.extend(row[0] for row in self.conn.execute(
+            """SELECT COALESCE(canonical_url,source_url) FROM url_candidates
+               WHERE status IN ('prefilter_discarded','trend_discard','trend_accepted',
+                                'duplicate','supplementary_collected')"""
+        ))
+        return {canonicalize_url(url) for url in urls if url}
+
     def log_filter(self, source_url: str, stage: str, status: str, reason: str | None,
                    taxonomy_lv2: str = "", subtype: str = "") -> None:
         self.conn.execute(
@@ -229,4 +260,4 @@ class Store:
 
 
 def _content_id(rec: ContentRecord) -> str:
-    return hashlib.sha1(rec.source_url.encode("utf-8")).hexdigest()[:16]
+    return content_id_for(rec.source_url)

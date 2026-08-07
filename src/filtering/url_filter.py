@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import re
 
-from .policy import Subtype
-from .schema import FilterResult, UrlCandidate
-from .site_registry import SiteRegistry
+from ..policy import Subtype
+from ..schema import FilterResult, UrlCandidate
+from ..site_registry import SiteRegistry
 
 _HANGUL = re.compile(r"[가-힣]")
 

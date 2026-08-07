@@ -5,19 +5,23 @@
 """
 import json
 import sqlite3
+import datetime as dt
 
+import pytest
 import yaml
 
 from src import fetcher, pipeline
 from src.discovery import rss
 from src.discovery.board import parse_dcinside_trend
-from src.matcher import (LLMMatcher, RuleBasedMatcher, build_taxonomy_index, confidence_bucket,
+from src.classify.matcher import (LLMMatcher, RuleBasedMatcher, build_taxonomy_index, confidence_bucket,
                          risk_score_of, trend_score_of)
 from src.policy import load_policies
-from src.quality import basic_filter
-from src.risk_signals import detect_signals, primary_override
-from src.schema import ContentRecord, UrlCandidate
+from src.filtering.quality import basic_filter
+from src.filtering.risk_signals import detect_signals, primary_override
+from src.schema import ContentRecord, MatchResult, UrlCandidate
 from src.site_registry import SiteRegistry
+from src.pipelines._trend_util import _parse_datetime, _sample_candidates_by_time
+from src.pipelines.taxonomy_adjudication import _trend_classification_action
 
 TAXO = "configs/taxonomy.yaml"
 
@@ -34,6 +38,13 @@ def test_taxonomy_canonical_file_has_19_lv2_and_67_types():
         for policy in policies
     )
     assert all(subtype.description for policy in policies for subtype in policy.subtypes)
+
+
+def test_taxonomy_loader_rejects_duplicate_yaml_keys(tmp_path):
+    path = tmp_path / "duplicate.yaml"
+    path.write_text("policies: []\npolicies: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="중복 YAML 키: policies"):
+        load_policies(str(path))
 
 LIST_HTML = """
 <table>
@@ -124,6 +135,56 @@ def test_candidates_are_interleaved_by_source():
         "news_rss": [candidate("news1"), candidate("news2")],
     })
     assert [c.source_url for c in out] == ["dc1", "news1", "dc2", "news2"]
+
+
+def _dated_candidates(counts):
+    timezone = dt.datetime.now().astimezone().tzinfo
+    today = dt.datetime.now(timezone).date()
+    out = []
+    for day_offset, count in enumerate(counts):
+        day = today - dt.timedelta(days=day_offset)
+        for i in range(count):
+            hour = (i % 6) * 4 + (i // 6) % 4
+            stamp = dt.datetime.combine(day, dt.time(hour, i % 60), tzinfo=timezone)
+            cand = UrlCandidate(
+                f"https://example.com/{day_offset}/{i}", "example.com", "", "board_list", "", "",
+                title="위험 신호 후보", published_at_hint=stamp.isoformat(), site_type="community",
+            )
+            cand.meta = {
+                "bucket": "random_trend", "comment_count": i % 20,
+                "like_count": i % 7, "view_count": i * 10,
+            }
+            out.append(cand)
+    return out, timezone
+
+
+def test_time_sampling_selects_200_per_day_and_spreads_hours():
+    candidates, timezone = _dated_candidates([240, 240, 240])
+    picked = _sample_candidates_by_time(
+        candidates, 3, 200, {"random_trend": 1.0}, timezone,
+        time_bucket_hours=4, engagement_ratio=0.3, absolute_max=1000,
+    )
+    by_day, by_slot = {}, {}
+    for cand in picked:
+        published = _parse_datetime(cand.published_at_hint, timezone)
+        by_day[published.date()] = by_day.get(published.date(), 0) + 1
+        key = (published.date(), published.hour // 4)
+        by_slot[key] = by_slot.get(key, 0) + 1
+    assert len(picked) == 600 and sorted(by_day.values()) == [200, 200, 200]
+    assert all(33 <= count <= 34 for count in by_slot.values())
+
+
+def test_time_sampling_redistributes_short_day_quota():
+    candidates, timezone = _dated_candidates([300, 300, 50])
+    picked = _sample_candidates_by_time(
+        candidates, 3, 200, {"random_trend": 1.0}, timezone,
+        absolute_max=1000,
+    )
+    oldest = dt.datetime.now(timezone).date() - dt.timedelta(days=2)
+    assert len(picked) == 600
+    assert sum(
+        _parse_datetime(c.published_at_hint, timezone).date() == oldest for c in picked
+    ) == 50
 
 
 def test_parse_dcinside_trend_tags_meta():
@@ -278,6 +339,37 @@ def test_llm_classify_records_harmfulness_and_korean_context(monkeypatch):
     assert rec.contains_korean_context is True and rec.korea_relevance_score == 0.8
 
 
+def test_review_level_score_is_finalized_as_accepted():
+    rec = _rec()
+    rec.filter_status = "review"
+    rec.taxonomy_fit_score = 0.55
+    rec.harmfulness_score = 0.50
+    rec.concrete_context_score = 0.40
+    rec.korea_relevance_score = 0.50
+    match = MatchResult(True, "1_A_Toxic_Language", "profanity_and_insults", 0.55, "test")
+    settings = {"matching": {
+        "accepted_confidence": 0.50, "accepted_taxonomy_fit": 0.50,
+        "accepted_harmfulness": 0.45, "accepted_concrete_context": 0.30,
+        "min_korea_relevance": 0.30,
+    }}
+    assert _trend_classification_action(match, rec, settings) == "accepted"
+
+
+def test_low_harmfulness_does_not_block_concrete_taxonomy_match():
+    rec = _rec()
+    rec.filter_status = "pass"
+    rec.taxonomy_fit_score = 0.70
+    rec.harmfulness_score = 0.05
+    rec.concrete_context_score = 0.60
+    rec.korea_relevance_score = 0.80
+    match = MatchResult(True, "5_L_Illegal_Activity", "fraudulent_schemes_and_deception", 0.70, "test")
+    settings = {"matching": {
+        "accepted_confidence": 0.50, "accepted_taxonomy_fit": 0.50,
+        "accepted_concrete_context": 0.30, "min_korea_relevance": 0.30,
+    }}
+    assert _trend_classification_action(match, rec, settings) == "accepted"
+
+
 def test_llm_type_derives_path_and_repairs_relevance_contradiction(monkeypatch):
     policies = load_policies(TAXO)
     matcher = LLMMatcher()
@@ -297,12 +389,39 @@ def test_llm_type_derives_path_and_repairs_relevance_contradiction(monkeypatch):
     })
     rec = _rec(masked_text="성별 집단을 비하하는 글")
     result = matcher.classify(rec, policies)
-    assert result.is_relevant
+    assert not result.is_relevant
     assert (result.taxonomy_lv1, result.taxonomy_lv2, result.subtype) == (
         "Unfair Representation", "2_F_Bias_and_Hate", "gender",
     )
-    assert rec.filter_status == "review"
-    assert result.reason.startswith("llm_classify_repaired")
+    assert rec.filter_status == "fail"
+    assert result.reason.startswith("llm_classify")
+
+
+def test_llm_allows_lv2_without_type(monkeypatch):
+    policies = load_policies(TAXO)
+    matcher = LLMMatcher()
+    monkeypatch.setattr(matcher, "_complete_json", lambda *_: {
+        "is_taxonomy_relevant": True,
+        "filter_status": "pass",
+        "category": "-",
+        "taxonomy_lv2": "5_L_Illegal_Activity",
+        "is_harmful": True,
+        "harmfulness_score": 0.8,
+        "contains_korean_context": True,
+        "korea_relevance_score": 1.0,
+        "concrete_context_score": 0.9,
+        "confidence": 0.8,
+        "reason": "범죄 수법이 구체적임",
+        "evidence_spans": ["사기 수법"],
+        "fail_reason": None,
+    })
+    rec = _rec(masked_text="사기 수법을 설명한 글")
+    result = matcher.classify(rec, policies)
+    assert result.is_relevant
+    assert result.taxonomy_lv2 == "5_L_Illegal_Activity"
+    assert result.taxonomy_lv1 == "Malicious Use"
+    assert result.subtype == "-"
+    assert rec.filter_status == "pass"
 
 
 def test_llm_input_uses_title_and_body_only():
@@ -378,6 +497,14 @@ def _fake_fetch_link(self, url):
 def test_run_trend_follows_body_link(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher.Fetcher, "fetch", _fake_fetch_link)
     monkeypatch.setattr(fetcher.Fetcher, "post_json", lambda *a, **k: None)
+    # 부모 글이 accepted로 분류돼야 본문 링크 수집 로직(depth 0)에 도달한다.
+    # conftest의 오프라인 None을 이 테스트만 관련 분류 결과로 덮어쓴다(결정론적).
+    monkeypatch.setattr(LLMMatcher, "_complete_json", lambda *a, **k: {
+        "is_taxonomy_relevant": True, "filter_status": "pass", "category": "profanity_and_insults",
+        "is_harmful": True, "harmfulness_score": 0.7, "contains_korean_context": True,
+        "korea_relevance_score": 0.8, "concrete_context_score": 0.6, "confidence": 0.8,
+        "reason": "test", "evidence_spans": [], "fail_reason": None,
+    })
     cfg = tmp_path / "t.yaml"
     cfg.write_text(yaml.safe_dump({
         "collection": {"exclude_older_than_days": 3650},
@@ -433,25 +560,43 @@ def test_run_trend_end_to_end(tmp_path, monkeypatch):
         trend_config=str(trend_cfg), taxonomy_config=TAXO,
         db_path=str(db), report_path=str(tmp_path / "r.json"), csv_path=str(tmp_path / "c.csv"),
     )
-    assert report["stored_records"] >= 1
-    assert report["collection_goal"]["total_target"] == 5  # disabled news 목표는 합산하지 않음
+    assert report["stored_records"] == 0
+    assert report["collection_window"]["lookback_days"] == 3650
 
     conn = sqlite3.connect(db)
-    rows = conn.execute(
-        "SELECT source, collection_type, crawl_status, taxonomy_lv2, category, action, risk_score, "
-        "classification_source, risk_signals, matched_keywords, body_text, raw_text "
-        "FROM content_records WHERE is_risk_candidate=1"
-    ).fetchall()
-    assert rows, "위험신호 후보가 최소 1건 저장돼야 한다"
-    (source, coll_type, crawl, lv2, category, action, risk,
-     cls_src, signals, matched, body, raw) = rows[0]
-    assert source == "dcinside"
-    assert coll_type == "trending" and crawl == "success"      # v8: 버킷 + 크롤 상태
-    assert lv2 is None and category is None                 # 최종 taxonomy는 LLM 전용
-    assert action == "pending"                              # keep→LLM인데 키 없음 → pending(llm_failed)
-    assert risk is None
-    assert cls_src == "none" and "privacy" in json.loads(signals)
-    assert json.loads(matched)                              # 매칭 키워드 최소 1개
-    assert "[PHONE]" in body and "010-1234-5678" not in body   # 마스킹
-    assert "010-1234-5678" in raw                              # raw 보존
+    discarded = conn.execute(
+        "SELECT COUNT(*) FROM url_candidates WHERE status='trend_discard'"
+    ).fetchone()[0]
+    assert discarded >= 1  # LLM 미사용/실패는 pending 저장 없이 discard
     conn.close()
+
+
+def test_run_trend_skips_previously_processed_url_before_body_fetch(tmp_path, monkeypatch):
+    body_fetches = 0
+
+    def counted_fetch(self, url):
+        nonlocal body_fetches
+        if "/board/lists" not in url:
+            body_fetches += 1
+        return LIST_HTML if "/board/lists" in url else POST_HTML
+
+    monkeypatch.setattr(fetcher.Fetcher, "fetch", counted_fetch)
+    monkeypatch.setattr(fetcher.Fetcher, "post_json", lambda *a, **k: None)
+    cfg = tmp_path / "trend.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "collection": {"exclude_older_than_days": 3650},
+        "sources": {
+            "dcinside": {"enabled": True, "max_pages": 1,
+                         "galleries": [{"id": "dcbest", "name": "실베", "bucket": "trending"}]},
+            "news_rss": {"enabled": False},
+        },
+    }, allow_unicode=True), encoding="utf-8")
+    kwargs = dict(
+        trend_config=str(cfg), taxonomy_config=TAXO, db_path=str(tmp_path / "trend.db"),
+        report_path=str(tmp_path / "r.json"), csv_path=str(tmp_path / "c.csv"),
+    )
+    pipeline.run_trend(**kwargs)
+    first = body_fetches
+    report = pipeline.run_trend(**kwargs)
+    assert first > 0 and body_fetches == first
+    assert report["collection_targets"]["dcinside"]["already_processed"] == 1

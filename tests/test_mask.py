@@ -2,9 +2,9 @@ import csv
 
 from src.clean import clean_record
 from src.mask import BasicPIIMasker, MASKING_VERSION
-from src.report import export_csv
+from src.reporting.report import export_csv
 from src.schema import ContentRecord
-from src.store import Store
+from src.storage.store import Store
 
 
 def _record(text: str, comments=None) -> ContentRecord:

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .policy import Subtype
+from ..policy import Subtype
 
 # collection_type → 기본 discovery method 체인 (subtype.primary_methods 없을 때, 설계서 §8)
 _DEFAULT_METHODS = {

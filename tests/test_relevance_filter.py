@@ -1,4 +1,4 @@
-from src.relevance_filter import decide_candidate_action, decide_filter_action
+from src.filtering.relevance_filter import decide_candidate_action, decide_filter_action
 from src.schema import ContentRecord, UrlCandidate
 
 
@@ -72,6 +72,17 @@ def test_candidate_prefilter_skips_plain_news_before_crawl():
     )
     candidate.meta = {"source": "news_rss", "source_type": "news", "category_name": "사회"}
     assert decide_candidate_action(candidate).filter_action == "discard"
+
+
+def test_candidate_prefilter_keeps_news_with_concrete_harm_method():
+    candidate = UrlCandidate(
+        "https://example.com/crime", "example.com", "", "rss", "", "",
+        title="커피에 살충제 혼합 전 치사량 검색한 피의자", site_type="news",
+    )
+    candidate.meta = {"source": "news_rss", "source_type": "news", "category_name": "사회"}
+    result = decide_candidate_action(candidate)
+    assert result.filter_action == "keep"
+    assert {"살충제", "치사량"} <= set(result.matched_keywords)
 
 
 def test_candidate_prefilter_keeps_high_comment_community_for_body():

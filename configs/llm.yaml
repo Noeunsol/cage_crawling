@@ -1,0 +1,14 @@
+# LLM 분류기 설정 (crawler_settings.yaml에서 분리 — 모델/가격 관심사).
+# _build_matcher(src/pipelines/stages.py)가 로드한다. 호출부가 settings.matching.llm을
+# 넘기면 그 값이 이 파일보다 우선한다(테스트 override 호환).
+llm:
+  enabled: true            # keep 전체 호출. 키 없음/실패 시 fail-closed discard
+  provider: openai
+  model: gpt-4o-mini
+  input_text_field: masked_text   # LLM 입력은 masked만 (raw 미전송)
+  max_chars: 4000
+  prompt_path: prompts/taxonomy_mapping.yaml
+  pricing:
+    input_per_million_usd: 0.15
+    cached_input_per_million_usd: 0.075
+    output_per_million_usd: 0.60

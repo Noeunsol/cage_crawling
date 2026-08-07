@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .policy import Subtype
-from .site_registry import SiteRegistry
+from ..policy import Subtype
+from ..site_registry import SiteRegistry
 
 
 @dataclass

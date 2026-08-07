@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from .schema import ContentRecord, FilterResult
+from ..schema import ContentRecord, FilterResult
 
 _HANGUL = re.compile(r"[가-힣]")
 _NONSPACE = re.compile(r"\S")

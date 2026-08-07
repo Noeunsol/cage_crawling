@@ -5,8 +5,8 @@ Focused Crawl 이므로 여기서 페이지 링크를 확장(spider)하지 않�
 """
 from __future__ import annotations
 
-from .schema import UrlCandidate
-from .site_registry import SiteRegistry
+from ..schema import UrlCandidate
+from ..site_registry import SiteRegistry
 
 # 신뢰도 낮거나 위험한 소스는 감점 (예시)
 _UNSAFE_HINT = ("bit.ly", "t.co")

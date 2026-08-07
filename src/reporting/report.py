@@ -5,7 +5,7 @@ import csv
 import json
 from pathlib import Path
 
-from .store import Store
+from ..storage.store import Store
 
 
 def build_report(store: Store) -> dict:
@@ -31,17 +31,9 @@ def build_report(store: Store) -> dict:
         "accepted": cur.execute(
             "SELECT COUNT(*) FROM content_records WHERE action='accepted' AND COALESCE(is_supplementary,0)=0"
         ).fetchone()[0],
-        "review": cur.execute(
-            "SELECT COUNT(*) FROM content_records WHERE action='review' AND COALESCE(is_supplementary,0)=0"
-        ).fetchone()[0],
-        "pending": cur.execute(
-            "SELECT COUNT(*) FROM content_records WHERE action='pending' AND COALESCE(is_supplementary,0)=0"
-        ).fetchone()[0],
-        "excluded": cur.execute(
-            "SELECT COUNT(*) FROM url_candidates WHERE status IN ('trend_excluded','matched_fail')"
-        ).fetchone()[0],
         "discard": cur.execute(
-            "SELECT COUNT(*) FROM url_candidates WHERE status IN ('prefilter_discarded','trend_discard')"
+            "SELECT COUNT(*) FROM url_candidates "
+            "WHERE status IN ('prefilter_discarded','trend_discard','matched_fail')"
         ).fetchone()[0],
         "supplementary": cur.execute(
             "SELECT COUNT(*) FROM content_records WHERE is_supplementary=1"
@@ -55,11 +47,11 @@ def build_report(store: Store) -> dict:
     def conversion(group: str) -> dict:
         rows = cur.execute(f"""
             SELECT COALESCE({group},'unknown'), COUNT(*),
-              SUM(CASE WHEN status IN ('extracted','quality_failed','matched_pass','matched_review','matched_fail','duplicate') THEN 1 ELSE 0 END),
-              SUM(CASE WHEN status IN ('matched_pass','matched_review') THEN 1 ELSE 0 END)
+              SUM(CASE WHEN status IN ('extracted','quality_failed','matched_pass','matched_fail','duplicate') THEN 1 ELSE 0 END),
+              SUM(CASE WHEN status='matched_pass' THEN 1 ELSE 0 END)
             FROM url_candidates GROUP BY {group}
         """).fetchall()
-        return {str(k): {"discovered": d, "extracted": e or 0, "pass_review": p or 0,
+        return {str(k): {"discovered": d, "extracted": e or 0, "accepted": p or 0,
                          "conversion_rate": round((p or 0) / d, 3) if d else 0.0}
                 for k, d, e, p in rows}
 
@@ -73,6 +65,10 @@ def build_report(store: Store) -> dict:
     return {
         "stored_records": total,
         "by_taxonomy": counts("SELECT taxonomy_lv2, COUNT(*) FROM content_records GROUP BY taxonomy_lv2"),
+        "by_taxonomy_accepted": counts(
+            "SELECT taxonomy_lv2, COUNT(*) FROM content_records "
+            "WHERE action='accepted' AND COALESCE(is_supplementary,0)=0 AND taxonomy_lv2 IS NOT NULL "
+            "GROUP BY taxonomy_lv2"),
         "by_subtype": counts("SELECT subtype, COUNT(*) FROM content_records GROUP BY subtype"),
         "by_site": counts("SELECT site_name, COUNT(*) FROM content_records GROUP BY site_name"),
         "by_search_api": counts("SELECT search_api, COUNT(*) FROM content_records GROUP BY search_api"),

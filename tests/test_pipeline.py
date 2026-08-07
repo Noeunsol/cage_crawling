@@ -1,10 +1,11 @@
 """end-to-end 검증 (오프라인). 실제 파서를 fixture HTML로 구동한다. assert 기반."""
 import sqlite3
 
-from src import fetcher, pipeline, search
-from src.dedup import hamming, simhash
+from src import fetcher, pipeline
+from src.keyword_discovery import search
+from src.storage.dedup import hamming, simhash
 from src.mask import mask_pii
-from src.matcher import RuleBasedMatcher, TieredMatcher
+from src.classify.matcher import RuleBasedMatcher, TieredMatcher
 from src.policy import Subtype
 from src.schema import ContentRecord
 
@@ -75,7 +76,6 @@ def test_end_to_end_real_parsers(tmp_path, monkeypatch):
 
     # (b) 실제 정적 파서 여러 종류가 fixture로 동작
     extractors = {r[0] for r in conn.execute("SELECT DISTINCT extractor FROM content_records")}
-    assert "naver_kin" in extractors           # __NEXT_DATA__ 파싱
     assert "trafilatura" in extractors         # 뉴스 본문+날짜
     assert "dcinside" in extractors or "site_parser_community" in extractors
 

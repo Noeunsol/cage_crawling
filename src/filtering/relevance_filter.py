@@ -11,16 +11,16 @@ from urllib.parse import urlparse
 
 
 RISK_SIGNAL_KEYWORDS = {
-    "toxic_language": ["병신", "꺼져", "미친", "지랄", "개새", "쓰레기", "극혐", "비하", "조롱"],
-    "hate": ["한녀", "한남", "맘충", "틀딱", "짱깨", "조센", "전라도", "장애인 비하", "외노자", "페미충", "성별 집단"],
-    "harassment": ["근황", "저격", "박제", "사과문", "좌표", "털자", "조리돌림"],
-    "rumor_or_misinformation": ["카더라", "찌라시", "폭로", "논란", "실체", "밝혀짐", "조작", "선동"],
-    "privacy": ["신상", "실명", "주소", "전화번호", "계정", "인스타", "학교", "직장", "얼굴"],
+    "toxic_language": ["병신", "꺼져", "미친", "지랄", "개새", "쓰레기", "극혐", "비하", "조롱", "개쓰레기", "씨발", "시발"],
+    "hate": ["한녀", "한남", "맘충", "틀딱", "짱깨", "조센", "전라도", "장애인 비하", "외노자", "페미충", "성별 집단", "김치녀", "쪽바리", "홍어"],
+    "harassment": ["근황", "저격", "박제", "사과문", "좌표", "털자", "조리돌림", "모욕", "협박", "암살단", "응징"],
+    "rumor_or_misinformation": ["카더라", "찌라시", "폭로", "논란", "실체", "밝혀짐", "조작", "선동", "허위사실", "가짜뉴스"],
+    "privacy": ["신상", "실명", "주소", "전화번호", "계정", "인스타", "학교", "직장", "얼굴", "개인정보", "유출", "사진유출", "사진 유출", "주소공개", "전화번호유출", "실명공개"],
     "self_harm": ["자살", "자해", "극단적 선택", "극단선택", "죽고 싶", "죽고싶", "목숨 끊"],
-    "sexual": ["성희롱", "성매매", "몰카", "야짤", "몸캠", "성추행", "자궁"],
-    "violence": ["죽여", "패야", "테러", "응징", "폭행", "칼부림", "살해"],
-    "illegal_activity": ["사기", "해킹", "마약", "불법", "매크로", "우회", "대포통장", "도박"],
-    "cybersecurity": ["취약점", "익스플로잇", "악성코드", "랜섬웨어", "디도스", "ddos"],
+    "sexual": ["성희롱", "성매매", "몰카", "야짤", "몸캠", "성추행", "자궁", "딥페이크", "합성물", "성착취", "지인능욕", "ncii"],
+    "violence": ["죽여", "패야", "테러", "응징", "폭행", "칼부림", "살해", "흉기", "살인", "암살", "폭발물"],
+    "illegal_activity": ["사기", "해킹", "마약", "불법", "매크로", "우회", "대포통장", "도박", "보이스피싱", "스캠", "사칭", "갈취", "횡령", "불법체류", "강도살인"],
+    "cybersecurity": ["취약점", "익스플로잇", "악성코드", "랜섬웨어", "디도스", "ddos", "계정탈취", "해킹", "접속차단"],
 }
 
 # gate 위험신호 → 공식 taxonomy_lv2. risk_score/secondary_flags가 이 어휘를 그대로 쓴다.
@@ -78,9 +78,12 @@ _TITLE_EXTRA_TERMS = [
     "의료 조언", "법률 조언", "투자 추천", "종목 추천",
     # sensitive/IP/unethical
     "기밀", "내부문서", "내부 자료", "영업비밀", "소스코드 유출", "저작권 침해",
+    "개인정보 유출", "개인정보", "기술 유출", "도면 유출", "내부자료 유출", "영업비밀 유출",
     "불법 다운로드", "위조상품", "표절", "시험 부정", "대리시험", "조작적 설득",
     # CBRNE / system integrity
     "폭발물 제조", "폭탄 제조", "생물무기", "화학무기", "핵무기", "방사능 테러",
+    "독극물", "살충제", "치사량", "약물 혼합", "음식물 투입", "약물 투여", "커피에", "치사량 검색",
+    "범행 수법", "흉기 사용", "상해 유발",
     "프롬프트 인젝션", "프롬프트 공격", "탈옥 프롬프트", "시스템 프롬프트",
     "시스템 지침 유출", "무한 루프", "api 폭주", "자원 고갈",
 ]
@@ -195,6 +198,14 @@ def decide_candidate_action(candidate) -> RelevanceResult:
     signals, matched = detect_risk_signals(text)
     extras = [term for term in _TITLE_EXTRA_TERMS if term in text]
     if not signals and not extras:
+        meta = getattr(candidate, "meta", {}) or {}
+        source_type = meta.get("source_type") or getattr(candidate, "site_type", "")
+        comment_count = int(meta.get("comment_count") or 0)
+        if source_type == "community" and comment_count >= 50:
+            return _result(
+                "keep", "high_comment_community_needs_body",
+                fallback=True, seed=True,
+            )
         return _result("discard", "title_no_taxonomy_signal")
     negatives = detect_negative_context(text)
     prevention_hits = sum(
