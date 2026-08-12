@@ -16,13 +16,19 @@ class QualityFilter:
     def __init__(self, settings: dict):
         q = settings.get("quality", {})
         self.min_chars = q.get("min_body_chars", 300)
+        # 커뮤니티 글은 원래 짧다. 전역 하한만 두면 extraction은 통과시킨 글을 여기서 버려
+        # fetch·추출 비용만 쓰고 끝난다. extraction.success_criteria와 짝을 맞춘다.
+        self.min_chars_by_site_type = q.get("min_body_chars_by_site_type", {}) or {}
         self.min_korean_ratio = q.get("min_korean_ratio", 0.3)
         self.min_quality_score = q.get("min_quality_score", 0.6)
         self._seen_hashes: set[tuple[str, str]] = set()
 
+    def _min_chars_for(self, site_type: str) -> int:
+        return int(self.min_chars_by_site_type.get(site_type, self.min_chars))
+
     def check(self, rec: ContentRecord) -> FilterResult:
-        # 커뮤니티는 본문이 짧아도 댓글이 핵심이므로 본문+댓글을 함께 본다 (raw 보존).
         body = _effective_text(rec)
+        min_chars = self._min_chars_for(rec.site_type)
         korean_ratio = _korean_ratio(body)
         rec.language = "ko" if korean_ratio >= self.min_korean_ratio else "other"
         rec.korea_relevance_score = round(korean_ratio, 3)
@@ -33,7 +39,7 @@ class QualityFilter:
         if dedup_key in self._seen_hashes:
             return FilterResult("fail", "duplicate", rec.quality_score)
         # 길이
-        if len(body) < self.min_chars:
+        if len(body) < min_chars:
             return FilterResult("fail", f"too_short:{len(body)}", rec.quality_score)
         # 언어
         if rec.language != "ko":
@@ -62,14 +68,10 @@ _URL = re.compile(r"https?://\S+")
 def basic_filter(rec: ContentRecord, min_len: int = 20) -> FilterResult:
     """트렌드 모드 1차 basic filter: 너무 짧음/링크만/이미지만/단순잡담 제거.
 
-    댓글이 있으면(커뮤니티 핵심) 짧은 본문도 통과시킨다. OCR 없는 이미지 전용 글은
-    추출 후 본문이 비어 too_short로 걸린다(OCR은 이후 단계).
+    이미지 전용 글은 추출 후 본문이 비어 too_short로 걸린다.
     """
     body = rec.masked_text or rec.body_text or ""
     combined = f"{rec.title} {body}".strip()
-    has_comments = bool(rec.masked_comments)
-    if has_comments:
-        return FilterResult("pass", None)
     text_wo_url = _URL.sub("", combined).strip()
     if _URL.search(combined) and len(text_wo_url) < 10:
         return FilterResult("fail", "link_only")
@@ -81,10 +83,7 @@ def basic_filter(rec: ContentRecord, min_len: int = 20) -> FilterResult:
 
 
 def _effective_text(rec: ContentRecord) -> str:
-    parts = [rec.masked_text or rec.body_text]
-    if rec.masked_comments:
-        parts.extend(rec.masked_comments)
-    return "\n".join(p for p in parts if p)
+    return rec.masked_text or rec.body_text or ""
 
 
 def _korean_ratio(text: str) -> float:

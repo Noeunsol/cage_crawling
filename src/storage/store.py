@@ -45,7 +45,6 @@ _CONTENT_COLS = [
     ("source", "TEXT"), ("source_type", "TEXT"), ("board_name", "TEXT"), ("category_name", "TEXT"),
     ("category", "TEXT"), ("is_risk_candidate", "INTEGER"),
     ("view_count", "INTEGER"), ("like_count", "INTEGER"), ("dislike_count", "INTEGER"), ("comment_count", "INTEGER"),
-    ("ocr_image_count", "INTEGER"), ("ocr_char_count", "INTEGER"),
     ("is_trending", "INTEGER"),
     ("risk_score", "INTEGER"), ("trend_score", "INTEGER"), ("confidence", "INTEGER"), ("action", "TEXT"),
     ("is_taxonomy_relevant", "INTEGER"), ("is_trend_seed", "INTEGER"),
@@ -236,6 +235,14 @@ class Store:
                 "SELECT canonical_url FROM content_records WHERE canonical_url IS NOT NULL"
             )
         }
+
+    def robots_disallowed_domains(self) -> list[str]:
+        """이미 robots 정책으로 수집 불가가 확인된 도메인. 다음 discovery에서 제외한다."""
+        return [row[0] for row in self.conn.execute(
+            """SELECT DISTINCT domain FROM url_candidates
+               WHERE status='extraction_failed' AND filter_reason='robots_disallowed'
+                 AND domain IS NOT NULL AND domain!='' ORDER BY domain"""
+        )]
 
     def processed_url_keys(self) -> set[str]:
         """1차 수집에서 최종 처리된 URL. 실패·표본 미선택 항목은 재시도한다."""

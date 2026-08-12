@@ -62,31 +62,8 @@ def test_risk_score_is_weighted_by_unique_pii_type():
     assert result.pii_risk_score == 0.2
 
 
-def test_clean_record_masks_body_and_comments_and_sets_metadata():
-    rec = clean_record(_record(
-        "김민수가 010-1234-5678로 악플을 신고했다",
-        ["문의 user@example.com", "token=abcdefghijk 조리돌림"],
-    ), comment_config={"enabled": False})
-    assert "[PHONE]" in rec.masked_text
-    assert "[EMAIL]" in rec.masked_comments[0]
-    assert "[SECRET]" in rec.masked_comments[1]
-    assert rec.pii_detected
-    assert {"PHONE", "EMAIL", "SECRET"} <= set(rec.pii_types)
-    assert rec.masking_version == MASKING_VERSION
-    assert "김민수" in rec.masked_text and "악플" in rec.masked_text
 
 
-def test_comments_remove_duplicates_and_unrelated_but_keep_full_relevant_text():
-    long_comment = "무관한 장문 " + "가" * 700
-    relevant = "악플 피해 증거를 신고했다 " + "나" * 700
-    comments = [long_comment, "ㅋㅋㅋ", relevant, relevant]
-    rec = clean_record(_record("악플 피해 사건의 본문", comments))
-    assert rec.raw_comments == [relevant]
-    assert len(rec.raw_comments[0]) > 500                 # 관련 댓글 전문 보존
-    assert rec.original_comment_count == 4 and rec.kept_comment_count == 1
-    assert rec.duplicate_comments_removed == 1
-    assert rec.unrelated_comments_removed == 2
-    assert rec.masked_comments == rec.raw_comments
 
 
 def test_default_csv_excludes_unmasked_text(tmp_path):

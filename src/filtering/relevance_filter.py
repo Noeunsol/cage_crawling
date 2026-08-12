@@ -145,8 +145,6 @@ def decide_filter_action(record) -> RelevanceResult:
     title = (getattr(record, "title", "") or "").strip()
     source_type = getattr(record, "source_type", "")
 
-    if not body and any(term in title for term in ("사진", "이미지", "짤", "움짤")):
-        return _result("keep", "image_only_needs_ocr")          # 이미지 의존 → OCR 후 LLM 판단
     if _URL_ONLY.fullmatch(body):
         return _result("discard", "link_only")
     if len(f"{title}{body}".strip()) < 20:

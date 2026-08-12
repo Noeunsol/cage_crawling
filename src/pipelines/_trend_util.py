@@ -14,13 +14,23 @@ _URL_RE = re.compile(r'https?://[^\s"\'<>)\]}]+')
 _SKIP_LINK_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".mp3", ".pdf")
 
 
+def _topic_of(cand) -> str:
+    """주제 축 라벨. 뉴스 RSS는 category_name, dcinside는 갤러리 bucket.
+
+    뉴스도 bucket을 갖지만 값이 "latest_news" 상수라 주제 축이 될 수 없다(전 카테고리가 한 덩어리).
+    그래서 category_name이 있으면 그쪽이 우선이다.
+    """
+    meta = cand.meta or {}
+    return meta.get("category_name") or meta.get("bucket") or "latest"
+
+
 def _allocate_buckets(cands: list, target: int, ratios: dict) -> list:
     """버킷별 비중(sampling_ratio)에 따라 target 만큼 배분. 미달 시 leftover로 보충."""
     if not target:
         return cands
     by: defaultdict = defaultdict(list)
     for c in cands:
-        by[c.meta.get("bucket", "latest")].append(c)
+        by[_topic_of(c)].append(c)
     picked, leftover = [], []
     for bucket, items in by.items():
         quota = round(target * ratios.get(bucket, 0)) if ratios else len(items)
@@ -60,7 +70,7 @@ def _topic_pick(cands: list, target: int, ratios: dict,
     """주제 quota를 먼저 채우고 부족분은 남은 전체 후보에서 보충한다."""
     by: defaultdict = defaultdict(list)
     for cand in cands:
-        by[cand.meta.get("bucket", "latest")].append(cand)
+        by[_topic_of(cand)].append(cand)
     picked = []
     for bucket, items in by.items():
         quota = round(target * float(ratios.get(bucket, 0))) if ratios else len(items)
@@ -122,6 +132,50 @@ def _sample_candidates_by_time(cands: list, lookback_days: int, daily_quota: int
     return picked[:target]
 
 
+def _topic_quotas(by_topic: dict, total: int, ratios: dict) -> dict:
+    """주제별 목표 건수. 공급이 비중에 못 미치는 주제의 미달분은 여유 있는 주제로 재분배한다."""
+    quotas = {t: min(len(items), round(total * float(ratios.get(t, 0)))) for t, items in by_topic.items()}
+    for _ in range(len(by_topic)):          # 재분배가 또 상한에 걸릴 수 있어 수렴할 때까지 반복
+        short = total - sum(quotas.values())
+        room = {t: len(by_topic[t]) - q for t, q in quotas.items() if len(by_topic[t]) > q}
+        if short <= 0 or not room:
+            break
+        spare = sum(room.values())
+        for topic, available in room.items():
+            quotas[topic] += min(available, round(short * available / spare))
+    return quotas
+
+
+def _sample_by_topic_then_time(cands: list, lookback_days: int, daily_quota: int,
+                               ratios: dict, timezone, time_bucket_hours: int = 4,
+                               engagement_ratio: float = 0.3,
+                               absolute_max: int = 1000) -> list:
+    """주제 quota를 먼저 확정하고, 그 안에서 시간대 분산을 한다.
+
+    시간 슬롯 안에서 비중을 적용하면(구 방식) 슬롯당 목표가 작아 카테고리 quota가 2~5건에 그치고
+    나머지를 주제 무시 leftover가 채워, 비중을 바꿔도 결과가 안 바뀐다. 순서를 뒤집어야 비중이 산다.
+    """
+    total = min(absolute_max, daily_quota * lookback_days, len(cands))
+    if not ratios or total <= 0:
+        return _sample_candidates_by_time(cands, lookback_days, daily_quota, ratios, timezone,
+                                          time_bucket_hours, engagement_ratio, absolute_max)
+    by_topic: defaultdict = defaultdict(list)
+    for cand in cands:
+        by_topic[_topic_of(cand)].append(cand)
+    quotas = _topic_quotas(by_topic, total, ratios)
+    picked = []
+    for topic, items in by_topic.items():
+        quota = quotas.get(topic, 0)
+        if quota > 0:      # 주제 안에서는 시간 분산만 시킨다(ratios 불필요)
+            picked.extend(_sample_candidates_by_time(
+                items, lookback_days, quota, {}, timezone,
+                time_bucket_hours, engagement_ratio, quota,
+            ))
+    used = {c.dedup_key() for c in picked}
+    picked.extend(c for c in cands if c.dedup_key() not in used)   # 미달 시 남은 후보로 보충
+    return picked[:total]
+
+
 def _append_unique_candidates(cands, selected, seen, scan_cap):
     """목록 후보를 URL 중복 없이 안전 상한까지 추가한다."""
     for cand in cands:
@@ -159,22 +213,6 @@ def _target_stats(available, scan_cap):
     return stats
 
 
-def _allocate_news_categories(cands: list, target: int, ratios: dict) -> list:
-    """URL 중복을 제거하고 RSS category별 목표 비율로 후보를 배분한다."""
-    unique = list({c.dedup_key(): c for c in cands}.values())
-    if not target:
-        return unique
-    by: defaultdict = defaultdict(list)
-    for cand in unique:
-        by[cand.meta.get("category_name", "")].append(cand)
-    picked, leftover = [], []
-    for category, items in by.items():
-        quota = round(target * ratios.get(category, 0)) if ratios else len(items)
-        picked.extend(items[:quota])
-        leftover.extend(items[quota:])
-    if len(picked) < target:
-        picked.extend(leftover[:target - len(picked)])
-    return picked[:target]
 
 
 def _extract_links(text: str | None, comments: list | None) -> list[tuple[str, str]]:

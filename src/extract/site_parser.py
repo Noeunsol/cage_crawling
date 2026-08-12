@@ -45,7 +45,6 @@ class CommunityStaticParser:
     ponytail: generic selector. 사이트별 정밀 selector는 여기에 클래스 추가로 확장."""
     name = "site_parser_community"
     _BODY_SEL = "article, .post, .write_div, .view_content, #content, .content, .board-content"
-    _COMMENT_SEL = ".comment, .cmt, .comment_box, li.comment, .reply, .cmt_txt"
 
     def extract(self, c, site, html) -> ExtractedContent | None:
         if not html:
@@ -60,24 +59,20 @@ class CommunityStaticParser:
             if src and not src.startswith("data:"):
                 image_urls.append(urljoin(c.source_url, src))
         image_urls = list(dict.fromkeys(image_urls))
-        comments = [e.get_text(" ", strip=True) for e in soup.select(self._COMMENT_SEL)]
-        comments = [x for x in comments if x]
-        if not body and not comments and not image_urls:
+        if not body and not image_urls:
             return None
         date = first_date(html)
-        return ExtractedContent(title=title, body_text=body, comments=comments,
-                                comment_count=len(comments),
+        return ExtractedContent(title=title, body_text=body,
                                 image_urls=image_urls,
                                 published_at=date, published_at_source="html_parser" if date else "unknown")
 
 
 class DcinsidePostExtractor:
-    """DCInside 게시글 본문과 AJAX 댓글·대댓글 parser."""
+    """DCInside 게시글 본문 parser. 댓글은 수집하지 않는다(본문만)."""
     name = "dcinside"
 
-    def __init__(self, fetcher=None, max_comments: int = 200):
+    def __init__(self, fetcher=None):
         self.fetcher = fetcher
-        self.max_comments = max_comments
 
     def extract(self, c, site, html) -> ExtractedContent | None:
         if not html or site.site_name != "dcinside":
@@ -98,63 +93,14 @@ class DcinsidePostExtractor:
             if src and not src.startswith("data:"):
                 image_urls.append(urljoin(c.source_url, src))
         image_urls = list(dict.fromkeys(image_urls))
-        comments = [
-            element.get_text(" ", strip=True)
-            for element in soup.select(".cmt_list .usertxt, .comment")
-            if element.get_text(" ", strip=True)
-        ]
-        if self.fetcher:
-            comments = self._fetch_comments(c.source_url, soup) or comments
-        if not body and not comments and not image_urls:
+        if not body and not image_urls:
             return None
         return ExtractedContent(
             title=title_el.get_text(" ", strip=True) if title_el else (c.title or ""),
             body_text=body,
-            comments=comments,
-            comment_count=len(comments),
             published_at=date_el.get("title") if date_el else None,
             published_at_source="html_parser",
             author_hint=author_el.get("data-nick") if author_el else None,
             image_urls=image_urls,
         )
 
-    def _fetch_comments(self, article_url: str, soup: BeautifulSoup) -> list[str]:
-        query = parse_qs(urlsplit(article_url).query)
-        gallery_id = (query.get("id") or [""])[0]
-        article_no = (query.get("no") or [""])[0]
-        token = soup.select_one("#e_s_n_o")
-        if not gallery_id or not article_no or not token:
-            return []
-        gall_type = soup.select_one("#_GALLTYPE_")
-        secret = soup.select_one("#secret_article_key")
-        endpoint = f"{urlsplit(article_url).scheme}://{urlsplit(article_url).netloc}/board/comment/"
-        out: list[str] = []
-        page = 1
-        while len(out) < self.max_comments:
-            payload = {
-                "id": gallery_id, "no": article_no,
-                "cmt_id": gallery_id, "cmt_no": article_no,
-                "focus_cno": "", "focus_pno": "",
-                "e_s_n_o": token.get("value", ""),
-                "comment_page": str(page), "sort": "D", "prevCnt": "",
-                "board_type": "",
-                "_GALLTYPE_": gall_type.get("value", "G") if gall_type else "G",
-                "secret_article_key": secret.get("value", "") if secret else "",
-                "clean": "", "nptest": "",
-            }
-            data = self.fetcher.post_json(endpoint, payload, article_url)
-            rows = (data or {}).get("comments") or []
-            if not rows:
-                break
-            for row in rows:
-                if row.get("del_yn") == "Y":
-                    continue
-                text = BeautifulSoup(str(row.get("memo") or ""), "lxml").get_text(" ", strip=True)
-                if text:
-                    out.append(("[대댓글] " if row.get("c_no") else "[댓글] ") + text)
-                if len(out) >= self.max_comments:
-                    break
-            if len(rows) >= int((data or {}).get("total_cnt") or 0):
-                break
-            page += 1
-        return out

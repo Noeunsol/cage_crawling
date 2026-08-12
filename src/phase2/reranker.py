@@ -63,16 +63,26 @@ def _korea_domain(url: str) -> bool:
 
 
 def _decide(disc: float, korea: float, cfg: dict) -> str:
+    # 0.40 미만은 Tavily 검색 품질 확인용으로도 너무 넓어 본문을 가져오지 않는다.
+    # 그 이상이면서 우선점수 미만인 후보만 fetch 여유가 있을 때 low_priority로 처리한다.
+    if korea < cfg["min_korea_relevance"]:
+        return "skip"
+    if disc < cfg["min_discovery_relevance_floor"]:
+        return "skip"
     if disc >= cfg["min_discovery_relevance"] and korea >= cfg["min_korea_relevance"]:
         return "fetch"
-    if disc >= cfg["low_priority_relevance"]:
-        return "low_priority"
-    return "skip"
+    return "low_priority"
+
+
+def _include_terms(intent, result) -> list[str]:
+    """이 후보를 데려온 쿼리의 type에 맞는 가점 어휘. type별이 없으면 LV2 공통."""
+    subtype = intent.query_types.get(result.query_or_intent, "")
+    return intent.include_by_type.get(subtype) or intent.include
 
 
 def _rule_scores(result, intent) -> tuple[float, float, int, int]:
     text = " ".join(filter(None, [result.title, result.snippet, result.content_hint])).lower()
-    inc = sum(1 for t in intent.include if t and t.lower() in text)
+    inc = sum(1 for t in _include_terms(intent, result) if t and t.lower() in text)
     exc = sum(1 for t in intent.exclude if t and t.lower() in text)
     base = float(result.provider_score) if result.provider_score is not None else 0.5
     disc = max(0.0, min(1.0, base + 0.15 * min(inc, 3) - 0.3 * min(exc, 2)))
@@ -83,8 +93,9 @@ def _rule_scores(result, intent) -> tuple[float, float, int, int]:
 
 def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
     cfg = {
-        "min_discovery_relevance": 0.65, "min_korea_relevance": 0.60,
-        "low_priority_relevance": 0.45, "llm_margin": 0.15, **(cfg or {}),
+        "min_discovery_relevance": 0.65, "min_discovery_relevance_floor": 0.40,
+        "min_korea_relevance": 0.60,
+        "llm_margin": 0.15, **(cfg or {}),
     }
     disc, korea, inc, exc = _rule_scores(result, intent)
 
@@ -102,8 +113,8 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
     spec = _rerank_spec()
     system = spec.render_system(
         target_lv2=intent.target_taxonomy_lv2,
-        goal=intent.natural_language_query,
-        include=", ".join(intent.include[:12]),
+        goal=" | ".join(intent.queries),
+        include=", ".join(_include_terms(intent, result)[:12]),
         exclude=", ".join(intent.exclude[:12]),
     )
     user = spec.render_user(
@@ -122,15 +133,15 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
 if __name__ == "__main__":
     from dataclasses import dataclass as _dc
 
+    from .intent_builder import CollectionIntent
+
     @_dc
     class _R:
         title: str; snippet: str; content_hint: str; url: str; provider_score: float
+        query_or_intent: str = "개인정보 유출 피해"
 
-    @_dc
-    class _I:
-        target_taxonomy_lv2: str; natural_language_query: str; include: list; exclude: list
-
-    intent = _I("4_I_Privacy_Infringement", "개인정보 유출 피해", ["신상털이", "개인정보 유출"], ["광고", "처리방침"])
+    intent = CollectionIntent("4_I_Privacy_Infringement", queries=["개인정보 유출 피해"],
+                              include=["신상털이", "개인정보 유출"], exclude=["광고", "처리방침"])
     # 명백 고관련 한국 도메인 → rule로 fetch (LLM 없이)
     hi = rerank(_R("신상털이 피해 고소", "개인정보 유출로 피해", "신상털이 개인정보 유출", "https://pann.nate.com/1", 0.9), intent)
     assert hi.fetch_decision == "fetch" and hi.source == "rule", hi

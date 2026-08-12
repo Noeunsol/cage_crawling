@@ -77,8 +77,6 @@ class ExtractedContent:
     view_count: Optional[int] = None
     comment_count: Optional[int] = None
     image_urls: list[str] = field(default_factory=list)
-    ocr_image_count: int = 0
-    ocr_char_count: int = 0
 
 
 @dataclass
@@ -156,9 +154,7 @@ class ContentRecord:
     like_count: Optional[int] = None
     dislike_count: Optional[int] = None
     comment_count: Optional[int] = None
-    image_urls: list[str] = field(default_factory=list)   # 이미지 의존 콘텐츠 OCR 대상
-    ocr_image_count: int = 0
-    ocr_char_count: int = 0
+    image_urls: list[str] = field(default_factory=list)
     is_trending: bool = False
     risk_score: Optional[int] = None   # 1~5
     trend_score: Optional[int] = None  # 1~5

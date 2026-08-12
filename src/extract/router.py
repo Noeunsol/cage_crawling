@@ -8,7 +8,6 @@ Firecrawl은 value_score >= min_value(가치 게이트)일 때만 시도.
 from __future__ import annotations
 
 from ..fetcher import Fetcher
-from ..image_ocr import ImageOCR
 from ..schema import ContentRecord, ExtractedContent, UrlCandidate
 from ..site_registry import SiteInfo, SiteRegistry
 from .base import ExtractionOutcome
@@ -53,14 +52,10 @@ class ExtractorRouter:
         ex = settings.get("extraction", {})
         self.success_criteria = ex.get("success_criteria", {})
         self.min_default_chars = ex.get("min_extract_chars", 200)
-        cc = ex.get("comments", {})
-        self.max_comments = cc.get("max_comments", 200)
-        self.max_comment_chars = cc.get("max_comment_chars", 500)
         self.fetcher = Fetcher(settings)
-        self.image_ocr = ImageOCR(self.fetcher, ex.get("image_ocr", {}))
         self._rungs = {
             "naver_kin": NaverKinExtractor(),
-            "dcinside": DcinsidePostExtractor(self.fetcher, self.max_comments),
+            "dcinside": DcinsidePostExtractor(self.fetcher),
             "community": CommunityStaticParser(),
             "trafilatura": TrafilaturaExtractor(),
             "playwright": PlaywrightExtractor(ex.get("playwright", {})),
@@ -89,15 +84,6 @@ class ExtractorRouter:
             if content is None:
                 tried.append(f"{name}_fail")
                 continue
-            if site.site_name == "dcinside":
-                self.image_ocr.enrich(content, getattr(c, "filter_action", "pending"))
-            if site.site_name == "dcinside" and name != "dcinside":
-                # 전용 파서가 일시적 응답으로 실패해도 범용 본문 결과에 댓글을 재결합한다.
-                fresh_html = self.fetcher.fetch(c.source_url)
-                enriched = self._rungs["dcinside"].extract(c, site, fresh_html)
-                if enriched and enriched.comments:
-                    content.comments = enriched.comments
-                    content.comment_count = len(enriched.comments)
             ok, why = self._success(content, site.site_type)
             if not ok:
                 tried.append(f"{name}_{why}")
@@ -123,7 +109,6 @@ class ExtractorRouter:
         crit = self.success_criteria.get(site_type, {})
         min_body = crit.get("min_body_chars", self.min_default_chars)
         body_len = len(content.body_text or "")
-        comments_len = sum(len(x) for x in (content.comments or []))
 
         if crit.get("require_title", True) and not (content.title or "").strip():
             return False, "no_title"
@@ -131,16 +116,9 @@ class ExtractorRouter:
             return False, "no_date"
         if body_len >= min_body:
             return True, "ok"
-        # 커뮤니티: 본문 짧아도 댓글이 충분하면 성공
-        if crit.get("allow_comment_only") and comments_len >= crit.get("min_comment_chars", 100):
-            return True, "ok"
         return False, f"body_too_short:{body_len}"
 
     def _to_record(self, c, site, content: ExtractedContent, extractor_name, collected_at) -> ContentRecord:
-        # 댓글 상한 적용 (count는 원래 값 보존)
-        comments = list((content.comments or [])[: self.max_comments])
-        if self.max_comment_chars > 0:  # 0이면 댓글 전문 보존
-            comments = [x[: self.max_comment_chars] for x in comments]
         rec = ContentRecord(
             source_url=c.source_url,
             domain=c.domain,
@@ -151,7 +129,6 @@ class ExtractorRouter:
             title=content.title or "",
             body_text=content.body_text,              # clean 단계에서 masked_text로 교체
             raw_text=content.body_text,               # 원문 보존
-            raw_comments=comments or None,
             collected_at=collected_at,
             search_query=c.search_query,
             search_api=c.search_api,
@@ -163,8 +140,6 @@ class ExtractorRouter:
             value_score=c.value_score,
             extraction_likelihood=c.extraction_likelihood,
             image_urls=list(getattr(content, "image_urls", []) or []),
-            ocr_image_count=int(getattr(content, "ocr_image_count", 0) or 0),
-            ocr_char_count=int(getattr(content, "ocr_char_count", 0) or 0),
             parent_source_url=getattr(c, "parent_source_url", None),
             link_source=getattr(c, "link_source", None),
             is_supplementary=bool(getattr(c, "is_supplementary", False)),

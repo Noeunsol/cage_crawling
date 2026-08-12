@@ -39,7 +39,7 @@ from .taxonomy_adjudication import (
     _classification_status, _phase2_adjudicate, _trend_classification_action,
 )
 from ._trend_util import (
-    _allocate_buckets, _allocate_news_categories, _append_unique_candidates,
+    _allocate_buckets, _append_unique_candidates,
     _candidate_in_window, _days_old, _extract_links, _link_candidate,
     _published_in_window, _round_robin_candidates, _target_stats,
 )
@@ -101,8 +101,7 @@ def run(
     store = Store(db_path, reset=reset_db)
     ctx = _Ctx(url_filter, extractor, quality, matcher, masker, deduper, store, budget,
                _dt.date.today().isoformat(), dedup_threshold,
-               settings.get("privacy", {}).get("save_raw_text", True),
-               settings.get("extraction", {}).get("comments", {}))
+               settings.get("privacy", {}).get("save_raw_text", True))
     ctx.artifact = ArtifactStore.from_settings(settings)
 
     for policy in policies:
@@ -125,7 +124,7 @@ def run(
 class _Ctx:
     """subtype 실행에 필요한 컴포넌트 묶음."""
     def __init__(self, url_filter, extractor, quality, matcher, masker, deduper, store, budget,
-                 collected_at, dedup_threshold, save_raw_text, comment_config):
+                 collected_at, dedup_threshold, save_raw_text):
         self.url_filter = url_filter
         self.extractor = extractor
         self.quality = quality
@@ -137,7 +136,6 @@ class _Ctx:
         self.collected_at = collected_at
         self.dedup_threshold = dedup_threshold
         self.save_raw_text = save_raw_text
-        self.comment_config = comment_config
 
 
 def _run_task(task, subtype, discovery, ctx: _Ctx):
@@ -178,7 +176,7 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
         rec = outcome.record
 
         # Phase 8: 정제 + PII 마스킹 (raw/cleaned/masked). preservation_policy로 마스킹 범위 결정
-        clean_record(rec, task.preservation_policy, ctx.masker, ctx.comment_config)
+        clean_record(rec, task.preservation_policy, ctx.masker)
         ctx.artifact.save_record(rec)
 
         # Phase 8.5: 추출로 확정된 날짜가 수집 기간 밖이면 버림 (URL 힌트 없이 통과한 건 차단).

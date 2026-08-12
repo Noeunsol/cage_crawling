@@ -25,12 +25,14 @@ NEWS = """<html><head><meta property="og:title" content="온라인 커뮤니티 
 <p>전문가들은 익명 공간에서의 집단적 괴롭힘이 어떻게 빠르게 번지는지, 그리고 피해자가 겪는 심리적 고통이 얼마나 큰지를 지적한다. 온라인 커뮤니티 문화 전반에 대한 성찰이 필요하다는 목소리도 나온다.</p>
 <p>비슷한 피해 사례가 늘면서 커뮤니티 차원의 신고 및 차단 정책 강화가 필요하다는 목소리가 커지고 있다. 관계 당국도 온라인 괴롭힘에 대한 대응 방안을 검토하고 있다. %s</p></article></body></html>""" % _PII
 
+# 댓글은 수집하지 않으므로 본문만으로 community min_body_chars를 넘겨야 한다.
 COMMUNITY = """<html><head><title>악플 좌표찍기 실화냐</title></head><body>
-<div class="content">온라인 커뮤니티에서 악플과 좌표찍기 당했다 진짜 너무하다 %s</div>
-<div class="comment">이거 완전 조리돌림이네 고소각이다 캡처 다 해놔라</div>
-<div class="comment">댓글로 계속 괴롭히는거 신고하자 여러 명이 몰려와서 좌표찍고 악플 다는거 명백한 사이버불링이다</div>
-<div class="comment">저런 온라인폭력은 총공까지 가면 진짜 심각하다 피해자 정신적 고통이 크겠다</div>
-<div class="comment">운영진은 게시글 삭제하고 이용자 제재해야 한다 신고 기능으로 처리하자</div></body></html>""" % _PII
+<div class="content">온라인 커뮤니티에서 악플과 좌표찍기 당했다 진짜 너무하다.
+특정 이용자를 겨냥한 조리돌림이 며칠째 이어지고 있고 캡처를 모아 고소를 준비 중이다.
+운영진에 신고했지만 게시글이 이미 여러 채널로 퍼진 뒤라 회수가 안 된다.
+여러 명이 몰려와 좌표를 찍고 악플을 다는 건 명백한 사이버불링이라고 본다.
+피해자가 겪는 정신적 고통이 큰데도 온라인폭력은 처벌까지 가는 경우가 드물다.
+운영진은 게시글을 삭제하고 반복 가해 이용자를 제재해야 한다 %s</div></body></html>""" % _PII
 
 DC_LIST = """<table><tr class="ub-content us-post" data-no="2933928" data-type="icon_txt">
 <td class="gall_num">2933928</td>

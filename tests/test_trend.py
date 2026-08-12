@@ -16,7 +16,8 @@ from src.discovery.board import parse_dcinside_trend
 from src.classify.matcher import (LLMMatcher, RuleBasedMatcher, build_taxonomy_index, confidence_bucket,
                          risk_score_of, trend_score_of)
 from src.policy import load_policies
-from src.filtering.quality import basic_filter
+from src.filtering.quality import QualityFilter, basic_filter
+from src.pipelines._trend_util import _allocate_buckets
 from src.filtering.risk_signals import detect_signals, primary_override
 from src.schema import ContentRecord, MatchResult, UrlCandidate
 from src.site_registry import SiteRegistry
@@ -203,7 +204,6 @@ def test_basic_filter_rules():
     assert basic_filter(_rec(masked_text="짧음")).status == "fail"                        # too_short
     ok = _rec(title="제목", masked_text="본문이 충분히 길고 의미가 있는 한국어 문장입니다 정말로요")
     assert basic_filter(ok).status == "pass"
-    assert basic_filter(_rec(masked_text="", masked_comments=["댓글은 핵심이다"])).status == "pass"
 
 
 # ── (c) 위험신호 후보 + disambiguation override ──
@@ -281,9 +281,12 @@ def test_scoring_functions():
 
 # ── (e) RSS pubDate 윈도우 필터 ──
 def test_news_window_filter(monkeypatch):
+    # 날짜를 실행 시점 기준으로 만든다. 하드코딩하면 윈도우를 지나는 순간부터 테스트가 깨진다.
+    recent = (dt.datetime.now().astimezone() - dt.timedelta(days=1)).strftime("%a, %d %b %Y %H:%M:%S %z")
+
     def fake_items(url):
         return [
-            {"link": "https://news.example/recent", "title": "최신", "published_at": "Sun, 26 Jul 2026 09:00:00 +0900"},
+            {"link": "https://news.example/recent", "title": "최신", "published_at": recent},
             {"link": "https://news.example/old", "title": "오래됨", "published_at": "Tue, 01 Jan 2019 09:00:00 +0900"},
         ]
     monkeypatch.setattr(rss, "feed_items", fake_items)
@@ -307,7 +310,8 @@ def test_news_category_allocation_balances_and_deduplicates():
         cand("https://example.com/s1", "사회"),
         cand("https://example.com/s1", "사회"),
     ]
-    out = pipeline._allocate_news_categories(candidates, 2, {"정치": 0.5, "사회": 0.5})
+    # 뉴스는 bucket이 없고 category_name이 주제 축이다(_topic_of가 흡수).
+    out = _allocate_buckets(candidates, 2, {"정치": 0.5, "사회": 0.5})
     assert len(out) == 2
     assert {c.meta["category_name"] for c in out} == {"정치", "사회"}
 
@@ -485,56 +489,6 @@ def test_extract_links_skips_media_and_dedup():
     assert sum(url == "https://m.dcinside.com/board/x/1" for url, _ in links) == 1
 
 
-_POST_LINK = POST_HTML.replace(
-    "아주 개새끼가 따로 없다",
-    "아주 개새끼가 따로 없다 관련글 https://gall.dcinside.com/board/view/?id=dcbest&no=999")
-
-
-def _fake_fetch_link(self, url):
-    return LIST_HTML if "/board/lists" in url else _POST_LINK
-
-
-def test_run_trend_follows_body_link(tmp_path, monkeypatch):
-    monkeypatch.setattr(fetcher.Fetcher, "fetch", _fake_fetch_link)
-    monkeypatch.setattr(fetcher.Fetcher, "post_json", lambda *a, **k: None)
-    # 부모 글이 accepted로 분류돼야 본문 링크 수집 로직(depth 0)에 도달한다.
-    # conftest의 오프라인 None을 이 테스트만 관련 분류 결과로 덮어쓴다(결정론적).
-    monkeypatch.setattr(LLMMatcher, "_complete_json", lambda *a, **k: {
-        "is_taxonomy_relevant": True, "filter_status": "pass", "category": "profanity_and_insults",
-        "is_harmful": True, "harmfulness_score": 0.7, "contains_korean_context": True,
-        "korea_relevance_score": 0.8, "concrete_context_score": 0.6, "confidence": 0.8,
-        "reason": "test", "evidence_spans": [], "fail_reason": None,
-    })
-    cfg = tmp_path / "t.yaml"
-    cfg.write_text(yaml.safe_dump({
-        "collection": {"exclude_older_than_days": 3650},
-        "target_by_source": {"dcinside": 1},
-        "sampling_ratio": {"trending": 1.0},
-        "follow_body_links": {"enabled": True, "max_per_post": 3, "max_total": 5},
-        "sources": {"dcinside": {"enabled": True, "max_pages": 1,
-                                 "galleries": [{"id": "dcbest", "bucket": "trending"}]},
-                    "news_rss": {"enabled": False}},
-    }, allow_unicode=True), encoding="utf-8")
-    db = tmp_path / "t.db"
-    pipeline.run_trend(trend_config=str(cfg), taxonomy_config=TAXO, db_path=str(db),
-                       report_path=str(tmp_path / "r.json"), csv_path=str(tmp_path / "c.csv"))
-    conn = sqlite3.connect(db)
-    followed = conn.execute(
-        "SELECT COUNT(*) FROM url_candidates WHERE discovery_method='in_body_link'").fetchone()[0]
-    relation = conn.execute(
-        """SELECT parent_source_url,link_source,status FROM url_candidates
-           WHERE discovery_method='in_body_link' LIMIT 1"""
-    ).fetchone()
-    supplementary = conn.execute(
-        "SELECT COUNT(*) FROM content_records WHERE is_supplementary=1"
-    ).fetchone()[0]
-    conn.close()
-    assert followed >= 1, "본문 링크가 후속 후보로 등록돼야 한다"
-    assert relation[0] and relation[1] == "body"
-    assert relation[2] == "supplementary_collected"
-    assert supplementary >= 1
-
-
 # ── end-to-end (dcinside만, 오프라인) ──
 def _fake_fetch(self, url):
     return LIST_HTML if "/board/lists" in url else POST_HTML
@@ -562,12 +516,17 @@ def test_run_trend_end_to_end(tmp_path, monkeypatch):
     )
     assert report["stored_records"] == 0
     assert report["collection_window"]["lookback_days"] == 3650
+    assert report["run_id"]
 
     conn = sqlite3.connect(db)
     discarded = conn.execute(
         "SELECT COUNT(*) FROM url_candidates WHERE status='trend_discard'"
     ).fetchone()[0]
     assert discarded >= 1  # LLM 미사용/실패는 pending 저장 없이 discard
+    run_rows = conn.execute(
+        "SELECT DISTINCT run_id, collection_phase FROM url_candidates"
+    ).fetchall()
+    assert run_rows == [(report["run_id"], 1)]
     conn.close()
 
 
@@ -600,3 +559,27 @@ def test_run_trend_skips_previously_processed_url_before_body_fetch(tmp_path, mo
     report = pipeline.run_trend(**kwargs)
     assert first > 0 and body_fetches == first
     assert report["collection_targets"]["dcinside"]["already_processed"] == 1
+
+
+# ── quality: site_type별 길이 하한 (커뮤니티 글은 원래 짧다) ──
+def _q_rec(body, site_type, date="2026-08-12"):
+    rec = ContentRecord(
+        source_url="https://gall.dcinside.com/board/view/?id=dcbest&no=1", domain="gall.dcinside.com",
+        site_name="dcinside", site_type=site_type, taxonomy_lv2_candidate="1_A_Toxic_Language",
+        subtype_candidate="", title="신상 박제 논란", body_text=body, masked_text=body,
+        collected_at="2026-08-12", search_query="q", search_api="x", extractor="x")
+    rec.published_at = date
+    return rec
+
+
+def test_quality_min_chars_by_site_type():
+    """extraction이 통과시킨 짧은 커뮤니티 글을 quality가 되버리면 fetch 비용만 낭비된다."""
+    settings = yaml.safe_load(open("configs/crawler_settings.yaml", encoding="utf-8"))
+    # 80자 이상 200자 미만 — extraction(community=80)은 통과, 구 전역 하한(200)에서는 탈락하던 구간
+    short = ("커뮤니티에서 신상이 박제돼 피해를 보고 있다는 글이 계속 올라온다 "
+             "고소가 되는지 묻는 댓글도 달렸고 캡처는 다 모아뒀다고 한다 "
+             "운영진에 신고했지만 아직 아무 조치가 없어서 답답한 상황이다")
+    assert 80 <= len(short) < 200
+    assert QualityFilter(settings).check(_q_rec(short, "community")).status == "pass"
+    # 같은 길이라도 뉴스는 전역 하한(200)을 그대로 적용받는다
+    assert QualityFilter(settings).check(_q_rec(short, "news")).reason.startswith("too_short")

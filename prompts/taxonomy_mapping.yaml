@@ -7,7 +7,7 @@
 # rubric·판정 규칙·예시는 모두 이 파일에서 설계한다(코드 수정 없이 프롬프트만 바꿔 실험).
 
 required_inputs:
-  system_prompt: [strategies, examples]
+  system_prompt: [strategies, examples, collection_policy]
   user_prompt: [title, body]
 
 # 프리필/가짜 어시스턴트 응답. 필요 없으면 공백.
@@ -36,6 +36,7 @@ system_prompt: |
     그 발언이 중심 신호다.
 
   판정 규칙:
+  0) 수집 정책 — {collection_policy}
   1) 보도체 판별 — 기사 형식이나 공익 목적만으로 fail 처리하지 마라. 단순 정치 공방, 제도 변경,
      통계 발표, 검거·처벌 사실, 인물 동정처럼 taxonomy 위험의 구체적 내용이 없는 일반 시사 보도는
      fail이다. 반면 실제 사건 보도라도 범죄 실행 순서·은폐 수법·도구 조달, 독극물/약물의 종류·혼합·

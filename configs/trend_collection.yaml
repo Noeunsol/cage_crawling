@@ -5,7 +5,7 @@
 # 수집 대상 게시물의 생성 일자 범위 제한 
 collection:
   lookback_days: 1
-  max_lookback_days: 5
+  max_lookback_days: 30   # UI 슬라이더 상한도 이 값을 읽는다. 폭주 방지는 아래 discovery_limits가 담당
 
 # 날짜 범위 수집이 폭주하지 않도록 두는 절대 안전 상한이다.
 discovery_limits:
@@ -17,61 +17,63 @@ discovery_limits:
 # 목록에서는 기간 전체의 제목·시각을 넓게 확인하고, 비싼 본문·LLM 대상만 날짜별 제한한다.
 sampling:
   daily_quota_by_source:
-    dcinside: 200
-    news_rss: 100
+    dcinside: 50
+    news_rss: 30
   time_bucket_hours: 4
   engagement_ratio: 0.30
   absolute_max_selected: 1000
 
 processing_limits:
-  # 디시 200 + 뉴스 100의 날짜별 본문 표본을 모두 평가할 수 있는 안전 상한.
-  max_llm_calls_per_day: 300
-
-# 본문/댓글 속 링크도 1단계(depth 1) 추가 수집. 이미지/미디어·중복 제외, 상한 적용.
-follow_body_links:
-  enabled: true
-  max_per_post: 3      # 원글 1개당 따라갈 링크 수
-  max_total: 50        # run 전체 후속 링크 상한(폭주 방지)
+  # 디시 50 + 뉴스 30의 날짜별 본문 표본을 모두 평가할 수 있는 안전 상한.
+  max_llm_calls_per_day: 80
 
 # 주제형 버킷 비중 (meta.bucket 라벨과 일치해야 함). is_trending은 갤러리별 trending 플래그로 별도.
+# dcinside는 sampling_ratio, news_rss는 아래 category_sampling으로 배분한다.
 sampling_ratio:
-  random_trend: 0.15            # 실베 등 화제성 전반(교차 라벨)
-  gender_conflict: 0.20         # 성별 혐오·조롱·집단 비하
-  issue_or_politics: 0.20       # 정치·사회 갈등·지역 비하
+  random_trend: 0.30            # 실베 등 화제성 전반(교차 라벨)
+  gender_conflict: 0.15         # 성별 혐오·조롱·집단 비하
+  issue_or_politics: 0.15       # 정치·사회 갈등·지역 비하
   entertainment_or_person: 0.25 # 연예/인물 악플·루머·신상
   toxic_game: 0.10              # 게임 독성 발화·사적 제재
-  it_game_security: 0.10        # 보안·코드·내부정보
+  it_game_security: 0.05        # 보안·코드·내부정보
 
 sources:
   dcinside:
     enabled: true
-    max_pages: 2               # 갤러리당 목록 페이지 수
-    max_comments_per_post: 30  # 글당 댓글 수 제한
+    # 목록 페이지 수는 discovery_limits.max_pages_per_gallery가 정본이다(여기서 중복 정의 금지).
+    # 댓글은 수집하지 않는다(본문만).
     # id·성격은 2026-07-30 Fetcher로 200/정적파싱 검증 완료. bucket=주제 태그(sampling_ratio와 일치).
     galleries:
       - {id: dcbest,           name: 실시간베스트,  bucket: random_trend, trending: true}
+      # 주식 갤러리는 성별 혐오·조롱 글이 다수인 상태로 변질돼 gender_conflict 버킷으로 의도 수집한다.
       - {id: neostock,         name: 주식,        bucket: gender_conflict}
-      - {id: baseball_new11,   name: 국내야구,     bucket: issue_or_politics}
-      - {id: drama_new3,       name: 국내드라마,    bucket: entertainment_or_person}
-      - {id: w_entertainer,    name: 여자연예인,    bucket: entertainment_or_person}
+      - {id: baseball_new13,   name: 국내야구,     bucket: issue_or_politics}
+      - {id: m_entertainer_new1, name: 남자연예인,  bucket: entertainment_or_person}
       - {id: ib_new2,          name: 인터넷방송,    bucket: entertainment_or_person, sort: comments}
       - {id: leagueoflegends6, name: 리그오브레전드, bucket: toxic_game}
       - {id: programming,      name: 프로그래밍,    bucket: it_game_security}
 
   news_rss:
     enabled: true
+    # 균등 배분이 아니라 실측 수율·taxonomy 기여 기준(2026-08-12, 뉴스 45건 표본).
     category_sampling:
-      사건·사고: 0.35
-      사회: 0.30
-      연예: 0.20
-      IT·보안: 0.10
-      정치: 0.05
+      사건·사고: 0.30   # 수율 75%, 5_M·5_L·3_G·2_E로 기여 폭이 가장 넓다
+      사회: 0.25        # 수율 57%지만 절대 기여 최대(5_L 6·5_M 5·1_D 2), 공급도 풍부
+      IT·보안: 0.20     # 부족한 4_J(유출)·6_P(보안)에 직결. 공급 28건이 병목이라 피드 추가 필요
+      정치: 0.15        # 3_G(허위정보) 전용 공급원. 그 이상은 정책 기사라 수집가치 낮다
+      연예: 0.10        # 수율 20%·기여 1건. 악플/사생활은 커뮤니티가 더 잘 공급한다
     feeds:
-      - {press: 연합뉴스, category: 사회, url: "https://www.yna.co.kr/rss/society.xml"}
-      - {press: 뉴시스, category: 사건·사고, url: "https://www.newsis.com/RSS/sokbo.xml"}
-      - {press: 뉴시스, category: 사회, url: "https://www.newsis.com/RSS/society.xml"}
-      - {press: 뉴시스, category: 연예, url: "https://www.newsis.com/RSS/entertain.xml"}
       - {press: 연합뉴스, category: 정치, url: "https://www.yna.co.kr/rss/politics.xml"}
-      - {press: 뉴시스, category: IT·보안, url: "https://www.newsis.com/RSS/health.xml"}
-      # KISA는 공지/안내 비중이 높아 저우선 보조 소스로 둔다.
-      - {press: KISA, category: IT·보안, url: "https://kisa.or.kr/rss/402"}
+      - {press: 연합뉴스, category: 사회, url: "https://www.yna.co.kr/rss/society.xml"}
+      # 뉴시스 공식 분야별 RSS. 속보는 전용 사건·사고 피드가 없어 대체 소스로 사용한다.
+      - {press: 뉴시스, category: 정치, url: "https://www.newsis.com/RSS/politics.xml"}
+      - {press: 뉴시스, category: 사회, url: "https://www.newsis.com/RSS/society.xml"}
+      - {press: 뉴시스, category: 사건·사고, url: "https://www.newsis.com/RSS/sokbo.xml"}
+      - {press: 뉴시스, category: 연예, url: "https://www.newsis.com/RSS/entertain.xml"}
+      # 사건·사고·사회는 뉴시스 단독이면 속보 회전이 빨라 시간대가 비므로 종합지를 함께 둔다.
+      - {press: 동아일보, category: 사건·사고, url: "https://rss.donga.com/national.xml"}
+      - {press: 경향신문, category: 사회, url: "https://www.khan.co.kr/rss/rssdata/society_news.xml"}
+      # 보안 전문지. 이전 뉴시스 health.xml(건강)·KISA(302 리다이렉트, item 0)를 대체한다.
+      # 보안뉴스는 euc-kr 피드라 base._decode_xml이 선언부 인코딩으로 디코드한다.
+      - {press: 데일리시큐, category: IT·보안, url: "https://www.dailysecu.com/rss/allArticle.xml"}
+      - {press: 보안뉴스, category: IT·보안, url: "https://www.boannews.com/media/news_rss.xml"}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+import uuid
 from collections import defaultdict
 
 import yaml
@@ -25,7 +26,6 @@ from ..keyword_discovery.query import QueryGenerator
 from ..filtering.quality import QualityFilter
 from ..filtering.relevance_filter import RELEVANCE_SIGNAL_TO_LV2, decide_candidate_action, decide_filter_action
 from ..reporting.report import build_report, export_csv, export_report, print_report
-from ..schema import canonicalize_url
 from ..site_registry import SiteRegistry
 from ..storage.store import Store
 from ..keyword_discovery.strategy import Budget, StrategyRouter
@@ -36,10 +36,10 @@ from .taxonomy_adjudication import (
     _classification_status, _phase2_adjudicate, _trend_classification_action,
 )
 from ._trend_util import (
-    _allocate_buckets, _allocate_news_categories, _append_unique_candidates,
-    _candidate_in_window, _days_old, _extract_links, _link_candidate,
+    _allocate_buckets, _append_unique_candidates,
+    _candidate_in_window, _days_old,
     _parse_datetime, _published_in_window, _round_robin_candidates,
-    _sample_candidates_by_time, _target_stats,
+    _sample_by_topic_then_time, _target_stats,
 )
 
 log = logging.getLogger(__name__)
@@ -64,13 +64,10 @@ def run_trend(
         trend = yaml.safe_load(f)
     if overrides:   # 설정파일 수정 없이 목표건수/소스 on-off 덮어쓰기
         trend.setdefault("collection", {}).update(overrides.get("collection", {}))
+        trend.setdefault("sampling", {}).update(overrides.get("sampling", {}))
         for name, enabled in overrides.get("enabled", {}).items():
             trend.setdefault("sources", {}).setdefault(name, {})["enabled"] = enabled
         trend.setdefault("discovery_limits", {}).update(overrides.get("discovery_limits", {}))
-        if overrides.get("comment_filter"):
-            settings.setdefault("extraction", {}).setdefault("comments", {}).setdefault(
-                "relevance_filter", {}
-            ).update(overrides["comment_filter"])
 
     registry = SiteRegistry.load(site_config)
     policies = load_policies(taxonomy_config)
@@ -162,7 +159,7 @@ def run_trend(
     run_urls: set[str] = set()
     prefiltered_out, sampling_skipped = [], []
     enabled_sources = [s for s in source_candidates.keys() if source_candidates.get(s)]
-    quota_total = sum(int(daily_by_source.get(s, 200 if s == "dcinside" else 100)) for s in enabled_sources)
+    quota_total = sum(int(daily_by_source.get(s, 50 if s == "dcinside" else 30)) for s in enabled_sources)
     if enabled_sources and store and quota_total > 0:
         raw_weights = {
             s: source_quota_bias.get(s, 1.0)
@@ -198,9 +195,13 @@ def run_trend(
                 kept.append(cand)
             else:
                 prefiltered_out.append(cand)
-        quota = int(daily_by_source.get(source, 200 if source == "dcinside" else 100))
-        selected = _sample_candidates_by_time(
-            kept, lookback_days, quota, ratios, now.tzinfo,
+        quota = int(daily_by_source.get(source, 50 if source == "dcinside" else 30))
+        # 시간대 배분은 두 소스 공통. 주제 축만 소스별로 다르다 —
+        # dcinside는 갤러리 bucket(sampling_ratio), 뉴스는 RSS category(category_sampling).
+        topic_ratios = (srcs.get("news_rss", {}).get("category_sampling", {})
+                        if source == "news_rss" else ratios)
+        selected = _sample_by_topic_then_time(
+            kept, lookback_days, quota, topic_ratios, now.tzinfo,
             time_bucket_hours, engagement_ratio, absolute_max,
         )
         selected_keys = {c.dedup_key() for c in selected}
@@ -214,6 +215,11 @@ def run_trend(
 
     # 한 소스가 먼저 전체 목표를 독점하지 않도록 원문 후보를 번갈아 처리한다.
     candidates = _round_robin_candidates(source_candidates)
+    # 날짜만으로는 같은 날의 여러 실행을 구분할 수 없으므로, 1차도 실행 단위 ID를 남긴다.
+    run_id = uuid.uuid4().hex[:12] if not dry_run else ""
+    for cand in [*prefiltered_out, *sampling_skipped, *candidates]:
+        cand.run_id = run_id
+        cand.collection_phase = 1
 
     if dry_run:
         by_src: defaultdict = defaultdict(lambda: defaultdict(int))
@@ -252,24 +258,16 @@ def run_trend(
         cand.status, cand.filter_reason = "sampling_skipped", "daily_time_quota"
         store.save_candidate(cand)
 
-    # 본문 링크 follow (depth 1). candidates 리스트에 후속 링크를 append하며 함께 처리.
-    fl = trend.get("follow_body_links", {})
-    follow_enabled = fl.get("enabled", True)
-    max_per_post = int(fl.get("max_per_post", 3))
-    max_total_links = int(fl.get("max_total", 50))
-    seen_urls = {c.dedup_key() for c in candidates}
-    followed = 0
-
     llm_limit = int(trend.get("processing_limits", {}).get("max_llm_calls_per_day", 100))
     llm_calls_by_day: defaultdict = defaultdict(int)
     i = 0
-    for cand in candidates:               # 루프 중 candidates가 늘어나면 이어서 처리됨
+    for cand in candidates:
         i += 1
         if on_progress:
             on_progress(i, len(candidates))
         source = cand.meta.get("source", "")
         stats = collection_targets.get(source)
-        is_root = not cand.meta.get("is_supplementary") and cand.meta.get("depth", 0) == 0
+        is_root = True
         cand.status = "discovered"
         store.save_candidate(cand)
         outcome = extractor.extract(cand, collected_at)
@@ -281,27 +279,10 @@ def run_trend(
             store.log_filter(cand.source_url, "extract", "fail", outcome.reason, "", "")
             continue
         rec = outcome.record
+        rec.run_id, rec.collection_phase = run_id, 1
         _apply_trend_meta(rec, cand.meta)
-        clean_record(
-            rec, _TREND_PRESERVATION, masker,
-            settings.get("extraction", {}).get("comments", {}),
-        )
+        clean_record(rec, _TREND_PRESERVATION, masker)
         artifact.save_record(rec)
-
-        # 본문/댓글 링크는 독립 taxonomy 대상이 아니라 원문의 보조 콘텐츠로 보존한다.
-        if rec.is_supplementary:
-            rec.action = "supplementary"
-            rec.filter_action = "keep"
-            rec.filter_status = "pass"
-            rec.filter_reason = "linked_context_collected"
-            rec.canonical_url = cand.canonical_url or cand.source_url
-            if not save_raw_text:
-                rec.raw_text, rec.raw_comments = "", None
-            store.save_content(rec)
-            cand.status, cand.filter_reason = "supplementary_collected", rec.filter_reason
-            store.save_candidate(cand)
-            store.log_filter(cand.source_url, "linked_context", "pass", rec.filter_reason, "", "")
-            continue
 
         # 수집 윈도우 초과 → 1차 discard
         days_old = _days_old(rec.published_at, today)
@@ -396,19 +377,6 @@ def run_trend(
             continue
         deduper.add(group, int(rec.simhash), rec.event_key, rec.source_url)
 
-        # 보조 링크는 최종 usable 원문에서만 수집한다. 관련 없는 글의 링크 요청을 방지한다.
-        if follow_enabled and cand.meta.get("depth", 0) == 0 and followed < max_total_links:
-            for link, link_source in _extract_links(rec.raw_text, rec.raw_comments)[:max_per_post]:
-                key = canonicalize_url(link)
-                if key in seen_urls:
-                    continue
-                seen_urls.add(key)
-                candidates.append(_link_candidate(
-                    link, registry, cand.meta.get("source", ""), cand.source_url, link_source,
-                ))
-                followed += 1
-                if followed >= max_total_links:
-                    break
         if not save_raw_text:
             rec.raw_text, rec.raw_comments = "", None
         store.save_content(rec)
@@ -423,6 +391,7 @@ def run_trend(
         "export_raw_text", settings.get("export", {}).get("include_raw", False))
     n = export_csv(store, csv_path, include_raw=include_raw)
     report = build_report(store)
+    report["run_id"] = run_id
     report["csv_rows"] = n
     report["collection_targets"] = collection_targets
     report["collection_window"] = {

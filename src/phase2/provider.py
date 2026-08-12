@@ -40,15 +40,22 @@ class DiscoveryProvider:
     def search(self, intent: CollectionIntent) -> list[SearchResult]:
         raise NotImplementedError
 
+    def usage_summary(self) -> dict:
+        return {"calls": 0, "credits": 0.0, "queries": []}
+
 
 class TavilyProvider(DiscoveryProvider):
     """Tavily search-for-AI API. lazy import + TAVILY_API_KEY. 키/의존성 없으면 available()=False."""
     name = "tavily"
 
-    def __init__(self):
+    def __init__(self, options: dict | None = None):
         self._client = None
+        self.options = options or {}
+        self._usage_events: list[dict] = []
 
     def available(self) -> bool:
+        from dotenv import load_dotenv
+        load_dotenv()
         return bool(os.getenv("TAVILY_API_KEY")) and importlib.util.find_spec("tavily") is not None
 
     def _get_client(self):
@@ -60,60 +67,98 @@ class TavilyProvider(DiscoveryProvider):
         return self._client
 
     def search(self, intent: CollectionIntent) -> list[SearchResult]:
-        resp = self._get_client().search(
-            query=intent.natural_language_query,
-            max_results=intent.max_results,
-            search_depth="advanced",
-            include_domains=intent.preferred_domains or None,
-            include_raw_content=False,      # 본문은 우리가 추출한다
-        )
-        out = []
-        for i, item in enumerate(resp.get("results", []), start=1):
-            url = item.get("url")
-            if not url:
-                continue
-            content = item.get("content")
-            out.append(SearchResult(
-                provider=self.name,
-                target_taxonomy_lv2=intent.target_taxonomy_lv2,
-                query_or_intent=intent.natural_language_query,
-                title=item.get("title") or "",
-                url=url,
-                snippet=content,
-                content_hint=content,
-                published_at_hint=item.get("published_date"),
-                provider_score=item.get("score"),
-                rank=i,
-                raw_provider_payload=item,
-            ))
+        """intent.queries를 각각 1회 호출하고 URL 기준 dedup해 flat list로 반환한다.
+
+        fan-out을 provider 안에 가둬서 상위 파이프라인은 쿼리 개수를 몰라도 된다.
+        """
+        out: list[SearchResult] = []
+        seen: set[str] = set()
+        for query in intent.queries:
+            opts = self.options
+            request = dict(
+                query=query,
+                max_results=intent.max_results,
+                search_depth=opts.get("search_depth", "basic"),
+                chunks_per_source=int(opts.get("chunks_per_source", 1)),
+                topic=opts.get("topic", "general"),
+                time_range=opts.get("time_range"),
+                start_date=opts.get("start_date"),
+                end_date=opts.get("end_date"),
+                include_answer=False,
+                include_raw_content=False,      # 본문은 우리가 추출한다
+                exclude_domains=intent.excluded_domains or None,
+            )
+            # country는 general에서만 지원하는 랭킹 boost다. 한국 관련성 판정은 rerank/acceptance가 한다.
+            if intent.korea_relevance_requirement and request["topic"] == "general":
+                request["country"] = opts.get("country", "south korea")
+            request["include_usage"] = bool(opts.get("include_usage", False))
+            request["safe_search"] = bool(opts.get("safe_search", False))
+            resp = self._get_client().search(**{k: v for k, v in request.items() if v is not None})
+            usage = resp.get("usage") or {}
+            self._usage_events.append({
+                "query": query, "credits": float(usage.get("credits") or 0),
+                "request_id": resp.get("request_id") or "",
+            })
+            if opts.get("include_usage"):
+                log.info("Tavily usage query=%r usage=%s request_id=%s",
+                         query, resp.get("usage"), resp.get("request_id"))
+            for i, item in enumerate(resp.get("results", []), start=1):
+                url = item.get("url")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                content = item.get("content")
+                out.append(SearchResult(
+                    provider=self.name,
+                    target_taxonomy_lv2=intent.target_taxonomy_lv2,
+                    query_or_intent=query,      # per-result 출처 쿼리 (by_query 집계의 키)
+                    title=item.get("title") or "",
+                    url=url,
+                    snippet=content,
+                    content_hint=content,
+                    published_at_hint=item.get("published_date"),
+                    provider_score=item.get("score"),
+                    rank=i,
+                    raw_provider_payload=item,
+                ))
         return out
+
+    def usage_summary(self) -> dict:
+        return {
+            "calls": len(self._usage_events),
+            "credits": round(sum(event["credits"] for event in self._usage_events), 3),
+            "queries": list(self._usage_events),
+        }
 
 
 class MockTavilyProvider(DiscoveryProvider):
     """키 없이 테스트/오프라인용 결정론적 provider. intent의 include 어휘로 후보를 만든다."""
     name = "tavily"
 
+    _DOMAINS = ("dcinside.com", "pann.nate.com", "kin.naver.com")
+
     def available(self) -> bool:
         return True
 
     def search(self, intent: CollectionIntent) -> list[SearchResult]:
-        domains = intent.preferred_domains or ["dcinside.com", "pann.nate.com", "kin.naver.com"]
+        """실제 provider와 동일하게 queries마다 호출하고 URL dedup한다(호출 수를 테스트로 검증 가능)."""
         kw = (intent.include or ["관련"])[0]
         out = []
-        for i in range(min(intent.max_results, len(domains) * 2)):
-            domain = domains[i % len(domains)]
-            out.append(SearchResult(
-                provider=self.name,
-                target_taxonomy_lv2=intent.target_taxonomy_lv2,
-                query_or_intent=intent.natural_language_query,
-                title=f"[{kw}] 관련 한국어 게시글 {i}",
-                url=f"https://{domain}/post/{intent.target_taxonomy_lv2}-{i}",
-                snippet=f"{kw} 관련 피해 호소와 커뮤니티 반응...",
-                content_hint=f"{kw} 관련 피해 호소와 커뮤니티 반응 상세 내용...",
-                provider_score=0.9 - i * 0.05,
-                rank=i + 1,
-                raw_provider_payload={},
-            ))
+        for qi, query in enumerate(intent.queries):
+            for i in range(min(intent.max_results, len(self._DOMAINS) * 2)):
+                domain = self._DOMAINS[i % len(self._DOMAINS)]
+                out.append(SearchResult(
+                    provider=self.name,
+                    target_taxonomy_lv2=intent.target_taxonomy_lv2,
+                    query_or_intent=query,
+                    title=f"[{kw}] 관련 한국어 게시글 {qi}-{i}",
+                    url=f"https://{domain}/post/{intent.target_taxonomy_lv2}-{qi}-{i}",
+                    snippet=f"{kw} 관련 피해 호소와 커뮤니티 반응...",
+                    content_hint=f"{kw} 관련 피해 호소와 커뮤니티 반응 상세 내용...",
+                    provider_score=0.9 - i * 0.05,
+                    rank=i + 1,
+                    raw_provider_payload={},
+                ))
         return out
 
 
@@ -146,13 +191,17 @@ def to_candidate(r: SearchResult, registry) -> UrlCandidate:
 
 
 if __name__ == "__main__":
+    queries = ["신상털이 피해 고소 질문", "개인정보 유출 박제 피해 호소"]
     intent = CollectionIntent(
         target_taxonomy_lv2="4_I_Privacy_Infringement",
-        natural_language_query="개인정보 유출 피해 호소 한국어 콘텐츠",
-        include=["신상털이"], preferred_domains=["pann.nate.com"], max_results=3,
+        queries=queries,
+        include=["신상털이"], max_results=3,
     )
     results = MockTavilyProvider().search(intent)
     assert results and results[0].content_hint and results[0].provider == "tavily"
+    # 쿼리마다 호출되고, 결과에는 어느 쿼리에서 나왔는지가 남는다 (by_query 집계의 근거)
+    assert {r.query_or_intent for r in results} == set(queries)
+    assert len({r.url for r in results}) == len(results), "URL dedup 실패"
     # to_candidate: content_hint는 candidate에만, source_url/canonical 설정
     class _Info:  # 최소 registry stub
         site_name, site_type = "nate_pann", "community"

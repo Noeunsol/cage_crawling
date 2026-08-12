@@ -91,52 +91,8 @@ def test_dcinside_post_parser_extracts_body_without_removing_harmful_text():
     assert content.author_hint == "프갤러"
 
 
-def test_dcinside_fetches_regular_comments_and_replies():
-    class FakeFetcher:
-        def post_json(self, url, data, referer):
-            return {
-                "total_cnt": 2,
-                "comments": [
-                    {"memo": "악플 댓글", "c_no": 0, "del_yn": "N"},
-                    {"memo": "reply@example.com", "c_no": 10, "del_yn": "N"},
-                ],
-            }
-
-    html = POST_HTML.replace(
-        '<div class="write_div">',
-        '<input id="e_s_n_o" value="token"><input id="_GALLTYPE_" value="G">'
-        '<div class="write_div">',
-    )
-    candidate = parse_dcinside_list(
-        LIST_HTML, "https://gall.dcinside.com/board/lists/?id=dcbest",
-        StrategyTask("T", "S", "raw_expression"), Subtype(name="S"), _registry(),
-    )[0]
-    content = DcinsidePostExtractor(FakeFetcher()).extract(
-        candidate, _registry().lookup("gall.dcinside.com"), html
-    )
-    assert content.comments == ["[댓글] 악플 댓글", "[대댓글] reply@example.com"]
 
 
-def test_dcinside_keeps_comments_for_image_only_post():
-    class FakeFetcher:
-        def post_json(self, url, data, referer):
-            return {"total_cnt": 1, "comments": [
-                {"memo": "이미지 글의 댓글", "c_no": 0, "del_yn": "N"}
-            ]}
-
-    html = POST_HTML.replace(
-        '<div class="write_div">본문에 악플 표현은 그대로 둔다.</div>',
-        '<input id="e_s_n_o" value="token"><img src="x.jpg">',
-    )
-    candidate = parse_dcinside_list(
-        LIST_HTML, "https://gall.dcinside.com/board/lists/?id=dcbest",
-        StrategyTask("T", "S", "raw_expression"), Subtype(name="S"), _registry(),
-    )[0]
-    content = DcinsidePostExtractor(FakeFetcher()).extract(
-        candidate, _registry().lookup("gall.dcinside.com"), html
-    )
-    assert content.body_text == ""
-    assert content.comments == ["[댓글] 이미지 글의 댓글"]
 
 
 def test_dcinside_extracts_body_image_urls():

@@ -109,17 +109,26 @@ content_hint는 discovery 메타로만 쓰고 **본문으로 저장하지 않는
 
 ```bash
 export TAVILY_API_KEY=...   # 없으면 Mock provider(오프라인). 분류는 OPENAI_API_KEY 사용
-python -m src.main --mode targeted --dry-run   # 부족 LV2 랭킹 + LV2별 자연어 intent 프리뷰
+python -m src.main --mode targeted --dry-run   # 부족 LV2 랭킹 + LV2별 검색어·누락 intent 프리뷰
 python -m src.main --mode targeted -v          # deficit까지 실제 보강 수집
 ```
 
 튜닝은 **Streamlit 파일럿 러너**(페이지 하단 "🎯 2차 타깃 수집") 중심 — ① Intent Preview →
 ② Discovery Preview(Tavily 품질·rerank threshold 육안 튜닝) → ③ Small Run(scratch DB 기본, limit
-소량)로 "조절 → 실행 → 확인 → 재조정"을 반복한다. 설정: `configs/phase2_semantic_collection.yaml`
+소량)로 "조절 → 실행 → 확인 → 재조정"을 반복한다. 설정: `configs/targeted_collection.yaml`
 (부족 판정 `min_accepted_per_lv2`/`targets_by_lv2`, LV2별 `collection_intents_by_lv2`, `sensitive_overlay`,
-rerank·acceptance threshold, 실행 상한 `limits`). target(`taxonomy_lv2_candidate`) vs predicted
-(`taxonomy_lv2`)는 분리 저장되고, 리포트에 `provider_performance`(target_match_rate·
-korea_relevance_pass_rate·cost_per_accepted)와 `coverage`(before→after)가 포함된다.
+rerank·acceptance threshold, 실행 상한 `limits`).
+
+`collection_intents_by_lv2`는 **19개 LV2 전부**를 갖는다(빠지면 taxonomy 자동 파생 + 경고,
+`tests/test_targeted.py` 실패). `queries`가 Tavily에 그대로 들어가는 검색어이고 각각 1회 호출한다
+(`providers.tavily.max_searches_per_lv2` 상한, LV2별 `max_searches`로 override). type이 많아
+LV2 쿼리 하나로는 결과가 한쪽 축으로 쏠리는 LV2는 `queries_by_type`으로 쪼갠다(현재 `2_F`·`4_J`). `include`/`exclude`는 쿼리에 들어가지 않고 rerank
+가/감점 신호로만 쓴다 — Tavily에 부정 연산자가 없어 제외어를 쿼리에 넣으면 오히려 그 문서를 부른다.
+`sensitive_overlay` LV2의 쿼리에 제조·조달·유통 어휘가 있으면 실행 전에 차단된다.
+
+target(`taxonomy_lv2_candidate`) vs predicted(`taxonomy_lv2`)는 분리 저장되고, 리포트에
+`provider_performance`(target_match_rate·korea_relevance_pass_rate·cost_per_stored),
+`by_query`(검색어별 candidate→accepted), `coverage`(before→after)가 포함된다.
 
 ## 저장 정책
 

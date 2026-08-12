@@ -49,8 +49,11 @@ def _phase2_adjudicate(match, rec, target_lv2: str, p2: dict, deficit_of) -> tup
     korea = rec.korea_relevance_score or 0
     fit = rec.taxonomy_fit_score or 0
     concrete = rec.concrete_context_score or 0
+    broad = bool(acc.get("broad_candidate", False))
     if not match.is_relevant:
         return "discard", "not_relevant"
+    if broad and not rec.is_harmful:
+        return "discard", "not_harmful"
     if korea < float(acc.get("min_korea_relevance_score", 0.6)):
         return "discard", "low_korea_relevance"
     if (fit >= float(acc.get("min_taxonomy_fit_score", 0.75))
@@ -63,4 +66,4 @@ def _phase2_adjudicate(match, rec, target_lv2: str, p2: dict, deficit_of) -> tup
         if action == "accepted" and allow and deficit_of(predicted) > 0:
             return "accepted", f"opportunistic:{target_lv2}->{predicted}"
         return "discard", f"mismatch_not_qualified:{target_lv2}->{predicted}"
-    return action, "matched"
+    return action, "broad_candidate" if broad else "matched"

@@ -40,8 +40,7 @@ _LLM_SCHEMA = {
 
 # ── 공용 헬퍼 ──
 def _text_of(rec: ContentRecord) -> str:
-    comments = "\n".join(rec.masked_comments or [])
-    return f"{rec.title}\n{rec.masked_text or rec.body_text}\n{comments}"
+    return f"{rec.title}\n{rec.masked_text or rec.body_text}"
 
 
 def _confidence(text: str, subtype: Subtype) -> tuple[float, int, int, int]:
@@ -285,7 +284,8 @@ class LLMMatcher(TaxonomyMatcher):
             reason=f"llm: {data.get('reason', '')}", safety_flags=list(data.get("safety_flags", [])),
         )
 
-    def classify(self, rec, policies, valid_pairs=None, taxo_lines=None) -> MatchResult | None:
+    def classify(self, rec, policies, valid_pairs=None, taxo_lines=None,
+                 broad_candidate: bool = False) -> MatchResult | None:
         """관련성·19종 taxonomy·유해성·한국 맥락을 한 번에 판정한다."""
         canonical_pairs, canonical_lines = build_taxonomy_index(policies)
         valid_pairs = valid_pairs or canonical_pairs
@@ -324,6 +324,14 @@ class LLMMatcher(TaxonomyMatcher):
         system = spec.render_system(
             strategies=spec.render_strategies(policies),
             examples=spec.render_examples(),
+            collection_policy=(
+                "2차 broad candidate 모드: 한국 관련 맥락이 있고 유해한 표현·행동·조장성이 있으며 "
+                "한 taxonomy와 의미상 연결되면, 전형적인 방법 안내가 아니어도 relevant=true, "
+                "filter_status=review로 판정하라. 단순 예방 안내·윤리강령·통계처럼 유해 요소 자체가 없는 "
+                "문서는 relevant=false다."
+                if broad_candidate else
+                "일반 모드: taxonomy 정의의 포함·제외 기준을 엄격히 적용하라."
+            ),
         )
         user = spec.render_user(
             title=rec.title,

@@ -46,12 +46,12 @@ def test_general_information_news_is_discarded():
     assert not result.risk_signals
 
 
-def test_image_only_post_needs_review():
+def test_image_only_post_is_discarded():
     result = decide_filter_action(_record(
         "실시간 논란 사진", "", source_type="community",
     ))
-    assert result.filter_action == "keep"
-    assert result.filter_reason == "image_only_needs_ocr"
+    assert result.filter_action == "discard"
+    assert result.filter_reason == "too_short"
 
 
 def test_prevention_reference_does_not_hide_direct_intent():

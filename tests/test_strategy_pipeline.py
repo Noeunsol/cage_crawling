@@ -162,14 +162,6 @@ def test_old_candidate_table_is_migrated_without_data_loss(tmp_path):
     store.close()
 
 
-def test_rule_matcher_uses_masked_comments():
-    rec = _record()
-    rec.masked_text = "일반 게시글"
-    rec.masked_comments = ["온라인 커뮤니티에서 악플과 좌표찍기 피해가 발생했다"]
-    subtype = Subtype(name="S", keywords=["악플", "좌표찍기"],
-                      positive_patterns=["온라인 커뮤니티", "피해"])
-    result = RuleBasedMatcher().match("T", subtype, rec)
-    assert result.confidence >= 0.75
 
 
 def test_taxonomy_policy_cannot_disable_global_pii_masking():

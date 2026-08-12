@@ -13,7 +13,7 @@ def main() -> None:
     p.add_argument("--mode", choices=["keyword", "trend", "targeted"], default="keyword",
                    help="keyword=taxonomy 검색(레거시), trend=트렌드 수집, targeted=2차 semantic 보강")
     p.add_argument("--trend-config", default="configs/trend_collection.yaml", help="trend 모드 수집 설정 YAML")
-    p.add_argument("--phase2-config", default="configs/phase2_semantic_collection.yaml",
+    p.add_argument("--phase2-config", default="configs/targeted_collection.yaml",
                    help="targeted(2차) 모드 설정 YAML")
     p.add_argument("--taxonomy", default="configs/taxonomy.yaml", help="trend 모드 분류 taxonomy YAML")
     p.add_argument("--config", default="configs/taxonomy.yaml", help="taxonomy YAML (--taxonomy와 동일 정본)")

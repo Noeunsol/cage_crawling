@@ -6,6 +6,7 @@ API 결과의 snippet은 본문으로 저장하지 않는다 — Extractor가 �
 from __future__ import annotations
 
 import email.utils
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -29,7 +30,7 @@ def feed_links(method: str, url: str) -> list[str]:
     """RSS(<link>) / sitemap(<loc>) 피드에서 링크 목록을 뽑는다."""
     response = requests.get(url, timeout=15)
     response.raise_for_status()
-    root = ET.fromstring(response.content)
+    root = ET.fromstring(_decode_xml(response))
     if method == "sitemap":
         return [e.text for e in root.findall(".//{*}loc")]
     return [e.text or e.get("href") for e in root.findall(".//{*}link")]
@@ -52,11 +53,35 @@ def parse_feed_date(text: str | None) -> datetime | None:
     return dt
 
 
+_XML_DECL = re.compile(rb"^\s*<\?xml[^>]*\?>")
+_XML_ENCODING = re.compile(rb"""encoding=["']([\w.-]+)["']""")
+
+
+def _decode_xml(response) -> str:
+    """XML 선언의 인코딩으로 디코드한 뒤 선언부를 제거한다.
+
+    ET는 euc-kr 등 multi-byte 바이트를 직접 파싱하지 못하고(국내 매체에 흔하다),
+    requests는 charset 헤더가 없으면 ISO-8859-1로 넘겨 한글이 깨진다. 선언부가 정본이다.
+    """
+    raw = response.content
+    declaration = _XML_DECL.match(raw)
+    encoding = None
+    if declaration:
+        found = _XML_ENCODING.search(declaration.group())
+        encoding = found.group(1).decode("ascii", "ignore") if found else None
+    encoding = encoding or response.encoding or "utf-8"
+    try:
+        text = raw.decode(encoding, "replace")
+    except LookupError:
+        text = raw.decode("utf-8", "replace")
+    return _XML_DECL.sub(b"", raw, count=1).decode(encoding, "replace").lstrip() if declaration else text
+
+
 def feed_items(url: str) -> list[dict]:
     """RSS <item> / Atom <entry>에서 link·title·published_at을 추출한다(날짜 필터용)."""
     response = requests.get(url, timeout=15)
     response.raise_for_status()
-    root = ET.fromstring(response.content)
+    root = ET.fromstring(_decode_xml(response))
     items: list[dict] = []
     for it in root.findall(".//item"):   # RSS 2.0 (보통 무네임스페이스)
         pub = it.findtext("pubDate") or it.findtext("{*}date")

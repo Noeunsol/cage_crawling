@@ -7,7 +7,9 @@ date_range:
 
 # Phase 9 품질 필터
 quality:
-  min_body_chars: 200      # 본문+댓글 합산 기준 (커뮤니티 raw 보존)
+  min_body_chars: 200      # 본문 기준(댓글 미수집)
+  min_body_chars_by_site_type:   # extraction.success_criteria와 값을 맞춘다. 어긋나면 헛fetch가 생긴다
+    community: 80
   min_korean_ratio: 0.3      # 한글 문자 비율 하한
   min_quality_score: 0.6
 
@@ -28,36 +30,8 @@ extraction:
     news:      {min_body_chars: 400, require_title: true,  require_date: false}
     blog:      {min_body_chars: 400, require_title: true,  require_date: false}
     tech:      {min_body_chars: 400, require_title: true,  require_date: false}
-    qna:       {min_body_chars: 200, require_title: true,  allow_answers_as_body: true}
-    community: {min_body_chars: 80,  min_comment_chars: 100, require_title: false, allow_comment_only: true}
-  comments:
-    max_comments: 200
-    max_comment_chars: 0
-    relevance_filter:
-      enabled: true
-      drop_duplicates: true
-      drop_unrelated: true
-      min_score: 0.08
-  # 1차 대량 수집에서는 OCR을 사용하지 않는다. 이미지 의존 글은 향후 별도 재처리 대상으로 분리한다.
-  # 아래 세부값은 별도 OCR 작업을 다시 활성화할 때 사용하는 보존 설정이다.
-  image_ocr:
-    enabled: false
-    keep_only: true           # 1차 keep 콘텐츠만 OCR (구 accepted_only 호환)
-    scan_all_keep_images: false
-    body_threshold: 120       # 본문 120자 미만이면 이미지 1장부터 OCR 후보
-    multi_image_threshold: 5  # 본문이 있으면 이미지 5장 이상일 때만 추가 검토
-    multi_image_body_threshold: 400
-    max_chars_per_image: 40   # 이미지당 본문이 40자 미만인 강한 이미지 의존 글만 후보
-    max_images: 3
-    max_tile_width: 4000      # 긴 캡처는 먼저 세로 분할하고 타일 폭만 제한
-    max_tiles: 4              # 이미지당 세로 타일 수 상한 (조기 종료)
-    tile_height: 2000
-    overlap: 100
-    workers: 2
-    max_ocr_chars: 6000
-    min_meaningful_chars: 100 # 정제된 OCR 100자 이상은 본문에 추가
-    exception_min_chars: 40   # 40~99자는 위험 표현·PII·완결 문장이 있을 때만 예외 유지
-    language: kor+eng
+    qna:       {min_body_chars: 200, require_title: true}
+    community: {min_body_chars: 80,  require_title: false}
   playwright: {enabled: false}                 # seam (JS 렌더 → trafilatura)
   firecrawl:  {enabled: false, min_value: 0.8} # seam + value 게이트 (유료 최후 수단)
 
@@ -105,7 +79,6 @@ privacy:
   masking_version: "v1_regex_basic"
   save_raw_text: true
   export_raw_text: false
-  default_export_text_field: masked_text
   mask_types:
     phone: true
     email: true
@@ -115,8 +88,7 @@ privacy:
     address: true
     credential: true
     account_id: true
-  person_name:
-    auto_mask: false
+  # 이름(person_name) 마스킹 규칙은 src/mask.py에 없다. 필요해지면 _RULES에 추가하고 여기 키를 만든다.
 
 # 단계별 파일 저장(ArtifactStore). 기본 off = 완전 no-op(동작 무변화).
 # content_id별 data/stages/<id>/ 아래에 저장. masked만 안전 기본, 나머지는 privacy.save_raw_text로 재게이트.
@@ -128,4 +100,3 @@ staging:
     cleaned: false      # 미마스킹
     raw_text: false     # 미마스킹
     raw_html: false     # 미마스킹 HTML, gitignore, PII 최다
-  retention_days: 0     # 0 = 영구 보관
