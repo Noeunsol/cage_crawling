@@ -27,6 +27,16 @@ def _fmt_dur(sec: float) -> str:
     return f"{sec}s" if sec < 60 else f"{sec // 60}m {sec % 60}s"
 
 
+def _tavily_run_label(run_id: str) -> str:
+    """새 run ID는 실행 시각을 표시하고, 기존 UUID 이력도 그대로 읽는다."""
+    parts = run_id.split("_")
+    if len(parts) == 4 and parts[0] == "tavily" and len(parts[1]) == 8 and len(parts[2]) == 6:
+        day, clock = parts[1], parts[2]
+        if day.isdigit() and clock.isdigit():
+            return f"{day[:4]}-{day[4:6]}-{day[6:]} {clock[:2]}:{clock[2:4]}:{clock[4:]} · {run_id}"
+    return f"기존 이력 · {run_id}"
+
+
 # 최종 판정: accepted/discard · 1차: keep/discard
 _ACTION_LABEL = {
     "accepted": "✅ accepted", "discard": "🗑️ discard",
@@ -749,167 +759,9 @@ with phase2_tab:
             except Exception as exc:  # noqa: BLE001
                 st.error(f"실행 실패: {exc}")
 
-    st.divider()
-    st.subheader("Tavily 2차 수집 결과 (저장 이력)")
-    st.caption("Tavily가 발견한 URL 후보와 실제 페이지에서 추출·분류해 저장한 콘텐츠를 run 단위로 확인합니다. Tavily snippet은 후보 판단용이며 저장 본문과 구분됩니다.")
-    phase2_runs = query(db_path, """
-        SELECT run_id,MAX(rowid) AS latest_row,COUNT(*) AS candidates,
-               SUM(CASE WHEN status='rerank_skipped' THEN 1 ELSE 0 END) AS rerank_skipped,
-               SUM(CASE WHEN status='extraction_failed' THEN 1 ELSE 0 END) AS extraction_failed,
-               SUM(CASE WHEN status='trend_accepted' THEN 1 ELSE 0 END) AS accepted,
-               SUM(CASE WHEN status='trend_candidate' THEN 1 ELSE 0 END) AS unverified,
-               SUM(CASE WHEN status='trend_discard' THEN 1 ELSE 0 END) AS discarded,
-               COALESCE(SUM(llm_total_tokens),0) AS tokens,
-               ROUND(COALESCE(SUM(llm_estimated_cost_usd),0),6) AS llm_cost_usd
-        FROM url_candidates
-        WHERE collection_phase=2 AND run_id IS NOT NULL AND run_id!=''
-        GROUP BY run_id ORDER BY latest_row DESC
-    """)
-    if not phase2_runs:
-        st.info("현재 결과 DB에 Tavily 2차 실행 이력이 없습니다. scratch DB로 실행했다면 사이드바의 '결과 DB'를 해당 파일로 바꾸세요.")
-    else:
-        run_options = [row["run_id"] for row in phase2_runs]
-        run_id = st.selectbox("실행 run_id", run_options, key="phase2_run")
-        run_summary = next(row for row in phase2_runs if row["run_id"] == run_id)
-        st.markdown("#### 이번 수집 결과")
-        st.caption("발견 → 검색 단계에서 제외 → 본문 수집 → 후보 저장 순서입니다. 미검수 후보는 OpenAI를 거치지 않았으며 이후 seed 생성 전 원문 근거로 검수합니다.")
-        rm = st.columns(6)
-        for col, label, value in zip(
-            rm, ["Tavily 발견", "검색 단계 제외", "본문 수집 실패", "Tavily 미검수 후보", "OpenAI 검수 후보", "본문 확인 후 제외"],
-            [run_summary["candidates"], run_summary["rerank_skipped"], run_summary["extraction_failed"],
-             run_summary["unverified"], run_summary["accepted"], run_summary["discarded"]],
-        ):
-            col.metric(label, value)
-        st.caption(f"LLM 추정 비용: ${run_summary['llm_cost_usd']:.6f}")
-
-        targets = [row["taxonomy_lv2_candidate"] for row in query(db_path, """
-            SELECT DISTINCT taxonomy_lv2_candidate FROM url_candidates
-            WHERE run_id=? AND taxonomy_lv2_candidate IS NOT NULL ORDER BY taxonomy_lv2_candidate
-        """, (run_id,))]
-        target_filter = st.selectbox("Target taxonomy", ["전체"] + targets, key="phase2_target")
-        target_clause = "" if target_filter == "전체" else " AND taxonomy_lv2_candidate=?"
-        target_params = (run_id,) if target_filter == "전체" else (run_id, target_filter)
-
-        unverified_count = scalar(db_path, f"""
-            SELECT COUNT(*) AS n FROM content_records
-            WHERE run_id=? AND collection_phase=2 AND action='candidate'
-              AND classification_source='tavily_unverified'{target_clause}
-        """, target_params)
-        if unverified_count:
-            with st.container(border=True):
-                st.markdown("#### 기존 Tavily 미검수 후보 OpenAI 검수")
-                st.caption("Tavily 검색과 본문 수집은 다시 하지 않습니다. 이미 저장된 masked 본문만 OpenAI에 보내 taxonomy/type을 판정합니다.")
-                rv1, rv2 = st.columns([1, 2])
-                reverify_limit = rv1.number_input("검수할 후보 수", 1, int(unverified_count), int(unverified_count),
-                                                   key="phase2_reverify_limit")
-                if rv2.button("미검수 후보 OpenAI 검수 실행", key="phase2_reverify", type="primary"):
-                    try:
-                        with st.spinner("기존 후보 OpenAI 검수 중…"):
-                            verify_report = _p2.verify_unverified_candidates(
-                                run_id, db_path, p2_config, taxonomy_config=taxo_cfg,
-                                settings_config=settings_cfg,
-                                target_lv2=None if target_filter == "전체" else target_filter,
-                                limit=int(reverify_limit), overrides=p2_overrides,
-                            )
-                        st.cache_data.clear()
-                        if verify_report.get("error"):
-                            st.error(f"검수를 시작하지 못했습니다: {verify_report['error']}")
-                        else:
-                            st.success(
-                                f"OpenAI 검수 {verify_report['verified']}건 · 채택 {verify_report['accepted']}건 · "
-                                f"제외 {verify_report['discarded']}건 · 추정 비용 ${verify_report['cost_usd']:.6f}"
-                            )
-                            if verify_report["errors"]:
-                                st.warning(f"API/응답 오류로 기존 미검수 상태를 유지한 후보: {verify_report['errors']}건")
-                    except Exception as exc:  # noqa: BLE001
-                        st.error(f"기존 후보 OpenAI 검수 실패: {exc}")
-
-        candidate_view, stored_view = st.tabs(["발견 후보·처리 상태", "저장 콘텐츠"])
-        with candidate_view:
-            status_options = {
-                "전체 보기": None,
-                "✅ Tavily 미검수 후보": "trend_candidate",
-                "✅ OpenAI 검수 후보": "trend_accepted",
-                "⚠️ 본문 수집 실패": "extraction_failed",
-                "↪ 검색 단계에서 제외": "rerank_skipped",
-                "❌ 본문 확인 후 제외": "trend_discard",
-            }
-            status_label = st.radio("어떤 결과를 볼까요?", list(status_options), horizontal=True,
-                                    key="phase2_status")
-            status = status_options[status_label]
-            status_clause = "" if status is None else " AND status=?"
-            status_params = target_params if status is None else (*target_params, status)
-            candidate_rows = query(db_path, f"""
-                SELECT title,published_at_hint,taxonomy_lv2_candidate,status,
-                       ROUND(discovery_relevance_score,2) AS discovery_score,
-                       ROUND(korea_relevance_score,2) AS korea_score,
-                       filter_reason,source_url
-                FROM url_candidates WHERE run_id=?{target_clause}{status_clause}
-                ORDER BY rowid DESC LIMIT 500
-            """, status_params)
-            friendly_rows = []
-            for row in candidate_rows:
-                friendly_rows.append({
-                    "제목": row["title"] or "(제목 없음)",
-                    "Tavily 제공 발행일": row["published_at_hint"] or "미제공",
-                    "대상 taxonomy": row["taxonomy_lv2_candidate"],
-                    "처리 결과": _STATUS_LABEL.get(row["status"], row["status"]),
-                    "관련성": row["discovery_score"],
-                    "한국성": row["korea_score"],
-                    "이유": (row["filter_reason"] or "-")[:120],
-                    "원문": row["source_url"],
-                })
-            st.caption(f"{len(friendly_rows)}건 표시 · 관련성/한국성은 Tavily 후보 단계 점수이며 최종 분류 점수가 아닙니다. Tavily가 날짜를 반환하지 않은 URL은 ‘미제공’으로 표시되며, 본문 수집에 성공하면 페이지 메타데이터의 발행일을 별도로 확인합니다.")
-            st.dataframe(friendly_rows, width="stretch", hide_index=True,
-                column_config={
-                    "원문": st.column_config.LinkColumn("원문", display_text="열기"),
-                    "이유": st.column_config.TextColumn("이유", width="large"),
-                })
-
-        with stored_view:
-            stored_rows = query(db_path, f"""
-                SELECT content_id,title,published_at,taxonomy_lv2_candidate AS target_taxonomy,
-                       taxonomy_lv2 AS predicted_taxonomy,category,action,
-                       ROUND(taxonomy_fit_score,2) AS taxonomy_fit,
-                       ROUND(korea_relevance_score,2) AS korea_relevance,
-                       llm_total_tokens,ROUND(llm_estimated_cost_usd,6) AS llm_cost_usd,source_url
-                FROM content_records WHERE run_id=?{target_clause}
-                ORDER BY rowid DESC LIMIT 500
-            """, target_params)
-            st.dataframe(stored_rows, width="stretch", hide_index=True,
-                column_config={"source_url": st.column_config.LinkColumn("URL", display_text="열기")})
-            if stored_rows:
-                stored_options = {
-                    f"{row['title'] or '(제목 없음)'} · {row['action']} · {row['content_id'][:8]}": row["content_id"]
-                    for row in stored_rows
-                }
-                stored_selected = st.selectbox("본문 상세 보기", stored_options, key="phase2_content_detail")
-                stored_detail = query(db_path, """
-                    SELECT title,published_at,masked_text,masked_comments,action,filter_reason,
-                           taxonomy_lv2_candidate,taxonomy_lv2,category,classification_reason,
-                           llm_model,llm_input_tokens,llm_output_tokens,llm_total_tokens,
-                           llm_estimated_cost_usd,source_url
-                    FROM content_records WHERE content_id=?
-                """, (stored_options[stored_selected],))[0]
-                st.markdown(f"#### {stored_detail['title'] or '(제목 없음)'}")
-                st.caption(
-                    f"target `{stored_detail['taxonomy_lv2_candidate']}` → predicted "
-                    f"`{stored_detail['taxonomy_lv2'] or '미분류'}` · `{stored_detail['action']}` · "
-                    f"발행일 `{stored_detail['published_at'] or '—'}` · [원문 열기]({stored_detail['source_url']})"
-                )
-                if stored_detail["classification_reason"] or stored_detail["filter_reason"]:
-                    st.info(stored_detail["classification_reason"] or stored_detail["filter_reason"])
-                with st.expander("실제 페이지 추출 본문 (masked)", expanded=True):
-                    st.write(stored_detail["masked_text"] or "(본문 없음)")
-                st.caption(
-                    f"LLM `{stored_detail['llm_model'] or '—'}` · 입력 {stored_detail['llm_input_tokens'] or 0:,} · "
-                    f"출력 {stored_detail['llm_output_tokens'] or 0:,} · 합계 {stored_detail['llm_total_tokens'] or 0:,} tokens · "
-                    f"추정 ${(stored_detail['llm_estimated_cost_usd'] or 0):.6f}"
-                )
-
 with phase2_results_tab:
     st.subheader("Tavily 수집 결과")
-    st.caption("실행별 후보·본문 수집·검수 결과를 빠르게 확인합니다. 미검수 후보 OpenAI 검수와 상세 본문은 `2차 Tavily 수집` 탭에서 실행할 수 있습니다.")
+    st.caption("Tavily 검색 후보, 본문 수집, OpenAI 검수와 저장된 본문을 실행별로 확인합니다.")
     result_runs = query(db_path, """
         SELECT run_id,MAX(rowid) AS latest_row,COUNT(*) AS discovered,
                SUM(CASE WHEN status='rerank_skipped' THEN 1 ELSE 0 END) AS skipped,
@@ -923,39 +775,91 @@ with phase2_results_tab:
     if not result_runs:
         st.info("현재 선택한 DB에는 Tavily 2차 실행 이력이 없습니다.")
     else:
-        result_run_id = st.selectbox("실행 이력", [row["run_id"] for row in result_runs], key="phase2_results_run")
+        result_run_id = st.selectbox(
+            "실행 이력", [row["run_id"] for row in result_runs], key="phase2_results_run",
+            format_func=_tavily_run_label,
+        )
         result_summary = next(row for row in result_runs if row["run_id"] == result_run_id)
         result_metrics = st.columns(6)
         for col, label, value in zip(
-            result_metrics, ["Tavily 발견", "검색 제외", "본문 실패", "미검수", "OpenAI 검수", "제외"],
+            result_metrics, ["Tavily 검색 결과", "검색 후보 제외", "본문 수집 실패", "Tavily 미검수 후보", "OpenAI 검수 통과", "본문 확인 후 제외"],
             [result_summary["discovered"], result_summary["skipped"], result_summary["extract_failed"],
              result_summary["unverified"], result_summary["accepted"], result_summary["discarded"]],
         ):
             col.metric(label, value)
-        result_status = st.selectbox(
-            "결과 상태", ["전체", "Tavily 미검수 후보", "OpenAI 검수 후보", "본문 수집 실패", "검색 단계 제외", "본문 확인 후 제외"],
-            key="phase2_results_status",
-        )
-        status_map = {
-            "Tavily 미검수 후보": "trend_candidate", "OpenAI 검수 후보": "trend_accepted",
-            "본문 수집 실패": "extraction_failed", "검색 단계 제외": "rerank_skipped", "본문 확인 후 제외": "trend_discard",
-        }
-        result_status_clause = "" if result_status == "전체" else " AND status=?"
-        result_params = (result_run_id,) if result_status == "전체" else (result_run_id, status_map[result_status])
-        result_rows = query(db_path, f"""
-            SELECT title,published_at_hint,taxonomy_lv2_candidate,status,
-                   ROUND(discovery_relevance_score,2) AS discovery_score,
-                   ROUND(korea_relevance_score,2) AS korea_score,filter_reason,source_url
-            FROM url_candidates WHERE run_id=?{result_status_clause} ORDER BY rowid DESC LIMIT 500
-        """, result_params)
-        st.dataframe([
-            {"제목": row["title"] or "(제목 없음)", "Tavily 제공 발행일": row["published_at_hint"] or "미제공",
-             "대상 taxonomy": row["taxonomy_lv2_candidate"], "처리 결과": _STATUS_LABEL.get(row["status"], row["status"]),
-             "관련성": row["discovery_score"], "한국성": row["korea_score"], "이유": row["filter_reason"] or "—",
-             "원문": row["source_url"]}
-            for row in result_rows
-        ], width="stretch", hide_index=True,
-            column_config={"원문": st.column_config.LinkColumn("원문", display_text="열기")})
+        result_targets = [row["taxonomy_lv2_candidate"] for row in query(db_path, """
+            SELECT DISTINCT taxonomy_lv2_candidate FROM url_candidates
+            WHERE run_id=? AND taxonomy_lv2_candidate IS NOT NULL ORDER BY taxonomy_lv2_candidate
+        """, (result_run_id,))]
+        result_target = st.selectbox("대상 taxonomy", ["전체"] + result_targets, key="phase2_results_target")
+        result_target_clause = "" if result_target == "전체" else " AND taxonomy_lv2_candidate=?"
+        result_target_params = (result_run_id,) if result_target == "전체" else (result_run_id, result_target)
+
+        unverified_count = scalar(db_path, f"""
+            SELECT COUNT(*) AS n FROM content_records
+            WHERE run_id=? AND collection_phase=2 AND action='candidate'
+              AND classification_source='tavily_unverified'{result_target_clause}
+        """, result_target_params)
+        if unverified_count:
+            with st.container(border=True):
+                st.markdown("#### Tavily 미검수 후보 OpenAI 검수")
+                st.caption("Tavily 검색·본문 수집은 다시 하지 않고, 저장된 masked 본문만 OpenAI에 보냅니다.")
+                vc1, vc2 = st.columns([1, 2])
+                verify_limit = vc1.number_input("검수할 후보 수", 1, int(unverified_count), int(unverified_count),
+                                                key="phase2_results_verify_limit")
+                if vc2.button("미검수 후보 OpenAI 검수 실행", key="phase2_results_verify", type="primary"):
+                    try:
+                        from src import pipeline as _p2_verify
+                        verify_report = _p2_verify.verify_unverified_candidates(
+                            result_run_id, db_path, p2_config, taxonomy_config=taxo_cfg,
+                            settings_config=settings_cfg,
+                            target_lv2=None if result_target == "전체" else result_target,
+                            limit=int(verify_limit), overrides=p2_overrides,
+                        )
+                        st.cache_data.clear()
+                        if verify_report.get("error"):
+                            st.error(f"검수를 시작하지 못했습니다: {verify_report['error']}")
+                        else:
+                            st.success(f"OpenAI 검수 {verify_report['verified']}건 · 채택 {verify_report['accepted']}건 · 제외 {verify_report['discarded']}건")
+                    except Exception as exc:  # noqa: BLE001
+                        st.error(f"기존 후보 OpenAI 검수 실패: {exc}")
+
+        candidate_result_tab, stored_result_tab = st.tabs(["Tavily 검색 후보·처리 결과", "본문 저장 결과"])
+        with candidate_result_tab:
+            result_status = st.selectbox(
+                "결과 상태", ["전체", "Tavily 미검수 후보", "OpenAI 검수 후보", "본문 수집 실패", "검색 단계 제외", "본문 확인 후 제외"],
+                key="phase2_results_status",
+            )
+            status_map = {
+                "Tavily 미검수 후보": "trend_candidate", "OpenAI 검수 후보": "trend_accepted",
+                "본문 수집 실패": "extraction_failed", "검색 단계 제외": "rerank_skipped", "본문 확인 후 제외": "trend_discard",
+            }
+            result_status_clause = "" if result_status == "전체" else " AND status=?"
+            result_params = result_target_params if result_status == "전체" else (*result_target_params, status_map[result_status])
+            result_rows = query(db_path, f"""
+                SELECT title,published_at_hint,taxonomy_lv2_candidate,status,
+                       ROUND(discovery_relevance_score,2) AS discovery_score,
+                       ROUND(korea_relevance_score,2) AS korea_score,filter_reason,source_url
+                FROM url_candidates WHERE run_id=?{result_target_clause}{result_status_clause} ORDER BY rowid DESC LIMIT 500
+            """, result_params)
+            st.dataframe([
+                {"제목": row["title"] or "(제목 없음)", "Tavily 제공 발행일": row["published_at_hint"] or "미제공",
+                 "대상 taxonomy": row["taxonomy_lv2_candidate"], "처리 결과": _STATUS_LABEL.get(row["status"], row["status"]),
+                 "관련성": row["discovery_score"], "한국성": row["korea_score"], "이유": row["filter_reason"] or "—",
+                 "원문": row["source_url"]}
+                for row in result_rows
+            ], width="stretch", hide_index=True,
+                column_config={"원문": st.column_config.LinkColumn("원문", display_text="열기")})
+        with stored_result_tab:
+            stored_rows = query(db_path, f"""
+                SELECT title,published_at,taxonomy_lv2_candidate AS target_taxonomy,
+                       taxonomy_lv2 AS predicted_taxonomy,category,action,
+                       ROUND(taxonomy_fit_score,2) AS taxonomy_fit,
+                       ROUND(korea_relevance_score,2) AS korea_relevance,source_url
+                FROM content_records WHERE run_id=?{result_target_clause} ORDER BY rowid DESC LIMIT 500
+            """, result_target_params)
+            st.dataframe(stored_rows, width="stretch", hide_index=True,
+                         column_config={"source_url": st.column_config.LinkColumn("원문", display_text="열기")})
 
 with overview:
     st.subheader("통합 · 전체 수집 요약")

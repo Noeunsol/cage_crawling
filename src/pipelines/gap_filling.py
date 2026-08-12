@@ -188,7 +188,8 @@ def small_run(lv2s: list[str] | None, limit: int, config_path: str, db_path: str
     save_raw_text = settings.get("privacy", {}).get("save_raw_text", True)
     store = Store(db_path)
     provider = provider or _default_provider(p2)
-    run_id = uuid.uuid4().hex[:12]
+    # 실행 이력을 사람이 구분할 수 있도록 로컬 실행 시각과 짧은 충돌 방지 suffix를 함께 저장한다.
+    run_id = f"tavily_{_dt.datetime.now().astimezone():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
     collected_at = _dt.date.today().isoformat()
 
     # 목표/커버리지 (deficit 계산용)
