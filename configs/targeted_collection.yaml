@@ -13,12 +13,10 @@
 
 target_selection:
   min_accepted_per_lv2: 30          # LV2별 최소 수집량 목표
-  targets_by_lv2:                   # LV2별 override
-    4_I_Privacy_Infringement: 40
-    6_Q_Prompt_Attack: 15
   review_weight: 0.0                # 이전 DB의 review는 커버리지에 미포함
-  exclude_sufficient_lv2: false       # 선택 화면에는 부족 0건 taxonomy도 함께 표시
+  exclude_sufficient_lv2: false     # 선택 화면에는 부족 0건 taxonomy도 함께 표시
 
+# ── Tavily: 현재 실행 중인 2차 뉴스·웹 검색 provider ─────────────────────────
 providers:
   tavily:
     max_results_per_query: 10
@@ -30,18 +28,36 @@ providers:
     country: south korea
     include_usage: true
     safe_search: false
-    excluded_domains: [namu.wiki, huggingface.co]  # 모든 taxonomy 공통 검색 제외
+    excluded_domains:      # 검색 단계에서 제외. 실측상 후보로는 잡히나 본문 추출이 안 돼 저장 0건이다.
+      - namu.wiki           # 위키성 문서 — 사건 원문이 아니라 요약
+      - wikipedia.org
+      - huggingface.co      # 모델·데이터셋 카드
+      - instagram.com       # 이하 SNS·영상: JS 렌더라 ExtractorRouter가 본문을 못 얻는다
+      - twitter.com
+      - x.com
+      - tiktok.com
+      - facebook.com
+      - youtube.com
 
-# Streamlit 2차 수집 선택 preset. 뉴스/커뮤니티는 Tavily 검색 결과에서 기대하는 주 출처 성격이며,
-# 실제 도메인을 강제 제한하지는 않는다. 혼합형(2_E, 5_L, 6_R)은 개인 경험·기술 맥락 확보를 위해 community로 둔다.
-source_selection_presets:
-  news_optimized:
+# LV2별 '주(主) provider' 배정. 배타 분할이며 19개 LV2를 모두 덮는다(Streamlit 출처 추천도 이 값을 읽는다).
+#
+# 배타인 것은 '주 provider'뿐이고, 두 provider는 서로를 대체하지 않는다.
+#   Tavily   = 자연어 의미검색. 사건·수사·판결·정책 보도와 블로그 원문에 강하다.
+#   SerpAPI  = site: 커뮤니티 정밀검색. 개인 경험·상담·커뮤니티 표현에 강하다.
+# 그래서 collection_intents_by_lv2(Tavily)와 serpapi.rules_by_lv2(SerpAPI) 양쪽 모두
+# 19개 LV2를 전부 갖고 있다. 주 provider가 기본 예산을 가져가고, 다른 쪽은 같은 LV2를
+# 다른 각도로 보강한다 — 예: 4_K는 Tavily가 판결·단속 기사를, SerpAPI가 creator_community의
+# 불법유통 제보글을 가져온다. 둘 중 하나가 죽은 설정이 되지 않도록 이 구조를 유지한다.
+collection_provider_routing:
+  news_tavily:
+    provider: tavily
     label: 뉴스 최적 taxonomy
     description: 사건·수사·유출·판결·침해 기사에서 원문 맥락을 확보하기 좋은 taxonomy
     lv2s: [1_B_Sexual_Content, 1_D_Child_Exploitation, 3_G_Misinformation_and_Disinformation,
            4_J_Public_Sensitive_Info_Leakage, 4_K_Intellectual_Property_Infringement,
            5_M_Violence_and_Extremism, 6_O_CBRNE, 6_P_Cybersecurity]
-  community_optimized:
+  community_serpapi:
+    provider: serpapi_google
     label: 커뮤니티 최적 taxonomy
     description: 개인 경험·상담·표현·기술 토론 맥락이 더 중요한 taxonomy
     lv2s: [1_A_Toxic_Language, 1_C_Self_Harm, 2_E_Discrimination, 2_F_Bias_and_Hate,
@@ -592,3 +608,82 @@ acceptance:                         # 2차 후보 저장 기준: 한국성 + 유
 adjudication:
   openai_verification: false         # false면 Tavily·본문 수집 결과를 미검수 후보로 저장
   allow_opportunistic_accept: true  # predicted != target 여도 predicted가 부족하면 저장
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SerpAPI: 커뮤니티 검색 설계 (provider 호출 코드는 아직 연결 전)
+# ─────────────────────────────────────────────────────────────────────────────
+# 아래 규칙은 Tavily 실행 설정·검색어와 분리한다. 실제 SerpAPI 도입 시에는
+# collection_intents_by_lv2의 type별 검색어를 재사용하고, 여기서는 검색 장소와 방식만 정한다.
+#
+# SerpAPI query 작성·처리 불변 원칙
+# 1) taxonomy LV2가 아니라 taxonomy type별 query를 쓴다.
+# 2) provider는 rules_by_lv2의 도메인을 읽어 최종 검색식에 `site:도메인`을 반드시 붙인다.
+# 3) 실제 한국 사용자가 검색하거나 게시물 제목에 쓸 법한 상황·행동·피해 표현을 쓴다.
+# 4) '문제', '논란' 같은 일반어만 단독 사용하지 않고 대상·행동·맥락을 함께 쓴다.
+# 5) SerpAPI title/snippet/date는 URL 후보 rerank 전용 메타이며 ContentRecord 본문으로 저장하지 않는다.
+serpapi:
+  provider:
+    engine: google
+    # q는 collection_intents_by_lv2의 type별 query에 필요할 때 site:도메인을 붙여 생성한다.
+    gl: kr                          # Google 국가 코드
+    hl: ko                          # Google UI/결과 언어
+    location: South Korea           # 한국 위치 기반 결과 우선
+    google_domain: google.co.kr     # 한국 Google 고정
+    num: 10                         # q(또는 q + site:) 호출당 결과 수
+    start: 0                        # 페이지네이션 시작 위치 (다음 페이지는 10, 20 ...)
+    tbs: qdr:y                      # 기본 최근 1년. 직접 날짜 범위 사용 시 cdr:1,cd_min:MM/DD/YYYY,cd_max:MM/DD/YYYY
+    safe: "off"                     # 유해 맥락 수집용. 정책·법적 제약은 별도 rerank/본문 검수에서 처리
+    filter: 1                       # Google 중복 결과 제거
+    nfpr: 1                         # Google의 검색어 자동 교정 비활성화
+    max_domains_per_query: 2        # 한 query에서 호출할 site: 도메인 수 상한
+    excluded_domains:      # 검색 단계에서 제외. 실측상 후보로는 잡히나 본문 추출이 안 돼 저장 0건이다.
+      - namu.wiki           # 위키성 문서 — 사건 원문이 아니라 요약
+      - wikipedia.org
+      - huggingface.co      # 모델·데이터셋 카드
+      - instagram.com       # 이하 SNS·영상: JS 렌더라 ExtractorRouter가 본문을 못 얻는다
+      - twitter.com
+      - x.com
+      - tiktok.com
+      - facebook.com
+      - youtube.com
+
+  # mode=primary: SerpAPI 우선 / secondary: Tavily 결과가 부족할 때 보완.
+  # site_per_query: type query × site:도메인 분리 호출 / broad_then_site: 일반 검색 후 site:도메인 검색.
+  # 각 taxonomy가 어디를 검색하는지 한 블록에서 보이도록 profile을 별도 분리하지 않는다.
+  rules_by_lv2:
+    1_A_Toxic_Language: {mode: primary, domains: [gall.dcinside.com, fmkorea.com, ruliweb.com], query_strategy: site_per_query, append_terms: [커뮤니티, 게시판, 논란]}
+    1_B_Sexual_Content: {mode: secondary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: site_per_query, append_terms: [피해, 신고, 상담]}
+    1_C_Self_Harm: {mode: primary, domains: [gall.dcinside.com, fmkorea.com, ruliweb.com], query_strategy: site_per_query, append_terms: [SNS, 커뮤니티, 확산]}
+    1_D_Child_Exploitation: {mode: secondary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: broad_then_site, append_terms: [피해, 신고, 대응]}
+    2_E_Discrimination: {mode: primary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: site_per_query, append_terms: [차별, 피해, 질문]}
+    2_F_Bias_and_Hate: {mode: primary, domains: [gall.dcinside.com, fmkorea.com, ruliweb.com], query_strategy: site_per_query, append_terms: [혐오, 비하, 댓글]}
+    3_G_Misinformation_and_Disinformation: {mode: primary, domains: [gall.dcinside.com, fmkorea.com, clien.net], query_strategy: site_per_query, append_terms: [확산, 주장, 반응]}
+    3_H_Prohibited_Advisory:
+      mode: primary
+      query_strategy: site_per_query
+      # 각 type은 관련 커뮤니티만 site: 검색한다.
+      domains_by_type:
+        financial_advice: [kin.naver.com, ppomppu.co.kr, coinpan.com, gall.dcinside.com]
+        legal_advice: [kin.naver.com, fmkorea.com, gall.dcinside.com, ppomppu.co.kr]
+        medical_advice: [kin.naver.com, blog.naver.com, tistory.com]
+      # 전문·공식 답변은 이 taxonomy의 주 대상이 아니므로 비교·제외 기준용으로만 기록한다.
+      reference_domains_by_type:
+        legal_advice: [lawtalk.co.kr, klac.or.kr]
+        medical_advice: [doctornow.co.kr, hidoc.co.kr]
+      deprioritized_domains_by_type:
+        financial_advice: [blind.co.kr] # 로그인·사내 인증 비중이 높아 추출 수율 검증 전 보류
+      append_terms_by_type:
+        financial_advice: [종목 추천, 리딩방, 수익 보장]
+        legal_advice: [고소, 소송, 경찰 조사]
+        medical_advice: [자가진단, 약 복용, 치료]
+    4_I_Privacy_Infringement: {mode: primary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: site_per_query, append_terms: [신상, 유출, 고소]}
+    4_J_Public_Sensitive_Info_Leakage: {mode: secondary, domains: [github.com, okky.kr, velog.io, tistory.com], query_strategy: broad_then_site, append_terms: [유출, 공개, 내부정보]}
+    4_K_Intellectual_Property_Infringement: {mode: primary, domains: [ruliweb.com, gall.dcinside.com, tistory.com], query_strategy: site_per_query, append_terms: [불법 공유, 도용, 저작권]}
+    5_L_Illegal_Activity: {mode: primary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: site_per_query, append_terms: [거래, 유인, 적발]}
+    5_M_Violence_and_Extremism: {mode: secondary, domains: [gall.dcinside.com, fmkorea.com, ruliweb.com], query_strategy: broad_then_site, append_terms: [위협, 폭력, 선동]}
+    5_N_Encouraging_Unethical_Actions: {mode: primary, domains: [kin.naver.com, gall.dcinside.com, fmkorea.com], query_strategy: site_per_query, append_terms: [편법, 조작, 부추김]}
+    6_O_CBRNE: {mode: secondary, domains: [], query_strategy: broad_then_site, append_terms: [사고, 수사, 안전]}
+    6_P_Cybersecurity: {mode: primary, domains: [github.com, okky.kr, velog.io, tistory.com], query_strategy: site_per_query, append_terms: [보안, 취약점, 침해]}
+    6_Q_Prompt_Attack: {mode: primary, domains: [github.com, okky.kr, velog.io, clien.net], query_strategy: site_per_query, append_terms: [AI, 프롬프트, 우회]}
+    6_R_System_Leakage: {mode: primary, domains: [github.com, okky.kr, velog.io, tistory.com], query_strategy: site_per_query, append_terms: [시스템, 내부정보, 노출]}
+    6_S_Unbounded_Consumption: {mode: primary, domains: [github.com, okky.kr, velog.io, clien.net], query_strategy: site_per_query, append_terms: [API, 비용, 무제한]}

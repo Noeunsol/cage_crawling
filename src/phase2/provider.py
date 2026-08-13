@@ -131,6 +131,70 @@ class TavilyProvider(DiscoveryProvider):
         }
 
 
+class SerpApiProvider(DiscoveryProvider):
+    """Google SerpAPI의 site: 검색 결과를 2차 공통 후보 형식으로 변환한다."""
+    name = "serpapi"
+
+    def __init__(self, options: dict | None = None, rules_by_lv2: dict | None = None):
+        self.options = options or {}
+        self.rules_by_lv2 = rules_by_lv2 or {}
+        self._usage_events: list[dict] = []
+
+    def available(self) -> bool:
+        from dotenv import load_dotenv
+        load_dotenv()
+        return bool(os.getenv("SERPAPI_KEY")) and importlib.util.find_spec("serpapi") is not None
+
+    def _domains(self, intent: CollectionIntent, query: str) -> list[str]:
+        rule = self.rules_by_lv2.get(intent.target_taxonomy_lv2, {})
+        query_type = intent.query_types.get(query, "")
+        domains = (rule.get("domains_by_type", {}).get(query_type)
+                   or rule.get("domains", []) or [])
+        excluded = set(intent.excluded_domains) | set(self.options.get("excluded_domains", []))
+        return [domain for domain in domains if domain not in excluded][
+            :int(self.options.get("max_domains_per_query", 2))
+        ]
+
+    def search(self, intent: CollectionIntent) -> list[SearchResult]:
+        from dotenv import load_dotenv
+        load_dotenv()
+        import serpapi
+
+        out: list[SearchResult] = []
+        seen: set[str] = set()
+        base = {
+            "engine": self.options.get("engine", "google"), "hl": self.options.get("hl", "ko"),
+            "gl": self.options.get("gl", "kr"), "location": self.options.get("location", "South Korea"),
+            "google_domain": self.options.get("google_domain", "google.co.kr"),
+            "num": int(self.options.get("num", intent.max_results)), "start": int(self.options.get("start", 0)),
+            "tbs": self.options.get("tbs"), "safe": self.options.get("safe", "off"),
+            "filter": self.options.get("filter", 1), "nfpr": self.options.get("nfpr", 1),
+        }
+        client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"), timeout=20)
+        for query in intent.queries:
+            domains = self._domains(intent, query) or [None]
+            for domain in domains:
+                search_query = f"site:{domain} {query}" if domain else query
+                response = client.search({k: v for k, v in {**base, "q": search_query}.items() if v is not None})
+                self._usage_events.append({"query": search_query, "credits": 1})
+                for rank, item in enumerate(response.get("organic_results", []), start=1):
+                    url = item.get("link")
+                    if not url or url in seen:
+                        continue
+                    seen.add(url)
+                    out.append(SearchResult(
+                        provider=self.name, target_taxonomy_lv2=intent.target_taxonomy_lv2,
+                        query_or_intent=search_query, title=item.get("title") or "", url=url,
+                        snippet=item.get("snippet"), content_hint=item.get("snippet"),
+                        published_at_hint=item.get("date"), provider_score=max(0.0, 1.0 - (rank - 1) * 0.05),
+                        rank=rank, raw_provider_payload=item,
+                    ))
+        return out
+
+    def usage_summary(self) -> dict:
+        return {"calls": len(self._usage_events), "credits": len(self._usage_events), "queries": list(self._usage_events)}
+
+
 class MockTavilyProvider(DiscoveryProvider):
     """키 없이 테스트/오프라인용 결정론적 provider. intent의 include 어휘로 후보를 만든다."""
     name = "tavily"

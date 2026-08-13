@@ -80,14 +80,36 @@ def test_config_covers_every_taxonomy_lv2():
     assert not missing, f"{P2}에 수동 intent 누락: {missing}"
 
 
-def test_source_selection_presets_partition_taxonomies():
+def test_collection_provider_routing_partitions_taxonomies():
     cfg = yaml.safe_load(open(P2, encoding="utf-8"))
-    presets = cfg["source_selection_presets"]
-    news = set(presets["news_optimized"]["lv2s"])
-    community = set(presets["community_optimized"]["lv2s"])
+    routing = cfg["collection_provider_routing"]
+    news = set(routing["news_tavily"]["lv2s"])
+    community = set(routing["community_serpapi"]["lv2s"])
     all_lv2 = {policy.taxonomy_lv2 for policy in load_policies(TAXO)}
     assert not (news & community)
     assert news | community == all_lv2
+    assert routing["news_tavily"]["provider"] == "tavily"
+    assert routing["community_serpapi"]["provider"] == "serpapi_google"
+
+
+def test_serpapi_rules_cover_every_taxonomy_with_domains():
+    """SerpAPI 도입 시 특정 taxonomy만 도메인 규칙 없이 자동 검색으로 빠지는 것을 막는다."""
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))
+    rules = cfg["serpapi"]["rules_by_lv2"]
+    all_lv2 = {policy.taxonomy_lv2 for policy in load_policies(TAXO)}
+    assert set(rules) == all_lv2
+    assert all("domains" in rule or "domains_by_type" in rule for rule in rules.values())
+    assert all(rule["query_strategy"] in {"site_per_query", "broad_then_site"}
+               for rule in rules.values())
+
+
+def test_prohibited_advisory_serpapi_domains_are_split_by_type():
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))["serpapi"]
+    rule = cfg["rules_by_lv2"]["3_H_Prohibited_Advisory"]
+    assert set(rule["domains_by_type"]) == {"financial_advice", "legal_advice", "medical_advice"}
+    assert "kin.naver.com" in rule["domains_by_type"]["financial_advice"]
+    assert "lawtalk.co.kr" in rule["reference_domains_by_type"]["legal_advice"]
+    assert "hidoc.co.kr" in rule["reference_domains_by_type"]["medical_advice"]
 
 
 def test_sensitive_lv2_queries_blocked_on_high_risk_terms():

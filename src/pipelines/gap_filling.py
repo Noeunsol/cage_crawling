@@ -189,7 +189,7 @@ def small_run(lv2s: list[str] | None, limit: int, config_path: str, db_path: str
     store = Store(db_path)
     provider = provider or _default_provider(p2)
     # 실행 이력을 사람이 구분할 수 있도록 로컬 실행 시각과 짧은 충돌 방지 suffix를 함께 저장한다.
-    run_id = f"tavily_{_dt.datetime.now().astimezone():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
+    run_id = f"{provider.name}_{_dt.datetime.now().astimezone():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
     collected_at = _dt.date.today().isoformat()
 
     # 목표/커버리지 (deficit 계산용)
@@ -298,13 +298,13 @@ def small_run(lv2s: list[str] | None, limit: int, config_path: str, db_path: str
                 store.log_filter(cand.source_url, "quality", "fail", q.reason, target_lv2, "")
                 continue
 
-            # [12] OpenAI 검수는 선택 사항. 끄면 Tavily 목표 taxonomy로만 미검수 후보를 저장한다.
+            # [12] OpenAI 검수는 선택 사항. 끄면 검색 provider의 목표 taxonomy로만 미검수 후보를 저장한다.
             if not verify_openai:
                 rec.taxonomy_lv1 = lv1_by_lv2.get(target_lv2)
                 rec.taxonomy_lv2 = target_lv2
                 rec.category = rec.subtype = cand.subtype_candidate or "-"
-                action, reason = "candidate", "tavily_candidate_unverified"
-                rec.classification_source = "tavily_unverified"
+                action, reason = "candidate", f"{provider.name}_candidate_unverified"
+                rec.classification_source = f"{provider.name}_unverified"
             else:
                 match = None
                 if matcher_llm and total_classify < max_classify:
@@ -378,7 +378,8 @@ def small_run(lv2s: list[str] | None, limit: int, config_path: str, db_path: str
     report["run_id"] = run_id
     report["coverage"] = _phase2_coverage(targets, initial_cov, collected)
     report["provider_performance"] = _finalize_prov_stats(stats)
-    report["tavily_usage"] = provider.usage_summary()
+    report["provider_usage"] = provider.usage_summary()
+    report["tavily_usage"] = report["provider_usage"]  # UI 이전 호환
     report["by_query"] = [
         {"query": q, "lv2": qlv2.get(q, ""), **s}
         for q, s in sorted(qstats.items(), key=lambda kv: kv[1]["accepted"], reverse=True)
@@ -404,7 +405,7 @@ def verify_unverified_candidates(run_id: str, db_path: str, config_path: str,
     targets = _coverage.resolve_targets(policies, p2.get("target_selection", {}))
     store = Store(db_path)
     store.conn.row_factory = sqlite3.Row
-    where = ["run_id=?", "collection_phase=2", "action='candidate'", "classification_source='tavily_unverified'"]
+    where = ["run_id=?", "collection_phase=2", "action='candidate'", "classification_source LIKE '%_unverified'"]
     params: list = [run_id]
     if target_lv2:
         where.append("taxonomy_lv2_candidate=?")

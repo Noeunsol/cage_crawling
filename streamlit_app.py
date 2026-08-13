@@ -10,7 +10,7 @@ from pathlib import Path
 
 import streamlit as st
 import yaml
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 # 로컬 운영 UI에서는 프로젝트 .env가 정본이다. 이미 떠 있는 셸의 오래된 키보다 우선한다.
 _ENV_PATH = Path(__file__).with_name(".env")
@@ -28,9 +28,9 @@ def _fmt_dur(sec: float) -> str:
 
 
 def _tavily_run_label(run_id: str) -> str:
-    """새 run ID는 실행 시각을 표시하고, 기존 UUID 이력도 그대로 읽는다."""
+    """2차 provider run ID의 실행 시각을 표시하고, 기존 UUID 이력도 그대로 읽는다."""
     parts = run_id.split("_")
-    if len(parts) == 4 and parts[0] == "tavily" and len(parts[1]) == 8 and len(parts[2]) == 6:
+    if len(parts) == 4 and parts[0] in {"tavily", "serpapi"} and len(parts[1]) == 8 and len(parts[2]) == 6:
         day, clock = parts[1], parts[2]
         if day.isdigit() and clock.isdigit():
             return f"{day[:4]}-{day[4:6]}-{day[6:]} {clock[:2]}:{clock[2:4]}:{clock[4:]} · {run_id}"
@@ -74,7 +74,7 @@ with top_integrated:
 with top_phase1:
     trend_collection_tab, recent_tab, prefilter_tab = st.tabs(["1차 트렌드 수집", "최근 실행", "사전 필터"])
 with top_phase2:
-    phase2_tab, phase2_results_tab = st.tabs(["2차 Tavily 수집", "Tavily 수집 결과"])
+    phase2_tab, phase2_results_tab, serpapi_tab = st.tabs(["2차 Tavily 수집", "Tavily 수집 결과", "2차 SerpAPI 수집"])
 
 
 @st.cache_data(ttl=5)
@@ -154,10 +154,47 @@ if _db_options[_db_choice]:
 else:
     db_path = st.sidebar.text_input("직접 DB 경로", value=_current_db, key="result_db_custom")
 st.session_state["result_db"] = db_path
-trend_cfg = st.sidebar.text_input("1차 수집 config", "configs/trend_collection.yaml")
-taxo_cfg = st.sidebar.text_input("Taxonomy config", "configs/taxonomy.yaml")
-settings_cfg = st.sidebar.text_input("공통 crawler config", "configs/crawler_settings.yaml")
-p2_config = st.sidebar.text_input("2차 수집 config", "configs/targeted_collection.yaml")
+# 프로젝트 표준 config는 고정한다. 경로 변경은 코드 수정이 필요한 운영 작업이므로 UI에 노출하지 않는다.
+trend_cfg = "configs/trend_collection.yaml"
+taxo_cfg = "configs/taxonomy.yaml"
+settings_cfg = "configs/crawler_settings.yaml"
+p2_config = "configs/targeted_collection.yaml"
+
+with st.sidebar.expander("API 연결 상태", expanded=True):
+    st.caption("키 값은 표시·저장하지 않습니다. 프로젝트 루트 `.env`에 설정한 뒤 다시 읽으세요.")
+    for label, module, env_name in (
+        ("Tavily", "tavily", "TAVILY_API_KEY"),
+        ("OpenAI", "openai", "OPENAI_API_KEY"),
+        ("SerpAPI", "serpapi", "SERPAPI_KEY"),
+    ):
+        ready, reason = dependency_status(module, env_name)
+        if ready:
+            st.success(f"{label} 준비 완료")
+        else:
+            st.warning(f"{label} 준비 안 됨 · {reason}")
+    st.code("TAVILY_API_KEY=...\nOPENAI_API_KEY=...\nSERPAPI_KEY=...", language="bash")
+    with st.form("api_key_form", clear_on_submit=True):
+        tavily_key = st.text_input("Tavily API Key", type="password")
+        openai_key = st.text_input("OpenAI API Key", type="password")
+        serpapi_key = st.text_input("SerpAPI Key", type="password")
+        save_keys = st.form_submit_button("입력한 API 키 저장")
+    if save_keys:
+        updates = {
+            "TAVILY_API_KEY": tavily_key.strip(),
+            "OPENAI_API_KEY": openai_key.strip(),
+            "SERPAPI_KEY": serpapi_key.strip(),
+        }
+        for env_name, value in updates.items():
+            if value:  # 빈 입력으로 기존 키를 지우지 않는다.
+                set_key(str(_ENV_PATH), env_name, value, quote_mode="never")
+        if any(updates.values()):
+            load_dotenv(_ENV_PATH, override=True)
+            st.cache_data.clear()
+            st.success("입력한 API 키를 .env에 저장했습니다.")
+            st.rerun()
+        else:
+            st.info("저장할 API 키를 하나 이상 입력하세요.")
+
 refresh_col, env_col = st.sidebar.columns(2)
 if refresh_col.button("새로고침"):
     st.cache_data.clear()
@@ -235,9 +272,9 @@ with trend_collection_tab:
             st.write(f"Provider: `{provider}` · Model: `{model}`")
             st.write("공통 classifier 1회 · 19개 Lv2 Definition/Description 전체 비교")
             st.caption(
-                f"accepted: confidence ≥ {llm_cfg.get('accepted_confidence', 0.75)}, "
-                f"taxonomy fit ≥ {llm_cfg.get('accepted_taxonomy_fit', 0.50)}, "
-                f"concrete context ≥ {llm_cfg.get('accepted_concrete_context', 0.30)}, "
+                f"Accepted: confidence ≥ {llm_cfg.get('accepted_confidence', 0.75)}, "
+                f"Taxonomy fit ≥ {llm_cfg.get('accepted_taxonomy_fit', 0.50)}, "
+                f"Concrete context ≥ {llm_cfg.get('accepted_concrete_context', 0.30)}, "
                 f"Korea relevance ≥ {llm_cfg.get('min_korea_relevance', 0.30)}"
             )
             if not os.getenv(env_name):
@@ -383,19 +420,42 @@ with recent_tab:
         st.info("실행 ID가 기록된 1차 수집 결과가 없습니다. 위에서 1차 수집을 한 번 실행해 보세요.")
 
 with taxonomy_tab:
-    st.subheader("통합 Taxonomy별 콘텐츠 현황")
-    st.caption("1·2차에서 저장된 결과를 함께 봅니다. accepted만 유효 커버리지로 계산하며, 2차 수집은 부족분이 큰 LV2부터 보강합니다.")
-    taxonomy_rows = query(db_path, """
-        SELECT taxonomy_lv1, taxonomy_lv2,
-               SUM(CASE WHEN action='accepted' THEN 1 ELSE 0 END) AS accepted,
-               SUM(CASE WHEN action='accepted' THEN 1 ELSE 0 END) AS effective,
-               SUM(CASE WHEN collection_phase=2 THEN 1 ELSE 0 END) AS phase2,
-               COALESCE(SUM(llm_total_tokens),0) AS tokens,
-               ROUND(COALESCE(SUM(llm_estimated_cost_usd),0),6) AS cost_usd
-        FROM content_records
-        WHERE COALESCE(is_supplementary,0)=0 AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''
-        GROUP BY taxonomy_lv1,taxonomy_lv2 ORDER BY effective ASC, taxonomy_lv2
-    """)
+    st.subheader("통합 Taxonomy 커버리지")
+    st.caption(
+        "`content.db`(1차 운영 DB)와 `phase2_pilot.db`(2차 보강 DB)의 accepted를 합산합니다. "
+        "같은 URL은 운영 DB를 우선해 한 번만 계산합니다."
+    )
+    taxonomy_rows_by_key = {}
+    seen_urls = set()
+    coverage_db_paths = ("data/db/content.db", "data/db/phase2_pilot.db")
+    for coverage_db_path in coverage_db_paths:
+        if not Path(coverage_db_path).is_file():
+            continue
+        coverage_records = query(coverage_db_path, """
+            SELECT taxonomy_lv1, taxonomy_lv2, source_url, canonical_url, content_id,
+                   COALESCE(collection_phase, 1) AS collection_phase,
+                   COALESCE(llm_total_tokens, 0) AS tokens,
+                   COALESCE(llm_estimated_cost_usd, 0) AS cost_usd
+            FROM content_records
+            WHERE action='accepted' AND COALESCE(is_supplementary,0)=0
+              AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''
+        """)
+        for record in coverage_records:
+            dedup_key = record["canonical_url"] or record["source_url"] or record["content_id"]
+            if dedup_key in seen_urls:
+                continue
+            seen_urls.add(dedup_key)
+            key = (record["taxonomy_lv1"] or "", record["taxonomy_lv2"])
+            row = taxonomy_rows_by_key.setdefault(key, {
+                "taxonomy_lv1": key[0], "taxonomy_lv2": key[1],
+                "total_accepted": 0, "phase1": 0, "phase2": 0,
+                "tokens": 0, "cost_usd": 0.0,
+            })
+            row["total_accepted"] += 1
+            row["phase2" if int(record["collection_phase"] or 1) == 2 else "phase1"] += 1
+            row["tokens"] += int(record["tokens"] or 0)
+            row["cost_usd"] += float(record["cost_usd"] or 0)
+    taxonomy_rows = list(taxonomy_rows_by_key.values())
     try:
         taxonomy_data = yaml.safe_load(Path(taxo_cfg).read_text(encoding="utf-8")) or {}
         phase2_data = yaml.safe_load(Path(p2_config).read_text(encoding="utf-8")) or {}
@@ -407,11 +467,11 @@ with taxonomy_tab:
             lv2 = item.get("taxonomy_lv2") or item.get("id")
             if lv2 and lv2 not in known:
                 taxonomy_rows.append({"taxonomy_lv1": item.get("taxonomy_lv1", ""), "taxonomy_lv2": lv2,
-                                      "accepted": 0, "effective": 0.0,
-                                      "phase2": 0, "tokens": 0, "cost_usd": 0.0})
+                                      "total_accepted": 0, "phase1": 0, "phase2": 0,
+                                      "tokens": 0, "cost_usd": 0.0})
         for row in taxonomy_rows:
             row["target"] = float(targets.get(row["taxonomy_lv2"], default_target))
-            row["shortfall"] = max(0.0, row["target"] - float(row["effective"] or 0))
+            row["shortfall"] = max(0.0, row["target"] - float(row["total_accepted"] or 0))
         taxonomy_rows.sort(key=lambda row: (-row["shortfall"], row["taxonomy_lv2"]))
     except Exception as exc:  # noqa: BLE001
         st.warning(f"Taxonomy 목표 설정을 읽지 못했습니다: {exc}")
@@ -420,18 +480,27 @@ with taxonomy_tab:
             "Taxonomy 선택", ["전체"] + [r["taxonomy_lv2"] for r in taxonomy_rows],
             help="선택하면 아래에서 해당 taxonomy의 상태·수집 단계·콘텐츠를 한 번에 확인합니다.",
         )
-        st.dataframe(taxonomy_rows, width="stretch", hide_index=True,
-                     column_config={"cost_usd": st.column_config.NumberColumn("추정 비용($)", format="$%.6f")})
+        coverage_table = [{
+            "Taxonomy lv1": row["taxonomy_lv1"],
+            "Taxonomy lv2": row["taxonomy_lv2"],
+            "총 Accepted": row["total_accepted"],
+            "1차 수집": row["phase1"],
+            "2차 수집": row["phase2"],
+            "목표 건수": int(row["target"]),
+            "추가 필요": int(row["shortfall"]),
+            "LLM 토큰": row["tokens"],
+            "LLM 추정 비용": row["cost_usd"],
+        } for row in taxonomy_rows]
+        st.dataframe(coverage_table, width="stretch", hide_index=True,
+                     column_config={"LLM 추정 비용": st.column_config.NumberColumn(format="$%.6f")})
 
         if chosen_taxonomy != "전체":
-            phase_rows = query(db_path, """
-                SELECT CASE WHEN collection_phase=2 THEN '2차 보강' ELSE '1차 수집' END AS phase,
-                       action,COUNT(*) AS content_count,COALESCE(SUM(llm_total_tokens),0) AS tokens,
-                       ROUND(COALESCE(SUM(llm_estimated_cost_usd),0),6) AS cost_usd
-                FROM content_records WHERE taxonomy_lv2=? AND COALESCE(is_supplementary,0)=0
-                GROUP BY phase,action ORDER BY phase,action
-            """, (chosen_taxonomy,))
-            st.dataframe(phase_rows, width="stretch", hide_index=True)
+            selected_coverage = next(row for row in taxonomy_rows if row["taxonomy_lv2"] == chosen_taxonomy)
+            st.dataframe([
+                {"수집 단계": "1차 수집", "Accepted": selected_coverage["phase1"]},
+                {"수집 단계": "2차 수집", "Accepted": selected_coverage["phase2"]},
+            ], width="stretch", hide_index=True)
+            st.caption(f"아래 원문 목록은 현재 선택한 DB(`{db_path}`)의 기록입니다.")
             st.dataframe(query(db_path, """
                 SELECT title,action,category,CASE WHEN collection_phase=2 THEN '2차' ELSE '1차' END AS phase,
                        ROUND(taxonomy_fit_score,2) AS taxonomy_fit,
@@ -445,7 +514,7 @@ with taxonomy_tab:
 
 with phase2_tab:
     # ── 2차 실행 컨트롤 (①intent → ②discovery → ③보강). 결과는 이 아래 뷰어에서 바로 확인.
-    st.subheader("2단계 · 부족한 안전 카테고리 채우기")
+    st.subheader("2단계 Tavily 수집")
     st.markdown(
         "1차 수집만으로 **목표치보다 모자란 안전 카테고리**를, 웹 검색(Tavily)으로 관련 글을 찾아 채우는 단계입니다.  \n"
         "**순서 ① 검색문 확인 → ② 검색결과 미리보기 → ③ 실제 수집·저장.** "
@@ -530,7 +599,7 @@ with phase2_tab:
         return f"{name} · 부족 {d:g}건" if d is not None else name
 
     try:
-        _source_presets = (_p2._load_phase2_config(p2_config).get("source_selection_presets") or {})
+        _source_presets = (_p2._load_phase2_config(p2_config).get("collection_provider_routing") or {})
     except Exception:  # noqa: BLE001
         _source_presets = {}
     preset_keys = list(_source_presets)
@@ -759,6 +828,101 @@ with phase2_tab:
             except Exception as exc:  # noqa: BLE001
                 st.error(f"실행 실패: {exc}")
 
+with serpapi_tab:
+    st.subheader("2차 SerpAPI 수집")
+    st.caption("Google의 `site:` 검색으로 커뮤니티·질문·기술 토론 원문 후보를 찾고, 기존 2차 본문 추출·판정·저장 흐름으로 처리합니다.")
+    serpapi_ready, serpapi_reason = dependency_status("serpapi", "SERPAPI_KEY")
+    if serpapi_ready:
+        st.success(f"SERPAPI 로컬 준비 완료 · {serpapi_reason}")
+    else:
+        st.error(f"SERPAPI 준비 안 됨 · {serpapi_reason}")
+
+    try:
+        from src import pipeline as _serp_pipeline
+        from src.phase2.provider import SerpApiProvider
+        serpapi_config = _serp_pipeline._load_phase2_config(p2_config)
+        serpapi_intents = _serp_pipeline.preview_intents(p2_config, db_path, taxonomy_config=taxo_cfg)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"SerpAPI 설정 로드 실패: {exc}")
+        serpapi_config, serpapi_intents = {}, []
+
+    serpapi_by_lv2 = {item["lv2"]: item for item in serpapi_intents}
+    routing = serpapi_config.get("collection_provider_routing", {})
+    news_lv2s = set((routing.get("news_tavily", {}) or {}).get("lv2s", []))
+    community_lv2s = set((routing.get("community_serpapi", {}) or {}).get("lv2s", []))
+    serpapi_preset = st.radio(
+        "2차 수집 출처 추천",
+        ["직접 선택", "뉴스 최적 taxonomy", "커뮤니티 최적 taxonomy"],
+        index=2, horizontal=True, key="serpapi_source_preset",
+        help="SerpAPI에서도 모든 taxonomy를 직접 선택할 수 있습니다. 기본값은 커뮤니티 원문에 적합한 taxonomy입니다.",
+    )
+    if serpapi_preset == "뉴스 최적 taxonomy":
+        serpapi_members = [lv2 for lv2 in serpapi_by_lv2 if lv2 in news_lv2s]
+        serpapi_description = "뉴스형 taxonomy도 커뮤니티 반응·질문 맥락을 보강할 때 선택합니다."
+    elif serpapi_preset == "커뮤니티 최적 taxonomy":
+        serpapi_members = [lv2 for lv2 in serpapi_by_lv2 if lv2 in community_lv2s]
+        serpapi_description = "개인 경험·상담·표현·기술 토론 원문을 우선 탐색합니다."
+    else:
+        serpapi_members = list(serpapi_by_lv2)
+        serpapi_description = "모든 taxonomy에서 직접 선택합니다."
+    st.caption(serpapi_description)
+    serpapi_default = serpapi_members[:2]
+    serpapi_selection_key = f"serpapi_selected_{serpapi_preset}"
+    if serpapi_selection_key not in st.session_state:
+        st.session_state[serpapi_selection_key] = serpapi_default
+    serpapi_selected = st.multiselect(
+        "보강할 안전 카테고리", list(serpapi_by_lv2), key=serpapi_selection_key,
+        format_func=lambda lv2: f"{lv2} · 부족 {serpapi_by_lv2[lv2]['deficit']:g}건",
+    )
+    sc1, sc2, _ = st.columns([1, 1, 3])
+    if sc1.button("추천 전체 선택", key="serpapi_select_all"):
+        st.session_state[serpapi_selection_key] = serpapi_members
+        st.rerun()
+    if sc2.button("부족분 상위로 복원", key="serpapi_select_top"):
+        st.session_state[serpapi_selection_key] = serpapi_default
+        st.rerun()
+
+    serp_cols = st.columns(3)
+    serpapi_db = serp_cols[0].text_input("Small Run 저장 DB", "data/db/phase2_pilot.db", key="serpapi_db")
+    serpapi_limit = serp_cols[1].number_input("실제 본문 fetch 상한", 1, 60, 12, key="serpapi_fetch_limit")
+    serpapi_verify = serp_cols[2].checkbox("OpenAI taxonomy 검수", value=False, key="serpapi_verify_openai")
+    serpapi_options = serpapi_config.get("serpapi", {})
+    serpapi_calls = sum(
+        max(1, min(
+            len((serpapi_options.get("rules_by_lv2", {}).get(lv2, {}) or {}).get("domains_by_type", {}).get(
+                serpapi_by_lv2[lv2]["intent"].query_types.get(search_query), []
+            ) or (serpapi_options.get("rules_by_lv2", {}).get(lv2, {}) or {}).get("domains", [])),
+            int((serpapi_options.get("provider", {}) or {}).get("max_domains_per_query", 2)),
+        ))
+        for lv2 in serpapi_selected for search_query in serpapi_by_lv2[lv2]["intent"].queries
+    )
+    st.caption(f"선택된 검색어·도메인 조합 기준 최대 약 **{serpapi_calls}회** SerpAPI 검색을 호출합니다. snippet은 저장하지 않고 URL 후보 판단에만 사용합니다.")
+    if st.button("SerpAPI 수집 · 저장 실행", type="primary", disabled=not serpapi_ready or not serpapi_selected,
+                 key="serpapi_run"):
+        try:
+            serpapi_provider = SerpApiProvider(
+                options=serpapi_options.get("provider", {}),
+                rules_by_lv2=serpapi_options.get("rules_by_lv2", {}),
+            )
+            serpapi_report = _serp_pipeline.small_run(
+                serpapi_selected, int(serpapi_limit), p2_config, serpapi_db,
+                taxonomy_config=taxo_cfg, settings_config=settings_cfg,
+                overrides={
+                    "adjudication": {"openai_verification": serpapi_verify},
+                    "limits": {"max_selected_lv2": len(serpapi_selected), "max_total_fetch": int(serpapi_limit)},
+                },
+                provider=serpapi_provider, reference_db=db_path,
+            )
+            st.cache_data.clear()
+            st.session_state["_pending_result_db"] = serpapi_db
+            usage = serpapi_report.get("provider_usage", {})
+            st.success(
+                f"저장 {serpapi_report.get('stored_records', 0)}건 · 검색 {usage.get('calls', 0)}회 · "
+                f"run_id=`{serpapi_report.get('run_id', '')}`"
+            )
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"SerpAPI 수집 실패: {exc}")
+
 with phase2_results_tab:
     st.subheader("Tavily 수집 결과")
     st.caption("Tavily 검색 후보, 본문 수집, OpenAI 검수와 저장된 본문을 실행별로 확인합니다.")
@@ -798,7 +962,7 @@ with phase2_results_tab:
         unverified_count = scalar(db_path, f"""
             SELECT COUNT(*) AS n FROM content_records
             WHERE run_id=? AND collection_phase=2 AND action='candidate'
-              AND classification_source='tavily_unverified'{result_target_clause}
+              AND classification_source LIKE '%_unverified'{result_target_clause}
         """, result_target_params)
         if unverified_count:
             with st.container(border=True):
@@ -852,14 +1016,64 @@ with phase2_results_tab:
                 column_config={"원문": st.column_config.LinkColumn("원문", display_text="열기")})
         with stored_result_tab:
             stored_rows = query(db_path, f"""
-                SELECT title,published_at,taxonomy_lv2_candidate AS target_taxonomy,
-                       taxonomy_lv2 AS predicted_taxonomy,category,action,
-                       ROUND(taxonomy_fit_score,2) AS taxonomy_fit,
-                       ROUND(korea_relevance_score,2) AS korea_relevance,source_url
+                SELECT content_id,title,published_at,taxonomy_lv2_candidate AS target_taxonomy,
+                       taxonomy_lv2 AS predicted_taxonomy,COALESCE(category, subtype) AS content_type,
+                       action,source_url
                 FROM content_records WHERE run_id=?{result_target_clause} ORDER BY rowid DESC LIMIT 500
             """, result_target_params)
-            st.dataframe(stored_rows, width="stretch", hide_index=True,
-                         column_config={"source_url": st.column_config.LinkColumn("원문", display_text="열기")})
+            st.caption("행을 선택하면 아래에서 taxonomy 판정 근거와 masked 본문을 확인할 수 있습니다.")
+            stored_table = [{
+                "제목": row["title"] or "(제목 없음)",
+                "작성일": row["published_at"] or "미제공",
+                "Targeted Taxonomy": row["target_taxonomy"] or "—",
+                "Taxonomy lv2 (LLM)": row["predicted_taxonomy"] or "—",
+                "Type (LLM)": row["content_type"] or "—",
+                "처리 상태": _ACTION_LABEL.get(row["action"], row["action"]),
+                "URL": row["source_url"],
+            } for row in stored_rows]
+            stored_event = st.dataframe(
+                stored_table, width="stretch", hide_index=True, on_select="rerun", selection_mode="single-row",
+                key="phase2_stored_result_table",
+                column_config={"URL": st.column_config.LinkColumn("URL", display_text="열기")},
+            )
+            stored_selected = stored_event.selection.rows
+            selected_stored_index = stored_selected[0] if stored_selected else None
+            if stored_rows and selected_stored_index is not None and selected_stored_index < len(stored_rows):
+                selected_stored_id = stored_rows[selected_stored_index]["content_id"]
+                stored_detail = query(db_path, """
+                    SELECT title,source_url,published_at,source,extractor,masked_text,filter_reason,
+                           taxonomy_lv2_candidate,taxonomy_lv1,taxonomy_lv2,COALESCE(category, subtype) AS content_type,
+                           action,classification_source,classification_reason,
+                           taxonomy_fit_score,harmfulness_score,korea_relevance_score,concrete_context_score,evidence_spans
+                    FROM content_records WHERE content_id=?
+                """, (selected_stored_id,))[0]
+                st.markdown(f"### {stored_detail['title'] or '(제목 없음)'}")
+                st.caption(
+                    f"Targeted: `{stored_detail['taxonomy_lv2_candidate'] or '—'}` · "
+                    f"LLM: `{stored_detail['taxonomy_lv1'] or '—'} → {stored_detail['taxonomy_lv2'] or '—'} → {stored_detail['content_type'] or '—'}` · "
+                    f"{_ACTION_LABEL.get(stored_detail['action'], stored_detail['action'])}"
+                )
+                if stored_detail["classification_reason"]:
+                    st.caption(f"Taxonomy 판정 근거 · {stored_detail['classification_reason']}")
+                detail_scores = [
+                    ("Taxonomy fit", "taxonomy와의 적합도", stored_detail["taxonomy_fit_score"]),
+                    ("Harmfulness", "유해성 강도", stored_detail["harmfulness_score"]),
+                    ("Korea context", "한국 관련 맥락", stored_detail["korea_relevance_score"]),
+                    ("Concrete context", "실제 사례·행위 등 구체적 맥락", stored_detail["concrete_context_score"]),
+                ]
+                for column, (label, description, score) in zip(st.columns(4), detail_scores):
+                    column.markdown(
+                        f"**{label}**  \n<span style='color: #6b7280'>: {description}</span>\n\n## {score}",
+                        unsafe_allow_html=True,
+                    )
+                with st.expander("본문 (masked)", expanded=True):
+                    st.write(stored_detail["masked_text"] or "(본문 없음)")
+                st.caption(
+                    f"{stored_detail['source'] or '—'} · {stored_detail['extractor'] or '—'} · "
+                    f"{stored_detail['published_at'] or '날짜 없음'} · [원문 열기]({stored_detail['source_url']})"
+                )
+                if stored_detail["filter_reason"]:
+                    st.caption(f"판정 사유 · {stored_detail['filter_reason']}")
 
 with overview:
     st.subheader("통합 · 전체 수집 요약")
@@ -1051,19 +1265,21 @@ with candidates_tab:
 
 with content_tab:
     st.subheader("통합 · 저장 콘텐츠 탐색")
-    st.caption("1·2차에서 실제로 저장된 콘텐츠를 함께 봅니다. 수집 단계 필터로 분리해 확인할 수 있습니다.")
+    st.caption("1·2차에서 최종 accepted된 콘텐츠만 봅니다. 보조 링크 콘텐츠와 수집원이 unknown인 기록은 표시하지 않습니다.")
     # ── 요약 지표 ──
     def _n(where=""):
         return scalar(db_path, f"SELECT COUNT(*) AS n FROM content_records {where}")
-    # 최종 콘텐츠에는 accepted만 저장하고 discard는 후보 로그에만 남긴다.
-    mc = st.columns(3)
-    mc[0].metric("전체 저장", _n("WHERE COALESCE(is_supplementary,0)=0"))
-    mc[1].metric("✅ accepted", _n("WHERE action='accepted' AND COALESCE(is_supplementary,0)=0"))
-    mc[2].metric("🔗 보조 콘텐츠", _n("WHERE is_supplementary=1"))
+    accepted_where = "WHERE action='accepted' AND COALESCE(is_supplementary,0)=0 AND COALESCE(source,'') NOT IN ('', 'unknown')"
+    mc = st.columns(2)
+    mc[0].metric("최종 accepted", _n(accepted_where))
+    mc[1].metric("Taxonomy 매핑 완료", _n(accepted_where + " AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''"))
 
     # ── taxonomy 분포 차트 (매핑된 콘텐츠) ──
     dist = query(db_path, """SELECT taxonomy_lv2 AS lv2, COUNT(*) AS count FROM content_records
-                             WHERE taxonomy_lv2 IS NOT NULL GROUP BY taxonomy_lv2 ORDER BY count DESC""")
+                             WHERE action='accepted' AND COALESCE(is_supplementary,0)=0
+                               AND COALESCE(source,'') NOT IN ('', 'unknown')
+                               AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''
+                             GROUP BY taxonomy_lv2 ORDER BY count DESC""")
     if dist:
         st.caption("Taxonomy lv2 분포 (매핑된 콘텐츠)")
         st.bar_chart(dist, x="lv2", y="count", horizontal=True)
@@ -1072,38 +1288,31 @@ with content_tab:
     lv2_rows = query(
         db_path, "SELECT DISTINCT taxonomy_lv2 FROM content_records WHERE taxonomy_lv2 IS NOT NULL ORDER BY taxonomy_lv2")
     src_rows = query(
-        db_path, "SELECT DISTINCT source FROM content_records WHERE source!='' ORDER BY source")
-    f1, f2, f3, f4 = st.columns(4)
+        db_path, "SELECT DISTINCT source FROM content_records WHERE COALESCE(source,'') NOT IN ('', 'unknown') ORDER BY source")
+    f1, f2, f3 = st.columns(3)
     lv2 = f1.selectbox("Taxonomy lv2", ["전체"] + [row["taxonomy_lv2"] for row in lv2_rows])
     source_sel = f2.selectbox("수집원", ["전체"] + [row["source"] for row in src_rows])
-    action_sel = f3.selectbox("처리 상태", ["전체", "accepted"])
-    content_phase = f4.selectbox("수집 단계", ["전체", "① 1차 수집", "② Tavily 2차"], key="content_phase_filter")
-    where, params = ["COALESCE(is_supplementary,0)=0"], []
+    content_phase = f3.selectbox("수집 단계", ["전체", "1차 수집", "2차 Tavily 수집"], key="content_phase_filter")
+    where, params = ["action='accepted'", "COALESCE(is_supplementary,0)=0", "COALESCE(source,'') NOT IN ('', 'unknown')"], []
     if lv2 != "전체":
         where.append("taxonomy_lv2=?"); params.append(lv2)
     if source_sel != "전체":
         where.append("source=?"); params.append(source_sel)
-    if action_sel != "전체":
-        where.append("action=?"); params.append(action_sel)
-    if content_phase == "① 1차 수집":
+    if content_phase == "1차 수집":
         where.append("COALESCE(collection_phase,1)=1")
-    elif content_phase == "② Tavily 2차":
+    elif content_phase == "2차 Tavily 수집":
         where.append("collection_phase=2")
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     records = query(
         db_path,
-        f"""SELECT content_id,title,source_url,source,taxonomy_lv1,taxonomy_lv2,category,action,
-                   risk_score,trend_score,confidence,
-                   ROUND(pii_risk_score,3) AS pii_risk
+        f"""SELECT content_id,title,source_url,source,taxonomy_lv1,taxonomy_lv2,COALESCE(category, subtype) AS content_type,action
             FROM content_records {clause} ORDER BY collected_at DESC LIMIT 300""",
         tuple(params),
     )
     st.caption(f"{len(records)}건")
     table = [{"제목": r["title"] or "(제목 없음)", "수집원": r["source"], "URL": r["source_url"],
-              "lv1": r["taxonomy_lv1"] or "—", "lv2": r["taxonomy_lv2"] or "—", "type": r["category"] or "—",
-              "처리": _ACTION_LABEL.get(r["action"], r["action"]),
-              "risk": r["risk_score"], "trend": r["trend_score"], "conf": r["confidence"],
-              "pii": r["pii_risk"]} for r in records]
+              "Taxonomy lv1": r["taxonomy_lv1"] or "—", "Taxonomy lv2": r["taxonomy_lv2"] or "—",
+              "Type": r["content_type"] or "—", "처리 상태": _ACTION_LABEL.get(r["action"], r["action"])} for r in records]
     st.caption("표의 행을 클릭하면 아래에 상세 내용이 열립니다.")
     table_event = st.dataframe(
         table, width="stretch", hide_index=True, on_select="rerun", selection_mode="single-row",
@@ -1141,22 +1350,20 @@ with content_tab:
             st.markdown(f"🏷️ **{detail['taxonomy_lv1']} → {detail['taxonomy_lv2']} → {detail['category']}**  ·  "
                         f"{_ACTION_LABEL.get(detail['action'], detail['action'])}  ·  "
                         f"분류: `{detail['classification_source']}`")
-            sc = st.columns(3)
-            sc[0].metric("risk", detail["risk_score"])
-            sc[1].metric("trend", detail["trend_score"])
-            sc[2].metric("confidence", detail["confidence"])
-            signals, secondary, matched = _jl(detail["risk_signals"]), _jl(detail["secondary_flags"]), _jl(detail["matched_keywords"])
-            if signals:
-                st.caption(f"위험신호: {', '.join(signals)}"
-                           + (f"  ·  복합(secondary): {', '.join(secondary)}" if secondary else "")
-                           + (f"  ·  매칭 키워드: {', '.join(matched)}" if matched else ""))
             if detail["classification_reason"]:
-                st.caption(f"분류 근거: `{detail['classification_reason']}`")
+                st.caption(f"Taxonomy 판정 근거 · {detail['classification_reason']}")
             score_cols = st.columns(4)
-            score_cols[0].metric("taxonomy fit", detail["taxonomy_fit_score"])
-            score_cols[1].metric("harmfulness", detail["harmfulness_score"])
-            score_cols[2].metric("Korea context", detail["korea_relevance_score"])
-            score_cols[3].metric("concrete context", detail["concrete_context_score"])
+            score_labels = [
+                ("Taxonomy fit", " Taxonomy와의 적합도", detail["taxonomy_fit_score"]),
+                ("Harmfulness", " 유해성 강도", detail["harmfulness_score"]),
+                ("Korea context", " 한국 관련 맥락", detail["korea_relevance_score"]),
+                ("Concrete context", " 실제 사례·행위 등 구체적 맥락", detail["concrete_context_score"]),
+            ]
+            for column, (label, description, score) in zip(score_cols, score_labels):
+                column.markdown(
+                    f"**{label}**  \n<span style='color: #6b7280'>: {description}</span>\n\n## {score}",
+                    unsafe_allow_html=True,
+                )
             evidence = _jl(detail["evidence_spans"])
             if evidence:
                 st.caption("판정 근거 문구: " + " · ".join(f"‘{x}’" for x in evidence))
