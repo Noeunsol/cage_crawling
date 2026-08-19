@@ -19,13 +19,8 @@ class ExtractionOutcome:
     reason: str | None = None
 
 
-class BaseSiteParser:
-    """사이트별 parser adapter seam."""
-    name = "site_parser"
-    domains: tuple[str, ...] = ()
-
-    def extract(self, c, site, html):
-        raise NotImplementedError
+# site parser는 상속이 아니라 덕 타이핑 계약이다: `name` 속성 + `extract(c, site, html)`.
+# ExtractorRouter._ladder가 SITE_PARSER_REGISTRY 이름으로 rung을 고른다.
 
 
 class _GatedExtractor:

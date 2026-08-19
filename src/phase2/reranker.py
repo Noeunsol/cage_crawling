@@ -5,7 +5,6 @@ rule로 명백한 고/저관련을 확정하고, 임계 근처의 애매한 후�
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
@@ -59,7 +58,8 @@ def _hangul_ratio(text: str) -> float:
 
 def _korea_domain(url: str) -> bool:
     host = urlparse(url or "").netloc.lower().removeprefix("www.")
-    return any(host == d or host.endswith(f".{d}") for d in _KOREA_DOMAINS)
+    return (host.endswith((".go.kr", ".or.kr", ".ac.kr"))
+            or any(host == d or host.endswith(f".{d}") for d in _KOREA_DOMAINS))
 
 
 def _decide(disc: float, korea: float, cfg: dict) -> str:
@@ -76,19 +76,42 @@ def _decide(disc: float, korea: float, cfg: dict) -> str:
 
 def _include_terms(intent, result) -> list[str]:
     """이 후보를 데려온 쿼리의 type에 맞는 가점 어휘. type별이 없으면 LV2 공통."""
-    subtype = intent.query_types.get(result.query_or_intent, "")
+    # SerpAPI는 원문 query 앞에 site:를 붙이므로 query 문자열만으로 type을 역추적할 수 없다.
+    subtype = getattr(result, "query_type", "") or intent.query_types.get(result.query_or_intent, "")
     return intent.include_by_type.get(subtype) or intent.include
 
 
-def _rule_scores(result, intent) -> tuple[float, float, int, int]:
+def _normalized(text: str) -> str:
+    """띄어쓰기·문장부호 차이 때문에 유효한 사건 신호를 놓치지 않는다."""
+    return "".join(c for c in text.lower() if c.isalnum())
+
+
+def _term_hits(text: str, terms) -> list[str]:
+    normalized = _normalized(text)
+    return [term for term in terms if term and _normalized(term) in normalized]
+
+
+def _rule_scores(result, intent) -> tuple[float, float, int, int, int]:
     text = " ".join(filter(None, [result.title, result.snippet, result.content_hint])).lower()
-    inc = sum(1 for t in _include_terms(intent, result) if t and t.lower() in text)
-    exc = sum(1 for t in intent.exclude if t and t.lower() in text)
-    base = float(result.provider_score) if result.provider_score is not None else 0.5
-    disc = max(0.0, min(1.0, base + 0.15 * min(inc, 3) - 0.3 * min(exc, 2)))
+    inc = len(_term_hits(text, _include_terms(intent, result)))
+    exc = len(_term_hits(text, intent.exclude))
+    event = len(_term_hits(text, intent.event_terms))
+    # Google 순위(SerpAPI provider_score)는 taxonomy 관련성을 뜻하지 않는다.
+    # rank 1이라는 이유만으로 무관한 글을 본문 수집하지 않도록, SerpAPI는 실제 type 신호가 점수를 만든다.
+    base = 0.2 if getattr(result, "provider", "") == "serpapi" else (
+        float(result.provider_score) if result.provider_score is not None else 0.5
+    )
+    if intent.event_terms:
+        # 사건형 taxonomy는 '대상'과 '사건·피해'가 함께 있어야 한다. 출처 순위만으로 통과시키지 않는다.
+        disc = (0.75 + 0.05 * min(inc - 1, 2) + 0.05 * min(event - 1, 2)
+                if inc and event else 0.35 if inc else 0.25 if event else 0.2)
+        disc -= 0.4 * min(exc, 1)
+    else:
+        disc = base + 0.15 * min(inc, 3) - 0.3 * min(exc, 2)
+    disc = max(0.0, min(1.0, disc))
     hr = _hangul_ratio(text)
     korea = 0.9 if _korea_domain(result.url) or hr >= 0.5 else (0.6 if hr >= 0.2 else 0.2)
-    return round(disc, 3), round(korea, 3), inc, exc
+    return round(disc, 3), round(korea, 3), inc, exc, event
 
 
 def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
@@ -97,7 +120,7 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
         "min_korea_relevance": 0.60,
         "llm_margin": 0.15, **(cfg or {}),
     }
-    disc, korea, inc, exc = _rule_scores(result, intent)
+    disc, korea, inc, exc, event = _rule_scores(result, intent)
 
     # ① rule로 확정 가능한 명백한 경우
     if exc >= 2 and inc == 0:
@@ -107,7 +130,7 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
             or abs(korea - cfg["min_korea_relevance"]) < margin)
     if not near or llm is None:
         return RerankResult(disc, korea, _decide(disc, korea, cfg), "rule",
-                            f"include={inc}, exclude={exc}")
+                            f"include={inc}, event={event}, exclude={exc}")
 
     # ② 애매 band만 LLM 호출
     spec = _rerank_spec()

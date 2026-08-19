@@ -21,9 +21,7 @@ def _load_llm_cfg(settings: dict) -> dict:
         pass
     return {**file_cfg, **(settings.get("matching", {}).get("llm", {}) or {})}
 
-# 트렌드 모드 마스킹 정책: 유해 표현 보존 + PII/credential 마스킹 (설계서 §12)
-_TREND_PRESERVATION = {"preserve_harmful_expression": True, "mask_pii": True,
-                       "restrict_actionable_detail": False, "mask_credentials": True}
+_TREND_PRESERVATION = {"preserve_harmful_expression": True, "restrict_actionable_detail": False}
 # 최종 action → 레거시 filter_status. 최종 상태는 accepted/discard만 허용한다.
 _ACTION_TO_STATUS = {"accepted": "pass", "discard": "fail"}
 

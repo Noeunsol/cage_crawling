@@ -94,7 +94,6 @@ def build_report(store: Store) -> dict:
         "average_harmfulness_score": average("harmfulness_score"),
         "average_taxonomy_fit_score": average("taxonomy_fit_score"),
         "average_seed_source_value_score": average("seed_source_value_score"),
-        "average_pii_risk_score": average("pii_risk_score"),
         "reference_only_ratio": _status_ratio(cur, "reference_only"),
         "db_duplicate_rate": _status_ratio(cur, "duplicate"),
         "collection_type_conversion": conversion("collection_type"),
@@ -135,3 +134,32 @@ def export_csv(store: Store, path: str, include_raw: bool = False) -> int:
         w.writerow(cols)
         w.writerows(rows)
     return len(rows)
+
+
+_REVIEW_COLS = ("source_url", "title", "target_type", "source_id", "query_plan_id",
+                "korea_evidence", "lv2_evidence", "published_at")
+
+
+def sample_for_review(db_path: str, lv2: str, n: int = 20, seed: int = 0,
+                      out_path: str | None = None) -> list[dict]:
+    """수동 표본 검수용 표본. 본문 LLM 검증을 없앤 대가로 이 검수는 생략할 수 없다.
+
+    합격선: domestic_direct precision ≥95%, LV2 precision ≥90%, combined ≥85%.
+    seed 고정 랜덤이라 같은 DB·seed면 같은 표본이 나온다(재검수 비교 가능).
+    """
+    store = Store(db_path)
+    rows = [
+        dict(zip((*_REVIEW_COLS, "body_excerpt"), row))
+        for row in store.conn.execute(
+            f"SELECT {','.join(_REVIEW_COLS)}, substr(COALESCE(core_text,body_text),1,300) "
+            f"FROM content_records WHERE taxonomy_lv2=? AND action='accepted' "
+            f"ORDER BY substr(content_id,1,8) || ? LIMIT ?", (lv2, str(seed), n))
+    ]
+    store.close()
+    if out_path and rows:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+    return rows

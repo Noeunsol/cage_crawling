@@ -21,7 +21,9 @@ def _topic_of(cand) -> str:
     그래서 category_name이 있으면 그쪽이 우선이다.
     """
     meta = cand.meta or {}
-    return meta.get("category_name") or meta.get("bucket") or "latest"
+    # topic을 명시한 소스가 최우선. 닥터나우처럼 category_name(진료과)이 배분 축이 아니라
+    # 리포트용 라벨인 경우, 이걸 주제로 쓰면 25개로 쪼개져 quota가 잘게 흩어진다.
+    return meta.get("topic") or meta.get("category_name") or meta.get("bucket") or "latest"
 
 
 def _allocate_buckets(cands: list, target: int, ratios: dict) -> list:

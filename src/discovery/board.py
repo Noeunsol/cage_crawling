@@ -1,6 +1,7 @@
 """게시판 목록 discovery. 현재 실제 adapter는 DCInside만 지원한다."""
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 import re
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlsplit, urlunsplit
@@ -186,4 +187,123 @@ def discover_dcinside_trend(galleries, registry, fetcher, max_pages: int = 1,
         if g.get("sort") == "comments" or bucket == "high_comment":
             cands.sort(key=lambda c: c.meta["comment_count"], reverse=True)
         out.extend(cands)
+    return out
+
+
+# ── 일간베스트 (정적 목록) ──
+def parse_ilbe_trend(html, list_url, registry, bucket, board_name) -> list:
+    """일베 목록 → UrlCandidate. 구조는 li > a.subject + span.date/view/comment."""
+    soup = BeautifulSoup(html, "lxml")
+    out = []
+    for row in soup.find_all("li"):
+        if "notice-line" in (row.get("class") or []):   # 공지 제외
+            continue
+        link = row.select_one('a.subject[href*="/view/"]')
+        if not link:
+            continue
+        views = _integer(row.select_one("span.view").get_text()) if row.select_one("span.view") else 0
+        comments = _integer(row.select_one("span.comment").get_text()) if row.select_one("span.comment") else 0
+        url = urljoin(list_url, link.get("href"))
+        domain = urlparse(url).netloc.lower()
+        info = registry.lookup(domain)
+        cand = UrlCandidate(
+            url, domain, f"trend:{board_name}", "board_list", "", "",
+            title=link.get_text(" ", strip=True), canonical_url=url,
+            site_name=info.site_name, site_type=info.site_type,
+            collection_type="raw_expression", discovery_method="board_list",
+        )
+        date = row.select_one("span.date")
+        # 당일 글은 "11:04:11", 이전 글은 "2026.08.13" 형태로 내려온다.
+        cand.published_at_hint = _ilbe_datetime(date.get_text(strip=True)) if date else None
+        cand.snippet = f"comments={comments};views={views}"
+        cand.score = cand.initial_score = float(comments)
+        cand.meta = {
+            "source": "ilbe", "source_type": "community", "board_name": board_name,
+            "bucket": bucket, "is_trending": False,
+            "view_count": views, "comment_count": comments, "like_count": 0,
+        }
+        out.append(cand)
+    return out
+
+
+def _ilbe_datetime(text: str) -> str | None:
+    """목록의 시각 표기를 ISO로. 시:분:초만 있으면 오늘 날짜를 붙인다."""
+    text = (text or "").strip()
+    if re.fullmatch(r"\d{2}:\d{2}(:\d{2})?", text):
+        return f"{_dt.date.today().isoformat()}T{text if len(text) > 5 else text + ':00'}"
+    m = re.fullmatch(r"(\d{4})[.\-/](\d{2})[.\-/](\d{2})", text)
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}T00:00:00" if m else None
+
+
+def discover_ilbe_trend(boards, registry, fetcher, max_pages: int = 1, start_page: int = 1) -> list:
+    out = []
+    for b in boards:
+        list_url = b.get("list_url") or f"https://www.ilbe.com/list/{b['id']}"
+        name = b.get("name") or b.get("id")
+        for page in range(start_page, start_page + max_pages):
+            url = list_url if page == 1 else f"{list_url}?page={page}"
+            html = fetcher.fetch(url)
+            if not html:
+                log.info("일베 목록 fetch 실패 board=%s page=%s", name, page)
+                break
+            out.extend(parse_ilbe_trend(html, list_url, registry, b.get("bucket", "latest"), name))
+    return out
+
+
+# ── 닥터나우 (정적 목록, 의료 상담 Q&A) ──
+def parse_doctornow_trend(html, list_url, registry, bucket, board_name) -> list:
+    """닥터나우 실시간 상담 목록 → UrlCandidate.
+
+    CSS class가 styled-components 해시라 빌드마다 바뀐다. 태그 구조로만 파싱한다.
+    목록 카드의 ``YYYY.MM.DD`` 표기를 published_at_hint로 보존한다.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    out = []
+    seen = set()
+    for article in soup.find_all("article"):
+        link = article.find_parent("a") or article.select_one("a[href]")
+        href = link.get("href") if link else None
+        if not href or not re.search(r"/content/qna/\w+", href) or href in seen:
+            continue
+        seen.add(href)
+        heading = article.find("h2")
+        summary = article.find("p")
+        dept = article.find("h3")
+        url = urljoin(list_url, href)
+        domain = urlparse(url).netloc.lower()
+        info = registry.lookup(domain)
+        cand = UrlCandidate(
+            url, domain, f"trend:{board_name}", "board_list", "", "",
+            title=heading.get_text(" ", strip=True) if heading else "",
+            canonical_url=url, site_name=info.site_name, site_type=info.site_type,
+            collection_type="qa_consulting", discovery_method="board_list",
+        )
+        date = re.search(r"\b(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})\b", article.get_text(" ", strip=True))
+        cand.published_at_hint = (
+            f"{date.group(1)}-{int(date.group(2)):02d}-{int(date.group(3)):02d}T00:00:00"
+            if date else None
+        )
+        cand.snippet = summary.get_text(" ", strip=True)[:200] if summary else None
+        cand.meta = {
+            "source": "doctornow", "source_type": "qna", "board_name": board_name,
+            "bucket": bucket, "topic": bucket, "is_trending": False,
+            "category_name": dept.get_text(strip=True) if dept else "",
+            "view_count": 0, "comment_count": 0, "like_count": 0,
+        }
+        out.append(cand)
+    return out
+
+
+def discover_doctornow_trend(boards, registry, fetcher, max_pages: int = 1, start_page: int = 1) -> list:
+    out = []
+    for b in boards:
+        list_url = b.get("list_url") or "https://doctornow.co.kr/content/qna/realtime"
+        name = b.get("name") or b.get("id", "doctornow")
+        for page in range(start_page, start_page + max_pages):
+            url = list_url if page == 1 else f"{list_url}?page={page}"
+            html = fetcher.fetch(url)
+            if not html:
+                log.info("닥터나우 목록 fetch 실패 page=%s", page)
+                break
+            out.extend(parse_doctornow_trend(html, list_url, registry, b.get("bucket", "latest"), name))
     return out

@@ -1,17 +1,12 @@
-"""Phase 8 — Content Cleaning. raw → cleaned → masked 3단 분리.
+"""Phase 8 — Content Cleaning.
 
 지도 원칙: 욕설·모욕·조롱·협박 표현은 taxonomy 신호이므로 **보존**한다.
-제거/마스킹 대상은 boilerplate(메뉴/푸터/관련글)와 PII(전화/이메일/주민번호/계좌/주소)뿐.
-  raw_text     — 추출 원문 (불변)
-  cleaned_text — boilerplate 제거 + 공백 정리
-  masked_text  — cleaned + PII 마스킹 (matcher/LLM 입력, body_text 별칭)
-마스킹 로직은 mask.py로 분리.
+제거 대상은 boilerplate(메뉴/푸터/관련글)이며, 정제 본문을 분류·저장에 사용한다.
 """
 from __future__ import annotations
 
 import re
 
-from .mask import BasicPIIMasker, Masker, risk_for_types
 from .schema import ContentRecord
 
 # 반복 boilerplate (관련글/추천글/공유 등)
@@ -39,13 +34,10 @@ _COMMENT_AD = re.compile(r"https?://|오픈채팅|카톡\s*문의|텔레그램|�
 
 
 
-def clean_record(rec: ContentRecord, policy: dict | None = None,
-                 masker: Masker | None = None) -> ContentRecord:
-    """raw_text 기준으로 cleaned_text/masked_text를 채운다. 제자리 수정. 댓글은 수집하지 않는다.
-
-    policy: subtype.preservation_policy (mask_pii/mask_credentials 등). None이면 기본(PII+credential 마스킹).
-    """
-    cleaned = rec.raw_text or rec.body_text
+def clean_record(rec: ContentRecord, policy: dict | None = None) -> ContentRecord:
+    """raw_text 기준으로 정제 본문을 채운다. policy는 호출 호환용이며 사용하지 않는다."""
+    # Q&A parser가 만든 core_text가 있으면 배너·이미지·중복 답변이 섞인 raw_text보다 우선한다.
+    cleaned = rec.core_text or rec.raw_text or rec.body_text
     for pat in _BOILERPLATE:
         cleaned = pat.sub("", cleaned)
     lines, seen = [], set()
@@ -59,24 +51,10 @@ def clean_record(rec: ContentRecord, policy: dict | None = None,
     cleaned = "\n".join(lines)
     cleaned = _MULTINEWLINE.sub("\n\n", _MULTISPACE.sub(" ", cleaned)).strip()
 
-    masker = masker or BasicPIIMasker()
-    # Global privacy 설정이 안전 하한선이다. taxonomy 정책은 이를 해제할 수 없다.
-    overrides = {}
-
-    result = masker.mask(cleaned, overrides) if isinstance(masker, BasicPIIMasker) else masker.mask(cleaned)
     rec.cleaned_text = cleaned
-    rec.masked_text = result.masked_text
-    rec.body_text = rec.masked_text           # 별칭 (report/CSV/test 호환)
-    entities = list(result.entities)
-    pii_types = list(result.pii_types)
-    warnings = list(result.warnings)
-
-    rec.masked_entities = entities
-    rec.pii_detected = bool(entities)
-    rec.pii_types = list(dict.fromkeys(pii_types))
-    rec.pii_risk_score = risk_for_types(rec.pii_types)
-    rec.masking_version = result.masking_version
-    rec.masking_warnings = warnings
+    rec.core_text = cleaned
+    rec.masked_text = cleaned  # 기존 DB/LLM 입력 필드 호환용 별칭. 마스킹은 수행하지 않는다.
+    rec.body_text = cleaned
 
     rec.dedup_hash = rec.compute_dedup_hash()
     return rec

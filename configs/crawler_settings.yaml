@@ -70,33 +70,15 @@ budget:
     news_case: {max_queries: 15, max_extracts: 80}
     technical_security: {max_queries: 10, max_extracts: 50}
 
-# raw_text/raw_comments는 export 기본 제외 (미마스킹 원문 보호)
 export:
   include_raw: false
 
-privacy:
-  enabled: true
-  masking_version: "v1_regex_basic"
-  save_raw_text: true
-  export_raw_text: false
-  mask_types:
-    phone: true
-    email: true
-    rrn: true
-    card: true
-    account_number: true
-    address: true
-    credential: true
-    account_id: true
-  # 이름(person_name) 마스킹 규칙은 src/mask.py에 없다. 필요해지면 _RULES에 추가하고 여기 키를 만든다.
-
 # 단계별 파일 저장(ArtifactStore). 기본 off = 완전 no-op(동작 무변화).
-# content_id별 data/stages/<id>/ 아래에 저장. masked만 안전 기본, 나머지는 privacy.save_raw_text로 재게이트.
+# content_id별 data/stages/<id>/ 아래에 저장.
 staging:
   enabled: false
   base_dir: data/stages
   stages:
-    masked: true        # PII 마스킹됨 — 안전
-    cleaned: false      # 미마스킹
-    raw_text: false     # 미마스킹
-    raw_html: false     # 미마스킹 HTML, gitignore, PII 최다
+    masked: true
+    cleaned: false
+    raw_text: false

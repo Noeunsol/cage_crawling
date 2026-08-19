@@ -10,7 +10,7 @@ from .pipelines.keyword import run
 from .pipelines.trend import run_trend
 from .pipelines.gap_filling import (
     _default_provider, _load_phase2_config, preview_discovery, preview_intents,
-    run_targeted, small_run, verify_unverified_candidates,
+    preview_taxonomy_plan, run_targeted, run_taxonomy_plan, small_run, verify_unverified_candidates,
 )
 from .phase2.intent_builder import missing_manual_intents
 # tests가 이름으로 참조하는 내부 헬퍼(안정 표면으로 재export)
@@ -22,5 +22,5 @@ from .pipelines._trend_util import (
 
 __all__ = [
     "run", "run_trend", "run_targeted", "small_run", "verify_unverified_candidates",
-    "preview_intents", "preview_discovery", "missing_manual_intents",
+    "preview_intents", "preview_discovery", "preview_taxonomy_plan", "run_taxonomy_plan", "missing_manual_intents",
 ]

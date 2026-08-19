@@ -129,6 +129,9 @@ class ExtractorRouter:
             title=content.title or "",
             body_text=content.body_text,              # clean 단계에서 masked_text로 교체
             raw_text=content.body_text,               # 원문 보존
+            question_body=getattr(content, "question_body", ""),
+            answer_body=getattr(content, "answer_body", ""),
+            core_text=getattr(content, "core_text", "") or content.body_text,
             collected_at=collected_at,
             search_query=c.search_query,
             search_api=c.search_api,

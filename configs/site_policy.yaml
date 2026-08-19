@@ -9,6 +9,26 @@ sites:
     site_type: qna
     preferred_extractor: site_parser   # MockNaverKinExtractor
 
+  ilbe:
+    domains:
+      - ilbe.com
+      - www.ilbe.com
+    site_type: community
+    preferred_extractor: site_parser
+
+  doctornow:
+    domains:
+      - doctornow.co.kr
+    site_type: qna              # 의료 상담 Q&A — success_criteria.qna(본문 200자) 적용
+    preferred_extractor: trafilatura
+
+  instiz:
+    domains:
+      - instiz.net
+      - www.instiz.net
+    site_type: community
+    preferred_extractor: site_parser
+
   dcinside:
     domains:
       - dcinside.com
@@ -99,6 +119,31 @@ sites:
     domains:
       - newsis.com
     site_type: news
+    preferred_extractor: trafilatura
+
+  kdca:
+    domains: [kdca.go.kr]
+    site_type: government
+    preferred_extractor: trafilatura
+
+  police:
+    domains: [police.go.kr]
+    site_type: government
+    preferred_extractor: trafilatura
+
+  national_fire_agency:
+    domains: [nfa.go.kr]
+    site_type: government
+    preferred_extractor: trafilatura
+
+  ministry_of_environment:
+    domains: [me.go.kr, nics.me.go.kr]
+    site_type: government
+    preferred_extractor: trafilatura
+
+  nuclear_safety_security_commission:
+    domains: [nssc.go.kr]
+    site_type: government
     preferred_extractor: trafilatura
 
   kisa:

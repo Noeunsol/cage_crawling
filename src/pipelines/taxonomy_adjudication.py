@@ -1,23 +1,21 @@
 """본문 점수 → 최종 action 판정 (3개 모드의 판정 규칙을 한 곳에).
 
 세 함수는 각기 다른 정책 계약을 가진다 — 통합하지 말 것:
-- _classification_status     : keyword(레거시) 모드. subtype threshold + pii 게이트 → pass|fail
+- _classification_status     : keyword(레거시) 모드. subtype threshold → pass|fail
 - _trend_classification_action: trend 모드. korea 게이트 + 로컬 임계값 → accepted|discard
 - _phase2_adjudicate         : gap_filling(2차) 모드. korea 독립 게이트 + opportunistic mismatch
 """
 from __future__ import annotations
 
-def _classification_status(match, rec, thresholds: dict, max_pii_risk: float) -> str:
+def _classification_status(match, rec, thresholds: dict) -> str:
     fit = rec.taxonomy_fit_score or 0
     harm = rec.harmfulness_score or 0
     val = rec.seed_source_value_score or 0
-    pii = rec.pii_risk_score or 0
     t = thresholds or {}
     if (match.is_relevant
             and fit >= t.get("min_taxonomy_fit_score", 0.75)
             and harm >= t.get("min_harmfulness_score", 0.65)
-            and val >= t.get("min_seed_source_value_score", 0.60)
-            and pii <= max_pii_risk):
+            and val >= t.get("min_seed_source_value_score", 0.60)):
         return "pass"
     return "fail"
 

@@ -6,7 +6,6 @@ raw_text/raw_comments는 미마스킹 원문 — export에서는 기본 제외(r
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 import uuid
@@ -14,7 +13,7 @@ from pathlib import Path
 
 from ..schema import ContentRecord, UrlCandidate, canonicalize_url, content_id_for
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 21
 
 # (컬럼명, 타입) — CREATE와 마이그레이션 공용
 _CONTENT_COLS = [
@@ -26,14 +25,17 @@ _CONTENT_COLS = [
     ("site_name", "TEXT"), ("site_type", "TEXT"),
     ("title", "TEXT"), ("body_text", "TEXT"),
     ("raw_text", "TEXT"), ("cleaned_text", "TEXT"), ("masked_text", "TEXT"),
+    # v19 Q&A 구조화 본문. core_text는 화면·품질·LLM의 기본 본문이다.
+    ("question_body", "TEXT"), ("answer_body", "TEXT"), ("core_text", "TEXT"),
     ("raw_comments", "TEXT"), ("masked_comments", "TEXT"),
     ("original_comment_count", "INTEGER"), ("kept_comment_count", "INTEGER"),
     ("duplicate_comments_removed", "INTEGER"), ("unrelated_comments_removed", "INTEGER"),
     ("published_at", "TEXT"), ("published_at_source", "TEXT"), ("collected_at", "TEXT"),
     ("search_query", "TEXT"), ("search_api", "TEXT"), ("extractor", "TEXT"),
     ("collection_type", "TEXT"), ("discovery_method", "TEXT"),
-    ("language", "TEXT"),
+    ("language", "TEXT"), ("korean_language_ratio", "REAL"),
     ("quality_score", "REAL"), ("taxonomy_relevance_score", "REAL"), ("korea_relevance_score", "REAL"),
+    ("korea_context_evidence", "TEXT"),
     ("harmfulness_score", "REAL"), ("taxonomy_fit_score", "REAL"),
     ("seed_source_value_score", "REAL"), ("pii_detected", "INTEGER"),
     ("pii_types", "TEXT"), ("pii_risk_score", "REAL"), ("masking_version", "TEXT"),
@@ -61,8 +63,12 @@ _CONTENT_COLS = [
     ("crawl_status", "TEXT"),
     ("parent_source_url", "TEXT"), ("link_source", "TEXT"), ("is_supplementary", "INTEGER"),
     # v18 2차 semantic discovery provenance
-    ("run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
+    ("run_id", "TEXT"), ("taxonomy_run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
     ("discovery_provider", "TEXT"), ("discovery_query", "TEXT"), ("discovery_relevance_score", "REAL"),
+    # v21 2차 targeted acceptance gate
+    ("target_type", "TEXT"), ("source_id", "TEXT"), ("query_plan_id", "TEXT"),
+    ("korea_relevance_type", "TEXT"), ("korea_evidence", "TEXT"), ("lv2_evidence", "TEXT"),
+    ("is_official_seed", "INTEGER"),
 ]
 
 _CANDIDATE_COLS = [
@@ -81,10 +87,15 @@ _CANDIDATE_COLS = [
     ("llm_total_tokens", "INTEGER"), ("llm_estimated_cost_usd", "REAL"),
     ("filter_reason", "TEXT"), ("status", "TEXT"), ("score", "REAL"),
     # v18 2차 semantic discovery provenance + rerank 메타(content_hint는 후보에만 보관)
-    ("run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
+    ("run_id", "TEXT"), ("taxonomy_run_id", "TEXT"), ("collection_phase", "INTEGER"), ("query_id", "TEXT"),
     ("discovery_provider", "TEXT"), ("discovery_query", "TEXT"),
     ("discovery_relevance_score", "REAL"), ("korea_relevance_score", "REAL"),
     ("content_hint", "TEXT"),
+    # v21 query plan provenance
+    ("target_type", "TEXT"), ("source_id", "TEXT"), ("source_access", "TEXT"),
+    ("query_plan_id", "TEXT"), ("query_generation_source", "TEXT"),
+    ("expected_korea_evidence", "TEXT"), ("expected_lv2_evidence", "TEXT"),
+    ("korea_evidence", "TEXT"), ("lv2_evidence", "TEXT"),
 ]
 
 _OTHER_SCHEMA = """
@@ -93,7 +104,23 @@ CREATE TABLE IF NOT EXISTS filter_logs (
     source_url TEXT, stage TEXT, status TEXT, reason TEXT,
     taxonomy_lv2 TEXT, subtype TEXT
 );
+-- 2차 targeted 검색 계획. 계획 재사용 판단(seed_fingerprint/created_at/성과)과
+-- query별 성과 리포트를 한 테이블로 겸한다.
+CREATE TABLE IF NOT EXISTS query_plans (
+    plan_id TEXT PRIMARY KEY,
+    lv2 TEXT, target_type TEXT, query TEXT, query_kind TEXT, source_id TEXT,
+    expected_korea_evidence TEXT, expected_lv2_evidence TEXT,
+    seed_fingerprint TEXT, generation_source TEXT, created_at TEXT, seed_url TEXT,
+    discovered_count INTEGER DEFAULT 0, fetch_success_count INTEGER DEFAULT 0,
+    domestic_pass_count INTEGER DEFAULT 0, lv2_pass_count INTEGER DEFAULT 0,
+    stored_count INTEGER DEFAULT 0
+);
 """
+
+_PLAN_STAT_FIELDS = (
+    "discovered_count", "fetch_success_count",
+    "domestic_pass_count", "lv2_pass_count", "stored_count",
+)
 
 
 class Store:
@@ -168,6 +195,9 @@ class Store:
         row["is_trend_seed"] = int(rec.is_trend_seed)
         row["is_supplementary"] = int(rec.is_supplementary)
         row["needs_comment_fallback"] = int(rec.needs_comment_fallback)
+        row["is_official_seed"] = int(rec.is_official_seed)
+        row["korea_evidence"] = json.dumps(rec.korea_evidence, ensure_ascii=False)
+        row["lv2_evidence"] = json.dumps(rec.lv2_evidence, ensure_ascii=False)
         row["contains_korean_context"] = (
             int(rec.contains_korean_context) if rec.contains_korean_context is not None else None
         )
@@ -176,6 +206,7 @@ class Store:
         row["risk_signals"] = json.dumps(rec.risk_signals, ensure_ascii=False)
         row["matched_keywords"] = json.dumps(rec.matched_keywords, ensure_ascii=False)
         row["secondary_flags"] = json.dumps(rec.secondary_flags, ensure_ascii=False)
+        row["korea_context_evidence"] = json.dumps(rec.korea_context_evidence, ensure_ascii=False)
         row["evidence_spans"] = json.dumps(rec.evidence_spans, ensure_ascii=False)
         row["negative_contexts"] = json.dumps(rec.negative_contexts, ensure_ascii=False)
         row["masking_warnings"] = json.dumps(rec.masking_warnings, ensure_ascii=False)
@@ -195,11 +226,52 @@ class Store:
             row[name] = meta.get(name, row[name])
         row["is_trend_seed"] = int(bool(getattr(c, "is_trend_seed", False)))
         row["is_supplementary"] = int(bool(getattr(c, "is_supplementary", False)))
+        for name in ("expected_korea_evidence", "expected_lv2_evidence",
+                     "korea_evidence", "lv2_evidence"):
+            row[name] = json.dumps(getattr(c, name, []) or [], ensure_ascii=False)
         cols = ",".join(row)
         values = ",".join(f":{x}" for x in row)
         self.conn.execute(
             f"INSERT OR REPLACE INTO url_candidates ({cols}) VALUES ({values})", row,
         )
+        self.conn.commit()
+
+    def save_query_plans(self, plans: list[dict]) -> None:
+        """검색 계획 upsert. 이미 있는 plan_id의 성과 카운터는 보존한다."""
+        cols = ("plan_id", "lv2", "target_type", "query", "query_kind", "source_id",
+                "expected_korea_evidence", "expected_lv2_evidence",
+                "seed_fingerprint", "generation_source", "created_at", "seed_url")
+        rows = [
+            tuple(
+                json.dumps(plan.get(name, []), ensure_ascii=False)
+                if name.startswith("expected_") else plan.get(name, "")
+                for name in cols
+            )
+            for plan in plans
+        ]
+        self.conn.executemany(
+            f"INSERT INTO query_plans ({','.join(cols)}) VALUES ({','.join('?' * len(cols))}) "
+            f"ON CONFLICT(plan_id) DO UPDATE SET "
+            + ",".join(f"{name}=excluded.{name}" for name in cols if name != "plan_id"),
+            rows,
+        )
+        self.conn.commit()
+
+    def load_query_plans(self, lv2: str) -> list[dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM query_plans WHERE lv2=? ORDER BY created_at DESC, plan_id", (lv2,))
+        names = [d[0] for d in cur.description]
+        plans = [dict(zip(names, row)) for row in cur]
+        for plan in plans:
+            for name in ("expected_korea_evidence", "expected_lv2_evidence"):
+                plan[name] = json.loads(plan[name] or "[]")
+        return plans
+
+    def bump_plan_stat(self, plan_id: str, field: str, delta: int = 1) -> None:
+        if not plan_id or field not in _PLAN_STAT_FIELDS:
+            return
+        self.conn.execute(
+            f"UPDATE query_plans SET {field}=COALESCE({field},0)+? WHERE plan_id=?", (delta, plan_id))
         self.conn.commit()
 
     def find_duplicate(self, rec: ContentRecord, hamming_threshold: int = 3) -> str | None:

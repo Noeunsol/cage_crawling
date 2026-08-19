@@ -1,8 +1,7 @@
 """단계별 파일 저장 — content_id별 디렉토리에 raw/cleaned/masked를 남긴다(재현·디버깅용).
 
 DB(content_records)와 별개의 opt-in 보조 저장소. staging.enabled=false면 완전 no-op.
-파일↔DB 상관은 content_id로 도출(DB 컬럼 추가 없음). PII 안전: masked만 기본 on,
-raw/cleaned/raw_html은 privacy.save_raw_text로 한 번 더 게이트하고 gitignore한다.
+파일↔DB 상관은 content_id로 도출(DB 컬럼 추가 없음).
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ log = logging.getLogger(__name__)
 _TEXT_STAGES = (("raw_text", "raw_text", "raw.txt"),
                 ("cleaned", "cleaned_text", "cleaned.txt"),
                 ("masked", "masked_text", "masked.txt"))
-_UNMASKED = {"raw_html", "raw_text", "cleaned"}
+_UNMASKED = {"raw_text", "cleaned"}
 
 
 class ArtifactStore:
@@ -34,12 +33,12 @@ class ArtifactStore:
             return cls(stages=frozenset())          # no-op
         enabled = {k for k, v in (st.get("stages") or {}).items() if v}
         return cls(base_dir=st.get("base_dir", paths.STAGES_DIR), stages=frozenset(enabled),
-                   save_raw_text=settings.get("privacy", {}).get("save_raw_text", True))
+                   save_raw_text=True)
 
     def _enabled(self, stage: str) -> bool:
         if stage not in self.stages:
             return False
-        return self.save_raw_text or stage not in _UNMASKED   # 미마스킹 단계는 privacy 게이트
+        return self.save_raw_text or stage not in _UNMASKED
 
     def _write(self, content_id: str, fname: str, text: str) -> None:
         try:
@@ -48,11 +47,6 @@ class ArtifactStore:
             (d / fname).write_text(text, encoding="utf-8")
         except Exception as exc:  # noqa: BLE001 (저장 실패가 파이프라인을 깨지 않는다)
             log.debug("staged 저장 실패 %s/%s: %s", content_id, fname, exc)
-
-    def save_html(self, source_url: str, html: str | None) -> None:
-        if not self._enabled("raw_html") or not html:
-            return
-        self._write(content_id_for(source_url), "raw.html", html)
 
     def save_record(self, rec) -> None:
         if not self.stages:

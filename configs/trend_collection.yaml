@@ -16,9 +16,12 @@ discovery_limits:
 
 # 목록에서는 기간 전체의 제목·시각을 넓게 확인하고, 비싼 본문·LLM 대상만 날짜별 제한한다.
 sampling:
-  daily_quota_by_source:
-    dcinside: 50
+  equal_quota_by_source: true # 비교 실험: 성과 가중 재분배를 끄고 아래 값을 그대로 쓴다
+  daily_quota_by_source:      # 비교 실험: 소스별 동일 수량
+    dcinside: 30
     news_rss: 30
+    ilbe: 30
+    doctornow: 30
   time_bucket_hours: 4
   engagement_ratio: 0.30
   absolute_max_selected: 1000
@@ -52,6 +55,18 @@ sources:
       - {id: ib_new2,          name: 인터넷방송,    bucket: entertainment_or_person, sort: comments}
       - {id: leagueoflegends6, name: 리그오브레전드, bucket: toxic_game}
       - {id: programming,      name: 프로그래밍,    bucket: it_game_security}
+
+  # 비교 실험용 신규 수집원. robots 차단으로 FM코리아·네이트판은 제외, 로톡은 JS 렌더가 필요해 보류.
+  ilbe:
+    enabled: true
+    boards:
+      - {id: ilbe, name: 일간베스트, bucket: random_trend}
+
+  doctornow:
+    enabled: true
+    # 의료 상담 Q&A. 목록 카드의 YYYY.MM.DD 날짜를 읽어 최근 N일 필터를 적용한다.
+    boards:
+      - {list_url: "https://doctornow.co.kr/content/qna/realtime", name: 실시간상담, bucket: medical_qa}
 
   news_rss:
     enabled: true

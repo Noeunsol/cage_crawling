@@ -64,7 +64,6 @@ _TREND_TERMS = [
 _CONTROVERSY_TERMS = ["논란", "근황", "사과문", "실베", "난리", "폭로", "저격", "반응", "불매", "해명", "사건"]
 _AD_TERMS = ["광고 문의", "협찬", "프로모션", "쿠팡 파트너스", "구매 링크", "특가 판매"]
 _URL_ONLY = re.compile(r"^(?:\s*https?://\S+\s*)+$", re.I)
-_PII = re.compile(r"(?:01[016789][-\s]?\d{3,4}[-\s]?\d{4})|(?:[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})")
 _MEDIA_EXTENSIONS = (".mp4", ".webm", ".mov", ".avi", ".mkv", ".m3u8")
 _VIDEO_HOSTS = {
     "youtube.com", "youtu.be", "youtube-nocookie.com", "tv.naver.com",
@@ -154,9 +153,6 @@ def decide_filter_action(record) -> RelevanceResult:
 
     signals, matched = detect_risk_signals(text)
     negatives = detect_negative_context(text)
-    if getattr(record, "pii_detected", False) or _PII.search(text):
-        return _result("keep", "pii_possible", signals, matched, negatives)   # PII는 LLM/검수로
-
     if not signals:
         if source_type == "news" and any(term in text for term in _TREND_TERMS):
             return _result("discard", "news_trend_seed", seed=True)

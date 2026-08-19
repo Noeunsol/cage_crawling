@@ -2,47 +2,26 @@
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import logging
-import uuid
-from collections import defaultdict
 
 import yaml
 
-from ..reporting import coverage as _coverage
 from ..clean import clean_record
 from ..storage.dedup import EventDeduper, make_event_key, simhash
 from ..discovery import DiscoveryRouter
-from ..discovery.board import discover_dcinside_trend
-from ..discovery.rss import discover_news_trend
 from ..extract import ExtractorRouter
 from ..keyword_discovery.frontier import UrlFrontier
-from ..classify.matcher import build_taxonomy_index, confidence_bucket, risk_score_of, trend_score_of
 from ..artifact_store import ArtifactStore
-from ..mask import BasicPIIMasker
-from ..phase2.intent_builder import build_collection_intent
-from ..phase2.provider import MockTavilyProvider, TavilyProvider, to_candidate
-from ..phase2.reranker import rerank
 from ..policy import load_policies
 from ..keyword_discovery.query import QueryGenerator
 from ..filtering.quality import QualityFilter
-from ..filtering.relevance_filter import RELEVANCE_SIGNAL_TO_LV2, decide_candidate_action, decide_filter_action
 from ..reporting.report import build_report, export_csv, export_report, print_report
-from ..schema import canonicalize_url
 from ..site_registry import SiteRegistry
 from ..storage.store import Store
 from ..keyword_discovery.strategy import Budget, StrategyRouter
 from ..filtering.url_filter import UrlFilter
-from .persist import _finalize, _phase2_store
-from .stages import _apply_trend_meta, _build_matcher, _copy_llm_usage, _TREND_PRESERVATION
-from .taxonomy_adjudication import (
-    _classification_status, _phase2_adjudicate, _trend_classification_action,
-)
-from ._trend_util import (
-    _allocate_buckets, _append_unique_candidates,
-    _candidate_in_window, _days_old, _extract_links, _link_candidate,
-    _published_in_window, _round_robin_candidates, _target_stats,
-)
+from .stages import _build_matcher, _copy_llm_usage
+from .taxonomy_adjudication import _classification_status
 
 log = logging.getLogger(__name__)
 
@@ -95,11 +74,10 @@ def run(
     extractor = ExtractorRouter(registry, settings)
     quality = QualityFilter(settings)
     matcher = _build_matcher(settings, auto_save, review_th)
-    masker = BasicPIIMasker(settings.get("privacy", {}))
     dedup_threshold = settings.get("dedup", {}).get("event_hamming_threshold", 3)
     deduper = EventDeduper(dedup_threshold)
     store = Store(db_path, reset=reset_db)
-    ctx = _Ctx(url_filter, extractor, quality, matcher, masker, deduper, store, budget,
+    ctx = _Ctx(url_filter, extractor, quality, matcher, deduper, store, budget,
                _dt.date.today().isoformat(), dedup_threshold,
                settings.get("privacy", {}).get("save_raw_text", True))
     ctx.artifact = ArtifactStore.from_settings(settings)
@@ -123,13 +101,12 @@ def run(
 
 class _Ctx:
     """subtype 실행에 필요한 컴포넌트 묶음."""
-    def __init__(self, url_filter, extractor, quality, matcher, masker, deduper, store, budget,
+    def __init__(self, url_filter, extractor, quality, matcher, deduper, store, budget,
                  collected_at, dedup_threshold, save_raw_text):
         self.url_filter = url_filter
         self.extractor = extractor
         self.quality = quality
         self.matcher = matcher
-        self.masker = masker
         self.deduper = deduper
         self.store = store
         self.budget = budget
@@ -175,8 +152,8 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
         ctx.store.save_candidate(cand)
         rec = outcome.record
 
-        # Phase 8: 정제 + PII 마스킹 (raw/cleaned/masked). preservation_policy로 마스킹 범위 결정
-        clean_record(rec, task.preservation_policy, ctx.masker)
+        # Phase 8: 정제(raw/cleaned). masked_text는 cleaned 별칭이며 PII 마스킹은 수행하지 않는다.
+        clean_record(rec, task.preservation_policy)
         ctx.artifact.save_record(rec)
 
         # Phase 8.5: 추출로 확정된 날짜가 수집 기간 밖이면 버림 (URL 힌트 없이 통과한 건 차단).
@@ -203,7 +180,7 @@ def _run_task(task, subtype, discovery, ctx: _Ctx):
         rec.subtype = match.subtype
         rec.filter_reason = match.reason
 
-        rec.filter_status = _classification_status(match, rec, task.thresholds, subtype.max_pii_risk)
+        rec.filter_status = _classification_status(match, rec, task.thresholds)
         if rec.filter_status == "fail":
             rec.action = "discard"
             cand.status, cand.filter_reason = "matched_fail", "score_threshold_or_not_relevant"
@@ -262,4 +239,3 @@ def _dry_run(policies, strategy_router, discovery, url_filter, limits) -> dict:
     }
     print_report(report)
     return report
-

@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 
 from ..schema import ContentRecord, FilterResult
+from .korea_context import score_korea_context
 
 _HANGUL = re.compile(r"[가-힣]")
 _NONSPACE = re.compile(r"\S")
@@ -31,7 +32,11 @@ class QualityFilter:
         min_chars = self._min_chars_for(rec.site_type)
         korean_ratio = _korean_ratio(body)
         rec.language = "ko" if korean_ratio >= self.min_korean_ratio else "other"
-        rec.korea_relevance_score = round(korean_ratio, 3)
+        rec.korean_language_ratio = round(korean_ratio, 3)
+        rec.korea_relevance_score, rec.korea_context_evidence = score_korea_context(
+            rec.title, body, rec.source_url
+        )
+        rec.contains_korean_context = rec.korea_relevance_score >= 0.7
         rec.quality_score = self._score(rec, korean_ratio, body)
 
         # 중복

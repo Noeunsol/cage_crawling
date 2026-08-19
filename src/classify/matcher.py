@@ -63,8 +63,7 @@ def _apply_side_scores(rec: ContentRecord, text: str, subtype: Subtype, confiden
     locality = 1.0 if any("가" <= ch <= "힣" for ch in text) else 0.0
     specificity = min(len(text) / 1200, 1.0)
     expression = min((harmful_hits + context_hits) / 4, 1.0)
-    rec.seed_source_value_score = round(max(0.0, 0.35 * locality + 0.35 * specificity
-                                              + 0.3 * expression - 0.1 * (rec.pii_risk_score or 0)), 3)
+    rec.seed_source_value_score = round(max(0.0, 0.35 * locality + 0.35 * specificity + 0.3 * expression), 3)
 
 
 def build_taxonomy_index(policies: list[Policy]) -> tuple[set[tuple[str, str]], list[str]]:
@@ -191,7 +190,8 @@ class LLMMatcher(TaxonomyMatcher):
             self._client = OpenAI()
         return self._client
 
-    def _complete_json(self, system: str, user: str, schema: dict, condition: str = "") -> dict | None:
+    def _complete_json(self, system: str, user: str, schema: dict, condition: str = "",
+                       max_tokens: int = 512) -> dict | None:
         self.last_usage = {"input": 0, "cached": 0, "output": 0, "total": 0}
         self.last_error = ""
         try:
@@ -200,7 +200,7 @@ class LLMMatcher(TaxonomyMatcher):
                 if condition:  # 프리필/가짜 어시스턴트 응답
                     messages.append({"role": "assistant", "content": condition})
                 resp = self._get_client().chat.completions.create(
-                    model=self.model, max_tokens=512, temperature=0,  # 분류는 결정론적으로(재현성)
+                    model=self.model, max_tokens=max_tokens, temperature=0,  # 분류는 결정론적으로(재현성)
                     messages=messages,
                     response_format={"type": "json_schema",
                                      "json_schema": {"name": "cls", "strict": True, "schema": schema}},
@@ -218,7 +218,7 @@ class LLMMatcher(TaxonomyMatcher):
             if condition:  # 프리필/가짜 어시스턴트 응답
                 a_messages.append({"role": "assistant", "content": condition})
             resp = self._get_client().messages.create(
-                model=self.model, max_tokens=512, system=system,
+                model=self.model, max_tokens=max_tokens, system=system,
                 messages=a_messages,
                 output_config={"format": {"type": "json_schema", "schema": schema}},
             )

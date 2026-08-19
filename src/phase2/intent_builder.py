@@ -26,6 +26,7 @@ class CollectionIntent:
     dropped_queries: list[str] = field(default_factory=list)   # max_searches에 잘려나간 쿼리
     include: list[str] = field(default_factory=list)   # rerank 가점 전용
     exclude: list[str] = field(default_factory=list)   # rerank 감점 전용
+    event_terms: list[str] = field(default_factory=list)  # 대상 신호와 함께 있어야 하는 사건·피해 신호
     korea_relevance_requirement: str = ""
     excluded_domains: list[str] = field(default_factory=list)
     max_results: int = 10
@@ -90,6 +91,7 @@ def build_collection_intent(policy, config: dict) -> CollectionIntent:
         include_by_type = {subtype: _dedup(terms) for subtype, terms
                            in (manual.get("include_by_type") or {}).items()}
         exclude = _dedup(manual.get("exclude", []))
+        event_terms = _dedup(manual.get("event_terms", []))
         korea_required = bool(manual.get("korea_required", True))
         excluded_domains = _dedup(global_excluded_domains + manual.get("excluded_domains", []))
     else:
@@ -102,6 +104,7 @@ def build_collection_intent(policy, config: dict) -> CollectionIntent:
             [n for st in policy.subtypes for n in st.negative_patterns]
             + ["단순 정의 설명", "광고", "홍보", "위키성 문서", "처리방침"]
         )
+        event_terms = []
         korea_required = True
         excluded_domains = global_excluded_domains
         missing_types = []
@@ -132,6 +135,7 @@ def build_collection_intent(policy, config: dict) -> CollectionIntent:
         dropped_queries=dropped_queries,
         include=include,
         exclude=exclude,
+        event_terms=event_terms,
         korea_relevance_requirement=_KOREA_REQUIREMENT if korea_required else "",
         excluded_domains=excluded_domains,
         max_results=max_results,

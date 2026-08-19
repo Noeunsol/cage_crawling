@@ -4,7 +4,6 @@ from src.clean import clean_record
 from src.discovery import DiscoveryRouter
 from src.extract import ExtractorRouter
 from src.mask import apply_preservation_policy
-from src.classify.matcher import RuleBasedMatcher
 from src.keyword_discovery.strategy import Budget, StrategyRouter, StrategyTask
 from src.keyword_discovery.frontier import UrlFrontier
 from src.pipeline import _classification_status
@@ -69,9 +68,8 @@ def test_reference_page_is_detected():
 
 def test_irrelevant_llm_result_cannot_pass():
     rec = _record(); rec.taxonomy_fit_score = rec.harmfulness_score = rec.seed_source_value_score = 0.99
-    rec.pii_risk_score = 0
     match = MatchResult(False, "T", "S", 0.99, "llm:not relevant")
-    assert _classification_status(match, rec, {}, 1.0) == "fail"
+    assert _classification_status(match, rec, {}) == "fail"
 
 
 def test_max_urls_per_query_is_applied():
@@ -164,8 +162,8 @@ def test_old_candidate_table_is_migrated_without_data_loss(tmp_path):
 
 
 
-def test_taxonomy_policy_cannot_disable_global_pii_masking():
+def test_cleaning_preserves_text_without_privacy_masking():
     rec = _record()
     rec.raw_text = "연락 010-1234-5678 token=abcdefghijk 악플"
     clean_record(rec, {"mask_pii": False, "mask_credentials": False})
-    assert "[PHONE]" in rec.masked_text and "[SECRET]" in rec.masked_text
+    assert rec.masked_text == rec.raw_text

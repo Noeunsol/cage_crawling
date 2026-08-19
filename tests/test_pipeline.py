@@ -81,10 +81,10 @@ def test_end_to_end_real_parsers(tmp_path, monkeypatch):
     assert "trafilatura" in extractors         # 뉴스 본문+날짜
     assert "dcinside" in extractors or "site_parser_community" in extractors
 
-    # (g) body_text=masked (PII 마스킹), raw는 DB에만 (raw_text에 원문 보존)
+    # (g) body_text는 정제 본문이며 원문 내용을 유지한다.
     r = conn.execute("SELECT body_text, raw_text FROM content_records LIMIT 1").fetchone()
-    assert "[PHONE]" in r[0] and "010-1234-5678" not in r[0]      # masked
-    assert "010-1234-5678" in r[1]                                # raw 보존
+    assert "010-1234-5678" in r[0]
+    assert "010-1234-5678" in r[1]
 
     # (g) CSV에는 raw_text 미포함
     with open(tmp_path / "c.csv", encoding="utf-8-sig") as f:

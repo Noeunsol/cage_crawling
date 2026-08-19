@@ -27,10 +27,20 @@ def main() -> None:
     p.add_argument("--dry-run", action="store_true", help="fetch/추출 없이 수집 예정 범위만 프리뷰")
     p.add_argument("--reset-db", action="store_true", help="기존 DB 삭제 후 재생성")
     p.add_argument("--max-queries", type=int, default=None, help="이번 실행 SerpAPI 검색 상한 (settings 덮어씀)")
+    p.add_argument("--sample-review", default=None, metavar="LV2",
+                   help="targeted: 저장된 LV2 표본을 수동 검수용 CSV로 내보내고 종료")
+    p.add_argument("--sample-n", type=int, default=20, help="--sample-review 표본 수")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args()
 
     setup_logging(level=logging.INFO if args.verbose else logging.WARNING, component="cli")
+    if args.sample_review:
+        from .reporting.report import sample_for_review
+        out = f"data/exports/review_{args.sample_review}.csv"
+        rows = sample_for_review(args.db, args.sample_review, args.sample_n, out_path=out)
+        print(f"표본 {len(rows)}건 → {out}")
+        print("합격선: domestic_direct ≥95%, LV2 ≥90%, combined ≥85%")
+        return
     if args.mode == "targeted":
         pipeline.run_targeted(
             config=args.phase2_config,

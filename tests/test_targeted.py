@@ -6,6 +6,7 @@ target/predicted 분리, provenance(run_id/phase=2), opportunistic 판정.
 """
 import sqlite3
 
+import pytest
 import yaml
 
 from src import pipeline
@@ -18,7 +19,7 @@ from src.phase2.intent_builder import (
     missing_manual_intents,
     validate_collection_intent,
 )
-from src.phase2.provider import MockTavilyProvider, SearchResult, to_candidate
+from src.phase2.provider import MockTavilyProvider, SearchResult, SerpApiProvider, to_candidate
 from src.phase2.reranker import rerank
 from src.policy import load_policies
 from src.schema import ContentRecord, MatchResult, UrlCandidate
@@ -46,6 +47,35 @@ def test_weighted_coverage_and_deficits():
     assert cov == {"4_I": 1.5, "1_A": 1.0}
     ranked = coverage.rank_deficits(cov, {"4_I": 30, "1_A": 1, "6_Q": 20})
     assert [r["lv2"] for r in ranked] == ["4_I", "6_Q"]   # 1_A 충분(deficit<0) 제외
+
+
+def test_taxonomy_first_plan_keeps_taxonomy_yaml_order(tmp_path):
+    db = tmp_path / "p2.db"
+    Store(str(db)).close()
+    rows = pipeline.preview_taxonomy_plan(P2, str(db))
+    assert [row["lv2"] for row in rows] == [policy.taxonomy_lv2 for policy in load_policies(TAXO)]
+
+
+def test_cbrne_plan_uses_tavily_then_site_scoped_serpapi(tmp_path):
+    db = tmp_path / "p2.db"
+    Store(str(db)).close()
+    row = next(row for row in pipeline.preview_taxonomy_plan(P2, str(db))
+               if row["lv2"] == "6_O_CBRNE")
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))
+    policy = next(p for p in load_policies(TAXO) if p.taxonomy_lv2 == "6_O_CBRNE")
+    intent = build_collection_intent(policy, cfg)
+
+    assert row["provider_order"] == ["tavily", "serpapi"]
+    assert len(intent.queries) == len(policy.subtypes) == 5
+    assert set(intent.query_types.values()) == {st.name for st in policy.subtypes}
+    assert all("한국" in query for query in intent.queries)
+
+    rule = cfg["serpapi"]["rules_by_lv2"]["6_O_CBRNE"]
+    provider = SerpApiProvider(cfg["serpapi"]["provider"], {"6_O_CBRNE": rule})
+    assert rule["query_strategy"] == "site_per_query"
+    assert set(rule["domains_by_type"]) == {st.name for st in policy.subtypes}
+    assert all(provider._domains(intent, query) for query in intent.queries)
+    assert len(provider._search_terms(intent)) == len(policy.subtypes)
 
 
 # ── 단위: intent (queries 그대로, exclude는 쿼리에서 분리, sensitive_overlay) ──
@@ -158,14 +188,12 @@ def test_budget_cut_preserves_type_breadth():
     assert q == ["성별 혐오 논란", "장애 비하 논란", "종교 비하 논란"]   # 3 type 모두 1개씩
 
 
-def test_config_budget_matches_written_queries():
-    """손으로 쓴 쿼리가 max_searches에 걸려 버려지고 있지 않은지. config 드리프트 감지용."""
+def test_config_queries_respect_configured_budget():
+    """운영자가 LV2별 비용 상한을 낮춰도 실제 실행 쿼리는 상한을 넘지 않는다."""
     cfg = yaml.safe_load(open(P2, encoding="utf-8"))
     for policy in load_policies(TAXO):
         intent = build_collection_intent(policy, cfg)
-        assert not intent.dropped_queries, (
-            f"{policy.taxonomy_lv2}: max_searches={intent.max_searches}인데 "
-            f"쿼리 {len(intent.dropped_queries)}개가 매 실행마다 버려짐")
+        assert len(intent.queries) <= intent.max_searches
 
 
 def test_config_every_type_has_multiple_queries():
@@ -194,6 +222,43 @@ def test_self_harm_queries_keep_target_type_provenance():
     assert len(intent.queries) == intent.max_searches
     assert set(intent.query_types.values()) == {"eating_disorder", "self_injury", "suicide"}
     assert set(intent.include_by_type) == set(intent.query_types.values())
+    assert {"다이어트약", "거식증", "프로아나"} <= set(intent.include_by_type["eating_disorder"])
+    assert "자해" in intent.include_by_type["self_injury"]
+    assert {"자살", "극단적 선택"} <= set(intent.include_by_type["suicide"])
+
+
+def test_self_harm_serpapi_uses_three_korean_qa_community_sites_for_one_year():
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))
+    rule = cfg["serpapi"]["rules_by_lv2"]["1_C_Self_Harm"]
+    expected = ["kin.naver.com/qna", "doctornow.co.kr", "instiz.net"]
+    assert all(domains == expected for domains in rule["domains_by_type"].values())
+    assert rule["max_domains_per_query"] == 3 and rule["tbs"] == "qdr:y"
+    intent = build_collection_intent(
+        next(policy for policy in load_policies(TAXO) if policy.taxonomy_lv2 == "1_C_Self_Harm"), cfg
+    )
+    self_injury_query = next(query for query, type_name in intent.query_types.items() if type_name == "self_injury")
+    provider = SerpApiProvider(cfg["serpapi"]["provider"], {"1_C_Self_Harm": rule})
+    assert provider._domains(intent, self_injury_query) == expected
+    assert provider._search_terms(intent) == [
+        (" ".join(group), type_name)
+        for type_name, groups in rule["keyword_groups_by_type"].items()
+        for group in groups
+    ]
+
+
+def test_serpapi_auth_error_does_not_expose_request_url_or_key():
+    class FakeResponse:
+        status_code = 401
+
+    class FakeClient:
+        def search(self, payload):
+            error = Exception("401 Client Error: Unauthorized for url: https://serpapi.com/search?api_key=secret")
+            error.response = FakeResponse()
+            raise error
+
+    with pytest.raises(RuntimeError, match="SerpAPI 인증 실패") as error:
+        SerpApiProvider._request(FakeClient(), {"q": "test"})
+    assert "secret" not in str(error.value)
 
 
 def test_global_excluded_domains_apply_to_every_intent():
@@ -257,6 +322,52 @@ def test_reranker_skips_candidate_below_relevance_floor():
     assert rerank(low, intent).fetch_decision == "skip"
 
 
+def test_reranker_does_not_treat_serpapi_rank_as_taxonomy_relevance():
+    intent = build_collection_intent(
+        {p.taxonomy_lv2: p for p in load_policies(TAXO)}["4_I_Privacy_Infringement"],
+        {"providers": {"tavily": {}}})
+    irrelevant = SearchResult(
+        "serpapi", "4_I_Privacy_Infringement", "site:kin.naver.com unrelated", "일반 질문",
+        "https://kin.naver.com/qna/1", "일반 질문 본문", provider_score=1.0,
+    )
+    assert rerank(irrelevant, intent).fetch_decision == "skip"
+
+
+def test_cbrne_incident_articles_pass_topic_and_event_gate():
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))
+    policy = next(p for p in load_policies(TAXO) if p.taxonomy_lv2 == "6_O_CBRNE")
+    intent = build_collection_intent(policy, cfg)
+    cases = [
+        ("chemical", "SK하이닉스 공장 화재로 유독가스 누출", "불소 가스가 퍼져 3600명이 대피했다"),
+        ("chemical", "도심 집회에서 최루탄 노출 피해", "최루가스로 시민들이 다쳐 병원으로 이송됐다"),
+        ("biological", "탄저균 등 생화학무기 대응", "서울시와 질병관리청이 생물테러대책반을 가동했다"),
+        ("explosive", "총기 규제하는 한국, 옆집서 폭탄 만들고 있었다", "경찰이 사제 폭탄을 발견했다"),
+        ("explosive", "하천에서 구형 고폭탄 발견", "군 폭발물처리반이 불발탄을 회수했다"),
+        ("explosive", "훈련장 수류탄 폭발 사고", "장병들이 수류탄 폭발로 부상했다"),
+        ("radiological", "한강에서 방사성 요오드 검출", "서울 하천에서 방사성물질이 검출됐다"),
+        ("nuclear", "북한 핵물질 생산 관련 한국 정부 대응", "핵물질 생산 중단을 목표로 대응한다"),
+    ]
+    for type_name, title, snippet in cases:
+        result = SearchResult(
+            "serpapi", "6_O_CBRNE", "site:example", title,
+            "https://www.police.go.kr/example", snippet, query_type=type_name,
+        )
+        decision = rerank(result, intent)
+        assert decision.fetch_decision == "fetch", (type_name, decision)
+        assert decision.discovery_relevance_score >= 0.65
+
+
+def test_cbrne_general_administrative_document_stays_excluded():
+    cfg = yaml.safe_load(open(P2, encoding="utf-8"))
+    policy = next(p for p in load_policies(TAXO) if p.taxonomy_lv2 == "6_O_CBRNE")
+    intent = build_collection_intent(policy, cfg)
+    result = SearchResult(
+        "serpapi", "6_O_CBRNE", "site:nssc.go.kr", "새울 원자력발전소 운영허가(안)",
+        "https://www.nssc.go.kr/example", "원자력 시설 정기 심의 자료", query_type="nuclear",
+    )
+    assert rerank(result, intent).fetch_decision == "skip"
+
+
 # ── 단위: adjudicate (korea 게이트 + opportunistic) ──
 def _adj_rec(korea, fit=0.9, concrete=0.9):
     r = ContentRecord(source_url="u", domain="d", site_name="s", site_type="community",
@@ -316,7 +427,7 @@ def _stub_extract(self, c, collected_at, task=None):
     return ExtractionOutcome(record=rec, tried=["stub_ok"])
 
 
-def _run(tmp_path, monkeypatch, classify, extract=_stub_extract, lv2="4_I_Privacy_Infringement", verify=True):
+def _run(tmp_path, monkeypatch, classify, extract=_stub_extract, lv2="3_G_Misinformation_and_Disinformation", verify=True):
     monkeypatch.setattr(ExtractorRouter, "extract", extract)
     monkeypatch.setattr(LLMMatcher, "classify", classify)
     db = tmp_path / "p2.db"
@@ -327,14 +438,14 @@ def _run(tmp_path, monkeypatch, classify, extract=_stub_extract, lv2="4_I_Privac
 
 
 def test_small_run_accepted_provenance_and_hint_isolation(tmp_path, monkeypatch):
-    db, rep = _run(tmp_path, monkeypatch, _stub_classify("4_I_Privacy_Infringement"))
+    db, rep = _run(tmp_path, monkeypatch, _stub_classify("3_G_Misinformation_and_Disinformation"))
     conn = sqlite3.connect(db)
     rows = conn.execute(
         "SELECT taxonomy_lv2_candidate, taxonomy_lv2, action, collection_phase, run_id, "
         "discovery_provider, body_text FROM content_records WHERE action='accepted'").fetchall()
     assert rows, "accepted 최소 1건"
     tgt, pred, action, phase, run_id, prov, body = rows[0]
-    assert tgt == "4_I_Privacy_Infringement" and pred == "4_I_Privacy_Infringement"
+    assert tgt == "3_G_Misinformation_and_Disinformation" and pred == "3_G_Misinformation_and_Disinformation"
     assert phase == 2 and run_id and prov == "tavily"
     # content_hint(=discovery 메타)는 후보에만, 본문엔 없음
     hint = conn.execute("SELECT content_hint FROM url_candidates WHERE content_hint IS NOT NULL LIMIT 1").fetchone()
@@ -347,16 +458,16 @@ def test_small_run_accepted_provenance_and_hint_isolation(tmp_path, monkeypatch)
     conn.close()
 
 
-def test_small_run_without_openai_stores_unverified_tavily_candidate(tmp_path, monkeypatch):
-    db, _ = _run(tmp_path, monkeypatch, _stub_classify("4_I_Privacy_Infringement"), verify=False)
+def test_small_run_without_openai_stores_targeted_tavily_accepted(tmp_path, monkeypatch):
+    db, _ = _run(tmp_path, monkeypatch, _stub_classify("3_G_Misinformation_and_Disinformation"), verify=False)
     conn = sqlite3.connect(db)
     row = conn.execute("SELECT action,classification_source FROM content_records LIMIT 1").fetchone()
     conn.close()
-    assert row == ("candidate", "tavily_unverified")
+    assert row == ("accepted", "tavily_targeted")
 
 
 def test_reverify_existing_tavily_candidate_with_openai(tmp_path, monkeypatch):
-    db, rep = _run(tmp_path, monkeypatch, _stub_classify("4_I_Privacy_Infringement"), verify=False)
+    db, rep = _run(tmp_path, monkeypatch, _stub_classify("3_G_Misinformation_and_Disinformation"), verify=False)
     result = pipeline.verify_unverified_candidates(
         rep["run_id"], str(db), P2, taxonomy_config=TAXO,
     )
@@ -373,7 +484,7 @@ def test_reverify_existing_tavily_candidate_with_openai(tmp_path, monkeypatch):
 
 
 def test_small_run_low_korea_excluded_not_stored(tmp_path, monkeypatch):
-    db, rep = _run(tmp_path, monkeypatch, _stub_classify("4_I_Privacy_Infringement", korea=0.2))
+    db, rep = _run(tmp_path, monkeypatch, _stub_classify("3_G_Misinformation_and_Disinformation", korea=0.2))
     conn = sqlite3.connect(db)
     stored = conn.execute("SELECT COUNT(*) FROM content_records WHERE action='accepted'").fetchone()[0]
     excluded = conn.execute(
@@ -385,7 +496,7 @@ def test_small_run_low_korea_excluded_not_stored(tmp_path, monkeypatch):
 def test_small_run_extraction_failure_not_stored(tmp_path, monkeypatch):
     def fail_extract(self, c, collected_at, task=None):
         return ExtractionOutcome(record=None, tried=["all_fail"], reason="all_extractors_failed")
-    db, rep = _run(tmp_path, monkeypatch, _stub_classify("4_I_Privacy_Infringement"), extract=fail_extract)
+    db, rep = _run(tmp_path, monkeypatch, _stub_classify("3_G_Misinformation_and_Disinformation"), extract=fail_extract)
     conn = sqlite3.connect(db)
     content = conn.execute("SELECT COUNT(*) FROM content_records").fetchone()[0]
     failed = conn.execute(
@@ -403,7 +514,7 @@ def test_small_run_opportunistic_mismatch_stored(tmp_path, monkeypatch):
         "SELECT taxonomy_lv2_candidate, taxonomy_lv2 FROM content_records WHERE action='accepted' LIMIT 1"
     ).fetchone()
     conn.close()
-    assert row == ("4_I_Privacy_Infringement", "2_F_Bias_and_Hate")   # target != predicted 분리 저장
+    assert row == ("3_G_Misinformation_and_Disinformation", "2_F_Bias_and_Hate")   # target != predicted 분리 저장
 
 
 def _urls(db):
@@ -430,7 +541,275 @@ def test_reference_db_blocks_urls_already_in_main_db(tmp_path, monkeypatch):
 
 def _run_to(db, monkeypatch, **kw):
     monkeypatch.setattr(ExtractorRouter, "extract", _stub_extract)
-    monkeypatch.setattr(LLMMatcher, "classify", _stub_classify("4_I_Privacy_Infringement"))
-    return pipeline.small_run(["4_I_Privacy_Infringement"], limit=6, config_path=P2,
+    monkeypatch.setattr(LLMMatcher, "classify", _stub_classify("3_G_Misinformation_and_Disinformation"))
+    return pipeline.small_run(["3_G_Misinformation_and_Disinformation"], limit=6, config_path=P2,
                               db_path=str(db), taxonomy_config=TAXO,
                               provider=MockTavilyProvider(), **kw)
+
+
+# ── 전략 경로(source_strategies_by_lv2) end-to-end ──
+# 이 경로의 계약: OpenAI는 검색 계획에만 쓰고, 저장 여부는 결정론적 acceptance gate가 정한다.
+from src.pipelines import gap_filling as _gf                       # noqa: E402
+from src.phase2.query_planner import QueryPlan, QueryPlanner       # noqa: E402
+
+CBRNE_BODY = (
+    "환경부와 소방청은 경기도 화성시 사업장에서 유해화학물질이 누출되는 사고가 발생해 주민 대피와 "
+    "함께 조사에 착수했다고 밝혔다. 소방 당국은 누출 물질을 확인하고 인근 주민 피해 여부를 조사 중이다. "
+    "경찰도 사업장 관리 책임에 대한 수사에 나섰다.") * 3
+
+
+def _plan(source_id, query="화성시 유해화학물질 누출 사고 조사"):
+    return QueryPlan(query=query, target_lv2="6_O_CBRNE", target_type="chemical",
+                     query_kind="event", source_id=source_id,
+                     expected_korea_evidence=["환경부"], expected_lv2_evidence=["유해화학물질", "누출"])
+
+
+def _result(url, source_id, query="화성시 유해화학물질 누출 사고 조사"):
+    return SearchResult(provider="serpapi", target_taxonomy_lv2="6_O_CBRNE", query_or_intent=query,
+                        title="화성시 유해화학물질 누출 사고", url=url, snippet="스니펫 본문 아님",
+                        content_hint="스니펫 본문 아님", query_type="chemical", provider_score=0.9, rank=1)
+
+
+def _cbrne_strategy(**over):
+    strategy = {
+        "modes": ["official_seed", "search_expand"], "recency_days": 730, "lv2_store_target": 30,
+        "target_types": {"chemical": {"query_budget": 3}},
+        "sources": [
+            {"id": "fire_agency", "access": "direct", "method": "official_board",
+             "domain": "nfa.go.kr", "priority": 1, "store_seed": True},
+            {"id": "web", "access": "direct", "method": "web_search", "priority": 3},
+        ],
+        "planner": {"query_kinds": ["event"], "forbidden_intents": ["manufacturing"]},
+        "include_by_type": {"chemical": ["유해화학물질", "누출"]},
+    }
+    strategy.update(over)
+    return strategy
+
+
+def _stub_cbrne_extract(self, c, collected_at, task=None):
+    # 후보마다 본문을 달리해야 simhash 근접중복에 걸리지 않는다.
+    body = f"{c.title or ''} {CBRNE_BODY}"
+    rec = ContentRecord(source_url=c.source_url, domain=c.domain, site_name=c.site_name,
+                        site_type=c.site_type, taxonomy_lv2_candidate=c.taxonomy_lv2_candidate,
+                        subtype_candidate="", title=c.title or "화성시 유해화학물질 누출 사고",
+                        body_text=body, raw_text=body, collected_at=collected_at,
+                        search_query=c.search_query, search_api=c.search_api, extractor="stub",
+                        published_at="2026-08-10")
+    return ExtractionOutcome(record=rec, tried=["stub_ok"])
+
+
+def _run_strategy(tmp_path, monkeypatch, strategy=None, results_by_source=None,
+                  extract=_stub_cbrne_extract, limit=6):
+    """전략 경로 실행. planner와 source discovery만 갈아끼우고 나머지는 실제 코드를 탄다."""
+    strategy = strategy or _cbrne_strategy()
+    results_by_source = results_by_source or {
+        "fire_agency": [_result("https://www.nfa.go.kr/notice/1", "fire_agency")],
+        "web": [_result("https://www.yna.co.kr/view/1", "web")],
+    }
+    p2 = yaml.safe_load(open(P2, encoding="utf-8"))
+    p2["source_strategies_by_lv2"] = {"6_O_CBRNE": strategy}
+    monkeypatch.setattr(_gf, "_load_phase2_config", lambda path: p2)
+
+    calls = {"plan": 0, "classify": 0, "extract": []}
+
+    def fake_plan(self, lv2, definition, strat, seeds, low=None, query_kind=""):
+        calls["plan"] += 1
+        calls.setdefault("seeds", []).append(list(seeds))
+        return [_plan(s["id"]) for s in strat["sources"]]
+
+    def fake_discover(plans, source, strat, lv2, ctx):
+        if source.get("access") == "blocked":
+            return []
+        return results_by_source.get(source["id"], []) if plans else []
+
+    def counting_extract(self, c, collected_at, task=None):
+        calls["extract"].append(c.source_url)
+        return extract(self, c, collected_at, task)
+
+    def counting_classify(self, *a, **kw):
+        calls["classify"] += 1
+        return None
+
+    monkeypatch.setattr(QueryPlanner, "plan", fake_plan)
+    monkeypatch.setattr(_gf._router, "discover", fake_discover)
+    monkeypatch.setattr(ExtractorRouter, "extract", counting_extract)
+    monkeypatch.setattr(LLMMatcher, "classify", counting_classify)
+    db = tmp_path / "strategy.db"
+    report = pipeline.small_run(["6_O_CBRNE"], limit=limit, config_path=P2, db_path=str(db),
+                                taxonomy_config=TAXO, provider=MockTavilyProvider())
+    return db, report, calls
+
+
+def test_strategy_run_stores_with_acceptance_gate_and_never_classifies_body(tmp_path, monkeypatch):
+    db, _, calls = _run_strategy(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db)
+    rows = conn.execute(
+        "SELECT taxonomy_lv2, target_type, classification_source, korea_relevance_type, "
+        "korea_evidence, lv2_evidence, source_id, query_plan_id FROM content_records").fetchall()
+    conn.close()
+    assert rows, "acceptance gate 통과 레코드 최소 1건"
+    for lv2, target_type, source, korea_type, korea_ev, lv2_ev, source_id, plan_id in rows:
+        assert lv2 == "6_O_CBRNE" and target_type == "chemical"
+        assert source == "targeted_acceptance_gate" and korea_type == "domestic_direct"
+        assert "누출" in lv2_ev and korea_ev != "[]" and source_id and plan_id
+    # 본문 LLM 분류는 호출되지 않는다. OpenAI는 검색 계획에만 쓴다.
+    assert calls["classify"] == 0 and calls["plan"] >= 1
+
+
+def test_strategy_run_rejects_records_without_korea_or_lv2_evidence(tmp_path, monkeypatch):
+    def foreign_extract(self, c, collected_at, task=None):
+        body = ("일본 후쿠시마 인근 공장에서 유해화학물질이 누출되는 사고가 났다고 현지 언론이 보도했다. ") * 8
+        outcome = _stub_cbrne_extract(self, c, collected_at, task)
+        outcome.record.title = "후쿠시마 누출 사고"
+        outcome.record.body_text = outcome.record.raw_text = body
+        return outcome
+
+    db, _, _ = _run_strategy(tmp_path, monkeypatch, extract=foreign_extract,
+                             results_by_source={"web": [_result("https://example.com/a", "web")]})
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM content_records").fetchone()[0] == 0
+    reasons = [r[0] for r in conn.execute(
+        "SELECT reason FROM filter_logs WHERE stage='phase2_acceptance'")]
+    conn.close()
+    assert reasons and all(r.startswith("not_domestic_direct") for r in reasons)
+
+
+def test_discovery_only_source_is_never_fetched(tmp_path, monkeypatch):
+    strategy = _cbrne_strategy(modes=["search_planned"], sources=[
+        {"id": "web", "access": "discovery_only", "method": "web_search", "priority": 1}])
+    db, _, calls = _run_strategy(tmp_path, monkeypatch, strategy=strategy,
+                                 results_by_source={"web": [_result("https://example.com/a", "web")]})
+    assert calls["extract"] == [], "discovery_only 후보를 fetch했다"
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM content_records").fetchone()[0] == 0
+    status, hint = conn.execute(
+        "SELECT status, content_hint FROM url_candidates LIMIT 1").fetchone()
+    conn.close()
+    assert status == "discovery_only" and hint      # snippet은 후보에만 남는다
+
+
+def test_blocked_source_is_not_called_at_all(tmp_path, monkeypatch):
+    strategy = _cbrne_strategy(modes=["search_planned"], sources=[
+        {"id": "web", "access": "blocked", "method": "web_search", "priority": 1}])
+    db, _, calls = _run_strategy(tmp_path, monkeypatch, strategy=strategy)
+    assert calls["extract"] == []
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM url_candidates").fetchone()[0] == 0
+    conn.close()
+
+
+def test_official_document_is_stored_and_seeds_the_followup_search(tmp_path, monkeypatch):
+    db, _, calls = _run_strategy(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db)
+    official = conn.execute(
+        "SELECT source_url FROM content_records WHERE is_official_seed=1").fetchall()
+    conn.close()
+    assert official and official[0][0].endswith("nfa.go.kr/notice/1")
+    # 2라운드 계획은 1라운드에서 저장된 공식 문서를 seed로 받는다.
+    assert calls["plan"] >= 2
+    assert any(s["source_url"].startswith("https://www.nfa.go.kr")
+               for s in calls["seeds"][-1]), "후속 검색이 공식 seed를 받지 못했다"
+
+
+CITIES = ["화성시", "울산광역시", "여수시", "부산광역시", "인천광역시"]
+
+
+def test_lv2_store_target_stops_the_loop(tmp_path, monkeypatch):
+    # 근접중복에 걸리지 않도록 서로 다른 사건으로 만든다.
+    results = []
+    for i, city in enumerate(CITIES):
+        r = _result(f"https://www.yna.co.kr/view/{i}", "web")
+        r.title = f"{city} 유해화학물질 누출 사고"
+        results.append(r)
+
+    def city_extract(self, c, collected_at, task=None):
+        outcome = _stub_cbrne_extract(self, c, collected_at, task)
+        city = (c.title or "").split()[0]
+        outcome.record.body_text = outcome.record.raw_text = (
+            f"{city} 소재 사업장에서 유해화학물질 누출 사고가 발생해 {city} 소방본부와 환경부가 "
+            f"현장을 통제하고 주민 피해를 조사했다. {city} 경찰도 관리 책임 수사에 착수했다. ") * 4
+        return outcome
+
+    strategy = _cbrne_strategy(modes=["search_planned"], lv2_store_target=2, sources=[
+        {"id": "web", "access": "direct", "method": "web_search", "priority": 1}])
+    db, _, calls = _run_strategy(tmp_path, monkeypatch, strategy=strategy,
+                                 results_by_source={"web": results}, extract=city_extract)
+    conn = sqlite3.connect(db)
+    stored = conn.execute("SELECT COUNT(*) FROM content_records").fetchone()[0]
+    conn.close()
+    # 목표 저장량에 도달하면 남은 후보를 더 fetch하지 않는다.
+    assert stored == 2 and len(calls["extract"]) < len(CITIES)
+
+
+def test_query_plan_performance_is_recorded(tmp_path, monkeypatch):
+    db, report, _ = _run_strategy(tmp_path, monkeypatch)
+    conn = sqlite3.connect(db)
+    rows = conn.execute(
+        "SELECT discovered_count, fetch_success_count, stored_count FROM query_plans").fetchall()
+    conn.close()
+    assert rows and any(d >= 1 and f >= 1 and s >= 1 for d, f, s in rows)
+    # 리포트로도 나가야 사람이 검색어·source를 조정할 수 있다.
+    assert report["query_plans"] and any(r["stored_count"] >= 1 for r in report["query_plans"])
+    assert all(q.get("query_plan_id") and q.get("source_id") for q in report["by_query"])
+
+
+def test_source_strategy_config_is_executable():
+    """설정만 커지고 실행 불가한 상태를 막는다."""
+    p2 = yaml.safe_load(open(P2, encoding="utf-8"))
+    types_by_lv2 = {p.taxonomy_lv2: {t.name for t in p.subtypes} for p in load_policies(TAXO)}
+    known_methods = {"board_list", "official_board", "serpapi_site", "web_search"}
+    for lv2, strategy in p2["source_strategies_by_lv2"].items():
+        assert lv2 in types_by_lv2, f"{lv2}: taxonomy에 없는 LV2"
+        assert set(strategy["target_types"]) <= types_by_lv2[lv2], f"{lv2}: 미등록 type"
+        assert strategy["recency_days"] > 0 and strategy["lv2_store_target"] > 0
+        for source in strategy["sources"]:
+            assert source["method"] in known_methods, f"{lv2}/{source['id']}: 미지원 method"
+            assert source["access"] in {"direct", "discovery_only", "metadata_only", "blocked"}
+            if source["method"] in {"official_board", "serpapi_site"}:
+                assert source.get("domain"), f"{lv2}/{source['id']}: site: 검색에 domain 필요"
+            if source["method"] == "board_list":
+                assert source.get("galleries"), f"{lv2}/{source['id']}: 게시판 목록 필요"
+
+
+def test_taxonomy_plan_runs_strategy_lv2_once(tmp_path, monkeypatch):
+    """전략 LV2를 type×provider로 쪼개면 계획만 반복 생성되고 같은 source를 중복 호출한다."""
+    calls = []
+
+    def fake_small_run(lv2s, limit, *a, **kw):
+        calls.append((tuple(lv2s), kw.get("query_types")))
+        return {"stored_records": 0, "run_id": "r"}
+
+    monkeypatch.setattr(_gf, "small_run", fake_small_run)
+    _gf.run_taxonomy_plan(["6_O_CBRNE"], P2, str(tmp_path / "plan.db"), taxonomy_config=TAXO)
+    assert calls == [(("6_O_CBRNE",), None)]
+
+
+def test_cached_plan_is_not_resaved_so_it_can_expire(tmp_path):
+    """재사용할 때마다 저장하면 created_at이 갱신돼 max_age_days가 영원히 오지 않는다."""
+    from datetime import date
+    store = Store(str(tmp_path / "plans.db"))
+    strategy = _cbrne_strategy(modes=["search_planned"])
+    p2 = {"query_planner": {"max_seed_items": 20, "max_queries_per_lv2": 12,
+                            "reuse": {"max_age_days": 7, "min_stored_per_query": 0}}}
+
+    class _Planner:
+        calls = 0
+
+        def plan(self, *a, **kw):
+            _Planner.calls += 1
+            return [_plan("web")]
+
+    planner = _Planner()
+    day1, day8 = date(2026, 8, 1), date(2026, 8, 8)
+    _gf._plans_for(store, "6_O_CBRNE", strategy, p2, planner, "정의", day1)
+    assert _Planner.calls == 1
+
+    # 3일 뒤: seed·성과 그대로 → 재사용, 저장하지 않음
+    plans = _gf._plans_for(store, "6_O_CBRNE", strategy, p2, planner, "정의", date(2026, 8, 4))
+    assert _Planner.calls == 1 and [p.generation_source for p in plans] == ["cached_plan"]
+    assert {r["created_at"] for r in store.load_query_plans("6_O_CBRNE")} == {"2026-08-01"}
+
+    # 8일 뒤: 만료 → 재생성
+    _gf._plans_for(store, "6_O_CBRNE", strategy, p2, planner, "정의", day8)
+    assert _Planner.calls == 2
+    store.close()

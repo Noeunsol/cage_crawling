@@ -47,6 +47,7 @@ class UrlCandidate:
     reference_page_penalty: float = 0.0
     # ── 2차 semantic discovery (phase-2) ──
     run_id: str = ""
+    taxonomy_run_id: str = ""                 # taxonomy 버튼 1회 실행을 묶는 상위 실행 ID
     collection_phase: int = 1                    # 1=trend/keyword, 2=targeted
     query_id: str = ""                           # sha1(discovery_query)[:12]
     discovery_provider: str = ""                 # tavily | exa | serpapi
@@ -54,6 +55,18 @@ class UrlCandidate:
     discovery_relevance_score: float = 0.0       # rerank 점수 (fetch 전)
     korea_relevance_score: float = 0.0           # rerank 한국 관련성 근사
     content_hint: Optional[str] = None           # provider snippet/content = discovery 메타(본문 아님)
+    # ── 2차 targeted: query plan provenance ──
+    # target_type은 "검색 의도"이지 최종 라벨이 아니다. 최종 분류는 목표 LV2만 사용한다.
+    target_type: str = ""
+    source_id: str = ""                          # source_strategies_by_lv2의 sources[].id
+    source_access: str = "direct"                # direct | discovery_only | metadata_only | blocked
+    query_plan_id: str = ""
+    query_generation_source: str = ""            # openai_planner | config_fallback | cached_plan
+    expected_korea_evidence: list[str] = field(default_factory=list)
+    expected_lv2_evidence: list[str] = field(default_factory=list)
+    # acceptance gate가 실제로 확인한 근거 (expected_*는 계획, 아래는 결과)
+    korea_evidence: list[str] = field(default_factory=list)
+    lv2_evidence: list[str] = field(default_factory=list)
     filter_reason: Optional[str] = None
     # frontier 상태: pending/filtered_out/extracting/extracted/failed/matched/stored/review
     status: str = "pending"
@@ -70,6 +83,10 @@ class ExtractedContent:
     """추출기 반환 중간 타입. 저장 스키마(ContentRecord)와 분리해 추출 관심사만 담는다."""
     title: str
     body_text: str
+    # Q&A 전용 parser가 구조를 보존할 때 사용. 다른 extractor는 body_text만 채운다.
+    question_body: str = ""
+    answer_body: str = ""
+    core_text: str = ""
     comments: list = field(default_factory=list)
     published_at: Optional[str] = None
     published_at_source: Optional[str] = None   # serpapi_date|metadata|html_parser|url_pattern|unknown
@@ -100,7 +117,10 @@ class ContentRecord:
     # raw 보존 3단: 욕설·협박은 보존, PII/광고/노이즈만 제거 (Toxic Language raw 가치)
     raw_text: str = ""              # 추출 직후 원문 (미정제, export 기본 제외)
     cleaned_text: str = ""          # boilerplate/메뉴/푸터만 제거
-    masked_text: str = ""           # cleaned + PII 마스킹 (matcher/LLM 입력)
+    masked_text: str = ""           # matcher/LLM 입력. 현재는 cleaned_text 별칭 — PII 마스킹 미수행
+    question_body: str = ""         # Q&A 질문 본문 (전용 parser가 채움)
+    answer_body: str = ""           # Q&A 답변 본문 (전용 parser가 채움)
+    core_text: str = ""             # UI·품질·LLM에 우선 사용하는 정제 핵심 본문
     raw_comments: Optional[list] = None
     masked_comments: Optional[list] = None
     original_comment_count: int = 0
@@ -117,7 +137,9 @@ class ContentRecord:
     extraction_likelihood: float = 0.0
 
     language: Optional[str] = None
+    korean_language_ratio: Optional[float] = None
     korea_relevance_score: Optional[float] = None
+    korea_context_evidence: list[str] = field(default_factory=list)
     taxonomy_relevance_score: Optional[float] = None
     quality_score: Optional[float] = None
     harmfulness_score: Optional[float] = None
@@ -188,11 +210,23 @@ class ContentRecord:
 
     # ── 2차 semantic discovery provenance (phase-2). content_hint는 저장하지 않는다(candidate만). ──
     run_id: str = ""
+    taxonomy_run_id: str = ""
     collection_phase: int = 1                    # 1=trend/keyword, 2=targeted
     query_id: str = ""
     discovery_provider: str = ""                 # tavily | exa | serpapi
     discovery_query: Optional[str] = None        # 자연어 collection intent
     discovery_relevance_score: Optional[float] = None   # rerank 점수(감사용)
+
+    # ── 2차 targeted acceptance gate 결과 ──
+    # taxonomy_lv2는 모델 예측이 아니라 "검색 목표 LV2가 gate를 통과해 확정된 값"이다.
+    # 그 provenance는 classification_source="targeted_acceptance_gate"로 기록한다.
+    target_type: str = ""                        # 검색 의도 type (최종 라벨 아님)
+    source_id: str = ""
+    query_plan_id: str = ""
+    korea_relevance_type: str = ""               # "" | domestic_direct
+    korea_evidence: list[str] = field(default_factory=list)
+    lv2_evidence: list[str] = field(default_factory=list)
+    is_official_seed: bool = False               # 공식기관 원문 자체로 저장된 레코드
 
     content_id: str = ""
 

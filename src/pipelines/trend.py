@@ -10,36 +10,23 @@ import yaml
 
 from ..clean import clean_record
 from ..storage.dedup import EventDeduper, make_event_key, simhash
-from ..discovery import DiscoveryRouter
-from ..discovery.board import discover_dcinside_trend
+from ..discovery.board import (
+    discover_dcinside_trend, discover_doctornow_trend, discover_ilbe_trend,
+)
 from ..discovery.rss import discover_news_trend
 from ..extract import ExtractorRouter
-from ..keyword_discovery.frontier import UrlFrontier
 from ..classify.matcher import build_taxonomy_index, confidence_bucket, risk_score_of, trend_score_of
 from ..artifact_store import ArtifactStore
-from ..mask import BasicPIIMasker
-from ..phase2.intent_builder import build_collection_intent
-from ..phase2.provider import MockTavilyProvider, TavilyProvider, to_candidate
-from ..phase2.reranker import rerank
 from ..policy import load_policies
-from ..keyword_discovery.query import QueryGenerator
-from ..filtering.quality import QualityFilter
 from ..filtering.relevance_filter import RELEVANCE_SIGNAL_TO_LV2, decide_candidate_action, decide_filter_action
 from ..reporting.report import build_report, export_csv, export_report, print_report
 from ..site_registry import SiteRegistry
 from ..storage.store import Store
-from ..keyword_discovery.strategy import Budget, StrategyRouter
-from ..filtering.url_filter import UrlFilter
-from .persist import _finalize, _phase2_store
+from .persist import _finalize
 from .stages import _apply_trend_meta, _build_matcher, _copy_llm_usage, _TREND_PRESERVATION
-from .taxonomy_adjudication import (
-    _classification_status, _phase2_adjudicate, _trend_classification_action,
-)
+from .taxonomy_adjudication import _trend_classification_action
 from ._trend_util import (
-    _allocate_buckets, _append_unique_candidates,
-    _candidate_in_window, _days_old,
-    _parse_datetime, _published_in_window, _round_robin_candidates,
-    _sample_by_topic_then_time, _target_stats,
+    _append_unique_candidates, _candidate_in_window, _days_old, _parse_datetime, _published_in_window, _round_robin_candidates, _sample_by_topic_then_time, _target_stats,
 )
 
 log = logging.getLogger(__name__)
@@ -113,6 +100,28 @@ def run_trend(
                 break
         source_candidates["dcinside"] = selected
         collection_targets["dcinside"] = _target_stats(len(selected), scan_cap)
+    # 게시판형 신규 수집원(일베·닥터나우). dcinside와 동일하게 목록만 훑고 본문은 뒤 단계에서 가져온다.
+    for name, discover in (("ilbe", discover_ilbe_trend), ("doctornow", discover_doctornow_trend)):
+        src = srcs.get(name, {})
+        if not src.get("enabled"):
+            continue
+        scan_cap = int(discovery_limits.get(
+            "max_scan_candidates_by_source",
+            discovery_limits.get("max_candidates_by_source", {}),
+        ).get(name, 2000))
+        max_pages = int(discovery_limits.get(
+            "max_pages_per_gallery", src.get("max_pages", 1)))
+        selected, seen = [], set()
+        for page in range(1, max_pages + 1):
+            raw = discover(src.get("boards", []), registry, extractor.fetcher,
+                           max_pages=1, start_page=page)
+            recent = [cand for cand in raw if _candidate_in_window(cand, cutoff)]
+            _append_unique_candidates(recent, selected, seen, scan_cap)
+            if len(selected) >= scan_cap or not raw:
+                break
+        source_candidates[name] = selected
+        collection_targets[name] = _target_stats(len(selected), scan_cap)
+
     nr = srcs.get("news_rss", {})
     if nr.get("enabled"):
         scan_cap = int(discovery_limits.get(
@@ -142,7 +151,7 @@ def run_trend(
             FROM content_records
             WHERE COALESCE(is_supplementary,0)=0
               AND collection_phase = 1
-              AND COALESCE(source, source_type, '') IN ('dcinside', 'news_rss')
+              AND COALESCE(source, source_type, '') <> ''
             GROUP BY src
             """
         ).fetchall()
@@ -160,7 +169,12 @@ def run_trend(
     prefiltered_out, sampling_skipped = [], []
     enabled_sources = [s for s in source_candidates.keys() if source_candidates.get(s)]
     quota_total = sum(int(daily_by_source.get(s, 50 if s == "dcinside" else 30)) for s in enabled_sources)
-    if enabled_sources and store and quota_total > 0:
+    # 수집원 비교 실험은 소스마다 같은 수량을 모아야 하므로 성과 가중 재분배를 끈다.
+    equal_quota = bool(sampling.get("equal_quota_by_source", False))
+    if equal_quota:
+        log.info("equal_quota_by_source=true → 소스별 quota 고정 %s",
+                 {s: daily_by_source.get(s) for s in enabled_sources})
+    if enabled_sources and store and quota_total > 0 and not equal_quota:
         raw_weights = {
             s: source_quota_bias.get(s, 1.0)
             for s in enabled_sources
@@ -238,11 +252,10 @@ def run_trend(
 
     m = settings.get("matching", {})
     matcher = _build_matcher(settings, m.get("auto_save_threshold", 0.8), m.get("review_threshold", 0.5))
-    masker = BasicPIIMasker(settings.get("privacy", {}))
     artifact = ArtifactStore.from_settings(settings)
     dedup_threshold = settings.get("dedup", {}).get("event_hamming_threshold", 3)
     deduper = EventDeduper(dedup_threshold)
-    save_raw_text = settings.get("privacy", {}).get("save_raw_text", True)
+    save_raw_text = True
     assert store is not None
     today = _dt.date.today()
     collected_at = today.isoformat()
@@ -281,7 +294,7 @@ def run_trend(
         rec = outcome.record
         rec.run_id, rec.collection_phase = run_id, 1
         _apply_trend_meta(rec, cand.meta)
-        clean_record(rec, _TREND_PRESERVATION, masker)
+        clean_record(rec, _TREND_PRESERVATION)
         artifact.save_record(rec)
 
         # 수집 윈도우 초과 → 1차 discard

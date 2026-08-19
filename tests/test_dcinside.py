@@ -1,4 +1,4 @@
-from src.discovery.board import parse_dcinside_list
+from src.discovery.board import parse_dcinside_list, parse_doctornow_trend
 from src.extract.site_parser import DcinsidePostExtractor
 from src.policy import Subtype
 from src.schema import canonicalize_url
@@ -89,6 +89,17 @@ def test_dcinside_post_parser_extracts_body_without_removing_harmful_text():
     assert content.title == "맥 vs windows"
     assert "악플" in content.body_text
     assert content.author_hint == "프갤러"
+
+
+def test_doctornow_list_extracts_card_date():
+    html = '''<a href="/content/qna/123"><article>
+      <h2>약 복용 상담</h2><p>복용해도 되나요?</p><h3>내과</h3><span>2026.08.13</span>
+    </article></a>'''
+    found = parse_doctornow_trend(
+        html, "https://doctornow.co.kr/content/qna/realtime", _registry(), "medical_qa", "실시간상담"
+    )
+    assert len(found) == 1
+    assert found[0].published_at_hint == "2026-08-13T00:00:00"
 
 
 

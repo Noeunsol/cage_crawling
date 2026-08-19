@@ -3,7 +3,6 @@
 (a) 샘플링 버킷 배분 (b) 1차 basic_filter (c) 2차 위험신호 후보/override
 (d) 단일 taxonomy 매핑(닫힌 어휘) + 스코어링 (e) RSS pubDate 윈도우 + end-to-end.
 """
-import json
 import sqlite3
 import datetime as dt
 
@@ -11,6 +10,7 @@ import pytest
 import yaml
 
 from src import fetcher, pipeline
+from src.pipelines import trend as trend_pipeline
 from src.discovery import rss
 from src.discovery.board import parse_dcinside_trend
 from src.classify.matcher import (LLMMatcher, RuleBasedMatcher, build_taxonomy_index, confidence_bucket,
@@ -528,6 +528,24 @@ def test_run_trend_end_to_end(tmp_path, monkeypatch):
     ).fetchall()
     assert run_rows == [(report["run_id"], 1)]
     conn.close()
+
+
+def test_run_trend_allows_doctornow_without_dcinside(tmp_path, monkeypatch):
+    monkeypatch.setattr(trend_pipeline, "discover_doctornow_trend", lambda *args, **kwargs: [])
+    cfg = tmp_path / "trend.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "collection": {"lookback_days": 1},
+        "sources": {
+            "dcinside": {"enabled": False},
+            "doctornow": {"enabled": True, "boards": [{}]},
+            "news_rss": {"enabled": False},
+        },
+    }, allow_unicode=True), encoding="utf-8")
+    report = pipeline.run_trend(
+        trend_config=str(cfg), taxonomy_config=TAXO, dry_run=True,
+        report_path=str(tmp_path / "r.json"), csv_path=str(tmp_path / "c.csv"),
+    )
+    assert report["collection_targets"]["doctornow"]["available"] == 0
 
 
 def test_run_trend_skips_previously_processed_url_before_body_fetch(tmp_path, monkeypatch):

@@ -31,6 +31,7 @@ class SearchResult:
     provider_score: float | None = None
     rank: int | None = None
     raw_provider_payload: dict = field(default_factory=dict)
+    query_type: str = ""                 # site: 검색으로 바뀐 query에서도 원래 taxonomy type을 보존
 
 
 class DiscoveryProvider:
@@ -112,6 +113,7 @@ class TavilyProvider(DiscoveryProvider):
                     provider=self.name,
                     target_taxonomy_lv2=intent.target_taxonomy_lv2,
                     query_or_intent=query,      # per-result 출처 쿼리 (by_query 집계의 키)
+                    query_type=intent.query_types.get(query, ""),
                     title=item.get("title") or "",
                     url=url,
                     snippet=content,
@@ -145,15 +147,48 @@ class SerpApiProvider(DiscoveryProvider):
         load_dotenv()
         return bool(os.getenv("SERPAPI_KEY")) and importlib.util.find_spec("serpapi") is not None
 
-    def _domains(self, intent: CollectionIntent, query: str) -> list[str]:
+    def _domains(self, intent: CollectionIntent, query: str, query_type: str | None = None) -> list[str]:
         rule = self.rules_by_lv2.get(intent.target_taxonomy_lv2, {})
-        query_type = intent.query_types.get(query, "")
+        query_type = query_type if query_type is not None else intent.query_types.get(query, "")
         domains = (rule.get("domains_by_type", {}).get(query_type)
                    or rule.get("domains", []) or [])
         excluded = set(intent.excluded_domains) | set(self.options.get("excluded_domains", []))
+        max_domains = int(rule.get("max_domains_per_query", self.options.get("max_domains_per_query", 2)))
         return [domain for domain in domains if domain not in excluded][
-            :int(self.options.get("max_domains_per_query", 2))
+            :max_domains
         ]
+
+    def _search_terms(self, intent: CollectionIntent) -> list[tuple[str, str]]:
+        """SerpAPI 전용 키워드 그룹이 있으면 type당 한 번만 확장한다."""
+        rule = self.rules_by_lv2.get(intent.target_taxonomy_lv2, {})
+        groups_by_type = rule.get("keyword_groups_by_type", {})
+        out: list[tuple[str, str]] = []
+        expanded_types: set[str] = set()
+        for query in intent.queries:
+            query_type = intent.query_types.get(query, "")
+            groups = groups_by_type.get(query_type, [])
+            if groups:
+                if query_type in expanded_types:
+                    continue
+                expanded_types.add(query_type)
+                out.extend((" ".join(group), query_type) for group in groups)
+            else:
+                out.append((query, query_type))
+        return out
+
+    @staticmethod
+    def _request(client, payload: dict) -> dict:
+        """SerpAPI 오류에서 URL·API key가 Streamlit 화면으로 새지 않게 한다."""
+        try:
+            return client.search(payload)
+        except Exception as exc:  # SDK가 requests 예외를 그대로 전달한다.
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            message = str(exc)
+            if status == 401 or "401" in message:
+                raise RuntimeError("SerpAPI 인증 실패: SERPAPI_KEY를 재발급한 키로 교체하세요.") from None
+            if status == 429 or "429" in message:
+                raise RuntimeError("SerpAPI 요청 한도 또는 크레딧이 부족합니다.") from None
+            raise RuntimeError("SerpAPI 검색 요청에 실패했습니다. 네트워크와 SerpAPI 상태를 확인하세요.") from None
 
     def search(self, intent: CollectionIntent) -> list[SearchResult]:
         from dotenv import load_dotenv
@@ -162,20 +197,26 @@ class SerpApiProvider(DiscoveryProvider):
 
         out: list[SearchResult] = []
         seen: set[str] = set()
+        rule = self.rules_by_lv2.get(intent.target_taxonomy_lv2, {})
         base = {
             "engine": self.options.get("engine", "google"), "hl": self.options.get("hl", "ko"),
             "gl": self.options.get("gl", "kr"), "location": self.options.get("location", "South Korea"),
             "google_domain": self.options.get("google_domain", "google.co.kr"),
             "num": int(self.options.get("num", intent.max_results)), "start": int(self.options.get("start", 0)),
-            "tbs": self.options.get("tbs"), "safe": self.options.get("safe", "off"),
+            "tbs": rule.get("tbs", self.options.get("tbs")), "safe": self.options.get("safe", "off"),
             "filter": self.options.get("filter", 1), "nfpr": self.options.get("nfpr", 1),
         }
         client = serpapi.Client(api_key=os.getenv("SERPAPI_KEY"), timeout=20)
-        for query in intent.queries:
-            domains = self._domains(intent, query) or [None]
+        for query, query_type in self._search_terms(intent):
+            domains = self._domains(intent, query, query_type) or [None]
             for domain in domains:
-                search_query = f"site:{domain} {query}" if domain else query
-                response = client.search({k: v for k, v in {**base, "q": search_query}.items() if v is not None})
+                # 목록·태그 페이지는 개별 원문이 아니므로 URL 후보로 가져오지 않는다.
+                # taxonomy별/도메인별 보정은 config에서만 둔다.
+                suffixes = (rule.get("query_suffixes_by_domain", {}).get(domain, []) if domain else [])
+                search_query = " ".join(
+                    part for part in ([f"site:{domain}"] if domain else []) + [query] + list(suffixes) if part
+                )
+                response = self._request(client, {k: v for k, v in {**base, "q": search_query}.items() if v is not None})
                 self._usage_events.append({"query": search_query, "credits": 1})
                 for rank, item in enumerate(response.get("organic_results", []), start=1):
                     url = item.get("link")
@@ -184,7 +225,8 @@ class SerpApiProvider(DiscoveryProvider):
                     seen.add(url)
                     out.append(SearchResult(
                         provider=self.name, target_taxonomy_lv2=intent.target_taxonomy_lv2,
-                        query_or_intent=search_query, title=item.get("title") or "", url=url,
+                        query_or_intent=search_query, query_type=query_type,
+                        title=item.get("title") or "", url=url,
                         snippet=item.get("snippet"), content_hint=item.get("snippet"),
                         published_at_hint=item.get("date"), provider_score=max(0.0, 1.0 - (rank - 1) * 0.05),
                         rank=rank, raw_provider_payload=item,
@@ -215,6 +257,7 @@ class MockTavilyProvider(DiscoveryProvider):
                     provider=self.name,
                     target_taxonomy_lv2=intent.target_taxonomy_lv2,
                     query_or_intent=query,
+                    query_type=intent.query_types.get(query, ""),
                     title=f"[{kw}] 관련 한국어 게시글 {qi}-{i}",
                     url=f"https://{domain}/post/{intent.target_taxonomy_lv2}-{qi}-{i}",
                     snippet=f"{kw} 관련 피해 호소와 커뮤니티 반응...",

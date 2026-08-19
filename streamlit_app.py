@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+import importlib
 import importlib.util
 import os
 import sqlite3
 import time
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 import yaml
 from dotenv import load_dotenv, set_key
@@ -28,12 +30,13 @@ def _fmt_dur(sec: float) -> str:
 
 
 def _tavily_run_label(run_id: str) -> str:
-    """2차 provider run ID의 실행 시각을 표시하고, 기존 UUID 이력도 그대로 읽는다."""
+    """2차 provider·taxonomy run ID의 실행 시각을 표시하고, 기존 UUID 이력도 그대로 읽는다."""
     parts = run_id.split("_")
-    if len(parts) == 4 and parts[0] in {"tavily", "serpapi"} and len(parts[1]) == 8 and len(parts[2]) == 6:
+    if len(parts) == 4 and parts[0] in {"tavily", "serpapi", "taxonomy"} and len(parts[1]) == 8 and len(parts[2]) == 6:
         day, clock = parts[1], parts[2]
         if day.isdigit() and clock.isdigit():
-            return f"{day[:4]}-{day[4:6]}-{day[6:]} {clock[:2]}:{clock[2:4]}:{clock[4:]} · {run_id}"
+            prefix = "Taxonomy 실행" if parts[0] == "taxonomy" else parts[0]
+            return f"{day[:4]}-{day[4:6]}-{day[6:]} {clock[:2]}:{clock[2:4]}:{clock[4:]} · {prefix} · {run_id}"
     return f"기존 이력 · {run_id}"
 
 
@@ -68,13 +71,16 @@ st.title("CAGE 콘텐츠 수집")
 st.caption("1차 트렌드 탐색 → taxonomy 커버리지 확인 → 2차 부족분 보강 · raw 원문은 표시하지 않습니다.")
 top_integrated, top_phase1, top_phase2 = st.tabs(["통합 보기", "① 1차 수집", "② 2차 수집"])
 with top_integrated:
-    taxonomy_tab, overview, content_tab, candidates_tab, llm_tab, failures_tab, pii_tab = st.tabs(
-        ["Taxonomy 현황", "전체 요약", "콘텐츠 탐색", "URL 후보", "토큰·비용", "실패 분석", "PII"]
+    taxonomy_tab, overview, content_tab, candidates_tab, llm_tab, failures_tab = st.tabs(
+        ["Taxonomy 현황", "전체 요약", "콘텐츠 탐색", "URL 후보", "토큰·비용", "실패 분석"]
     )
 with top_phase1:
-    trend_collection_tab, recent_tab, prefilter_tab = st.tabs(["1차 트렌드 수집", "최근 실행", "사전 필터"])
+    trend_collection_tab, recent_tab, prefilter_tab, source_compare_tab = st.tabs(
+        ["1차 트렌드 수집", "최근 실행", "사전 필터", "수집원 비교"])
 with top_phase2:
-    phase2_tab, phase2_results_tab, serpapi_tab = st.tabs(["2차 Tavily 수집", "Tavily 수집 결과", "2차 SerpAPI 수집"])
+    taxonomy_collection_tab, phase2_results_tab = st.tabs(
+        ["2차 Taxonomy 수집", "2차 수집 결과"]
+    )
 
 
 @st.cache_data(ttl=5)
@@ -88,6 +94,11 @@ def query(db_path: str, sql: str, params: tuple = ()) -> list[dict]:
 def scalar(db_path: str, sql: str, params: tuple = ()) -> int:
     rows = query(db_path, sql, params)
     return next(iter(rows[0].values())) if rows else 0
+
+
+def has_column(db_path: str, table: str, column: str) -> bool:
+    """구버전 DB도 결과 화면에서 읽을 수 있도록 migration 컬럼 존재 여부를 확인한다."""
+    return column in {row["name"] for row in query(db_path, f"PRAGMA table_info({table})")}
 
 
 
@@ -206,47 +217,46 @@ if env_col.button(".env 다시 읽기"):
 with trend_collection_tab:
     st.subheader("1차 트렌드 수집")
     st.caption("수집 기간과 수집원을 정한 뒤, 미리보기 또는 실제 수집을 실행합니다.")
-    st.markdown("**수집 기간 · 수집원**")
-    use_dc = st.checkbox("디시인사이드", value=True)
-    use_news = st.checkbox("뉴스 RSS", value=True)
-    st.caption("FM코리아·네이트판은 다음 단계 지원 예정")
-    # 상한은 trend_collection.yaml의 collection.max_lookback_days가 정본이다.
-    # UI에서만 올리면 파이프라인이 조용히 잘라내므로 그 값을 그대로 읽어 쓴다.
+    # 수집원 목록·상한은 trend_collection.yaml이 정본이다. UI에 하드코딩하면 소스를 추가할 때마다
+    # 화면과 설정이 어긋난다(실제로 일베·닥터나우가 설정에만 있고 UI엔 없었다).
     try:
         _trend_cfg = yaml.safe_load(Path(trend_cfg).read_text(encoding="utf-8")) or {}
-        _max_lookback = int(_trend_cfg.get("collection", {}).get("max_lookback_days", 30))
-        _daily_quota = _trend_cfg.get("sampling", {}).get("daily_quota_by_source", {})
-        _default_dc_daily_cap = int(_daily_quota.get("dcinside", 50))
-        _default_news_daily_cap = int(_daily_quota.get("news_rss", 30))
     except Exception:  # noqa: BLE001
-        _max_lookback = 30
-        _default_dc_daily_cap, _default_news_daily_cap = 50, 30
+        _trend_cfg = {}
+    _max_lookback = int(_trend_cfg.get("collection", {}).get("max_lookback_days", 30))
+    _sampling = _trend_cfg.get("sampling", {})
+    _daily_quota = _sampling.get("daily_quota_by_source", {})
+    _equal_quota = bool(_sampling.get("equal_quota_by_source", False))
+    _labels = {"dcinside": "디시인사이드", "news_rss": "뉴스 RSS",
+               "ilbe": "일간베스트", "doctornow": "닥터나우 (의료 상담)"}
+    _sources = [(name, cfg or {}) for name, cfg in (_trend_cfg.get("sources") or {}).items()]
+
+    st.markdown("**수집 기간 · 수집원**")
+    source_enabled, source_caps = {}, {}
+    for _name, _scfg in _sources:
+        source_enabled[_name] = st.checkbox(
+            _labels.get(_name, _name), value=bool(_scfg.get("enabled", True)), key=f"src_{_name}")
+    st.caption("FM코리아·네이트판은 robots.txt가 크롤러를 차단해 제외했습니다. 로톡은 JS 렌더가 필요해 보류 중입니다.")
     lookback_days = st.number_input(
         "최근 며칠", min_value=1, max_value=_max_lookback, value=1, step=1,
         help=f"오늘부터 거슬러 며칠분을 수집할지. 설정 파일 상한은 {_max_lookback}일입니다.")
     st.metric("수집 범위", f"최근 {int(lookback_days)}일")
-    dc_daily_cap = st.number_input(
-        "디시 1일 최대 수집",
-        min_value=0,
-        max_value=1000,
-        value=_default_dc_daily_cap,
-        step=10,
-        help="하루에 디시인사이드에서 본문 수집할 최대 건수입니다. 0이면 수집하지 않습니다.",
-    )
-    news_daily_cap = st.number_input(
-        "뉴스 RSS 1일 최대 수집",
-        min_value=0,
-        max_value=1000,
-        value=_default_news_daily_cap,
-        step=10,
-        help="하루에 뉴스 RSS에서 본문 수집할 최대 건수입니다. 0이면 수집하지 않습니다.",
-    )
-    source_daily = (dc_daily_cap if use_dc else 0) + (news_daily_cap if use_news else 0)
+    _cols = st.columns(min(len(_sources), 4) or 1)
+    for _i, (_name, _scfg) in enumerate(_sources):
+        source_caps[_name] = _cols[_i % len(_cols)].number_input(
+            f"{_labels.get(_name, _name)} 1일 상한", min_value=0, max_value=1000,
+            value=int(_daily_quota.get(_name, 30)), step=10, key=f"cap_{_name}",
+            disabled=not source_enabled[_name],
+            help="이 수집원에서 하루에 본문 수집할 최대 건수입니다. 0이면 수집하지 않습니다.")
+    source_daily = sum(v for k, v in source_caps.items() if source_enabled.get(k))
+    _detail = " · ".join(f"{_labels.get(k, k)} {v}" for k, v in source_caps.items() if source_enabled.get(k))
     st.caption(
-        f"본문 후보 상한 {source_daily * int(lookback_days):,}건 "
-        f"(디시 날짜당 {int(dc_daily_cap)} · 뉴스 날짜당 {int(news_daily_cap)}, 4시간대 균등 표본). "
+        f"본문 후보 상한 {source_daily * int(lookback_days):,}건 (날짜당 {_detail}, 4시간대 균등 표본). "
         "실제 처리 건수는 기간 내 가용 후보에서 중복·제목 필터를 제외한 수입니다."
     )
+    if _equal_quota:
+        st.info("**균등 quota 모드** — 수집원별 성과 가중 재분배를 끄고 위 값을 그대로 씁니다. "
+                "수집원 비교 실험용이며, 끄려면 `sampling.equal_quota_by_source: false`로 두세요.")
     st.caption("해당 기간에 게시된 가용 후보를 수집하고, 제목 필터와 LLM을 거쳐 taxonomy를 매핑합니다.")
     st.caption("본문 키워드 룰로 재탈락시키지 않으며, 제목과 HTML 본문을 LLM이 최종 분류합니다.")
     reset = st.checkbox("기존 DB 비우고 새로 수집")
@@ -286,12 +296,9 @@ with trend_collection_tab:
     overrides = {
         "collection": {"lookback_days": int(lookback_days)},
         "sampling": {
-            "daily_quota_by_source": {
-                "dcinside": int(dc_daily_cap),
-                "news_rss": int(news_daily_cap),
-            }
+            "daily_quota_by_source": {k: int(v) for k, v in source_caps.items()},
         },
-        "enabled": {"dcinside": use_dc, "news_rss": use_news},
+        "enabled": dict(source_enabled),
     }
 
     b1, b2 = st.columns(2)
@@ -311,7 +318,7 @@ with trend_collection_tab:
                 st.error(f"실패: {exc}")
 
     if b2.button("1차 수집 시작", type="primary"):
-        if not (use_dc or use_news):
+        if not any(source_enabled.values()):
             st.warning("수집원을 하나 이상 선택하세요.")
         else:
             bar = st.progress(0.0, text="목록 수집 중…")
@@ -512,7 +519,103 @@ with taxonomy_tab:
     else:
         st.info("분류된 콘텐츠가 없습니다. 먼저 1차 수집을 실행하세요.")
 
-with phase2_tab:
+with taxonomy_collection_tab:
+    st.subheader("2차 Taxonomy 수집")
+    st.caption("전체 taxonomy coverage를 확인한 뒤 필요한 LV2만 체크하세요. 선택한 taxonomy의 부족 type만 계획된 provider 순서로 수집합니다.")
+    try:
+        from src.pipelines import gap_filling as _taxonomy_pipeline
+        # Streamlit은 src.* 모듈을 프로세스에 캐시한다. 개발 중 새 coordinator가 생긴 경우만 갱신한다.
+        if not hasattr(_taxonomy_pipeline, "preview_taxonomy_plan"):
+            _taxonomy_pipeline = importlib.reload(_taxonomy_pipeline)
+        taxonomy_plan_rows = _taxonomy_pipeline.preview_taxonomy_plan(p2_config, db_path, taxonomy_config=taxo_cfg)
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Taxonomy 수집 계획을 읽지 못했습니다: {exc}")
+        taxonomy_plan_rows = []
+
+    if taxonomy_plan_rows:
+        summary_slot = st.container()
+        coverage_table = pd.DataFrame([{
+            "선택": False,
+            "Taxonomy lv1": row["lv1"],
+            "Taxonomy lv2": row["lv2"],
+            "현재": row["effective"],
+            "목표": row["target"],
+            "부족": row["shortfall"],
+            "부족 Type": sum(type_row["shortfall"] > 0 for type_row in row["types"]),
+            "수집 전략": " → ".join(row["provider_order"]),
+            "상태": ("완료" if row["shortfall"] <= 0 else "일부 부족" if row["effective"] > 0 else "수집 필요"),
+        } for row in taxonomy_plan_rows])
+        st.markdown("#### Taxonomy coverage")
+        edited_coverage = st.data_editor(
+            coverage_table, width="stretch", hide_index=True, key="taxonomy_first_coverage_table",
+            disabled=[column for column in coverage_table.columns if column != "선택"],
+            column_config={"선택": st.column_config.CheckboxColumn("선택", default=False)},
+        )
+        selected_taxonomies = edited_coverage.loc[edited_coverage["선택"], "Taxonomy lv2"].tolist()
+        selected_shortfall = sum(
+            row["shortfall"] for row in taxonomy_plan_rows if row["lv2"] in selected_taxonomies
+        )
+        with summary_slot:
+            pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+            pc1.metric("전체 LV2", len(taxonomy_plan_rows))
+            pc2.metric("수집 완료", sum(row["shortfall"] <= 0 for row in taxonomy_plan_rows))
+            pc3.metric("수집 부족", sum(row["shortfall"] > 0 for row in taxonomy_plan_rows))
+            pc4.metric("선택 실행 대상", len(selected_taxonomies))
+            pc5.metric("총 추가 필요", f"{selected_shortfall:g}건")
+        selected_plans = [row for row in taxonomy_plan_rows if row["lv2"] in selected_taxonomies]
+        if selected_plans:
+            st.markdown("#### 선택 Taxonomy 상세 수집 계획")
+            plan_table = [
+                {"Taxonomy lv2": row["lv2"], "Type": type_row["type"],
+                 "현재": type_row["effective"], "목표": type_row["target"],
+                 "추가 필요": type_row["shortfall"], "수집 경로": " → ".join(type_row["provider_order"])}
+                for row in selected_plans for type_row in row["types"]
+            ]
+            st.dataframe(plan_table, width="stretch", hide_index=True)
+            tavily_ready, _ = dependency_status("tavily", "TAVILY_API_KEY")
+            serpapi_ready, _ = dependency_status("serpapi", "SERPAPI_KEY")
+            st.caption(
+                f"Provider 준비 상태 · Tavily: {'준비' if tavily_ready else '키 확인 필요'} · "
+                f"SerpAPI: {'준비' if serpapi_ready else '키 확인 필요'}"
+            )
+        tax_cols = st.columns(3)
+        taxonomy_write_db = tax_cols[0].text_input("Small Run 저장 DB", "data/db/phase2_pilot.db", key="taxonomy_first_db")
+        taxonomy_fetch_cap = tax_cols[1].number_input("type당 본문 fetch 상한", 1, 30, 6, key="taxonomy_first_fetch")
+        taxonomy_verify = tax_cols[2].checkbox("OpenAI 재분류·검수 (선택)", value=False, key="taxonomy_first_verify")
+        st.caption(
+            "기본값은 검수 없이, taxonomy/type 맞춤 검색으로 수집한 본문을 목표 taxonomy에 바로 통합합니다. "
+            "토글을 켜면 OpenAI가 본문을 다시 분류하고 품질을 검수합니다. "
+            "검색 계획 방식 카테고리는 type·provider로 쪼개지 않고 카테고리당 1회 실행되며, "
+            "저장 여부는 규칙 기반 acceptance gate(한국 직접 관련 + 목표 LV2 근거)가 판정합니다."
+        )
+        if st.button("선택한 Taxonomy 부족분 수집 실행", type="primary", key="taxonomy_first_run",
+                     disabled=not selected_taxonomies):
+            try:
+                report = _taxonomy_pipeline.run_taxonomy_plan(
+                    selected_taxonomies, p2_config, taxonomy_write_db, taxonomy_config=taxo_cfg,
+                    settings_config=settings_cfg, max_fetch_per_type=int(taxonomy_fetch_cap),
+                    verify_openai=taxonomy_verify, reference_db=db_path,
+                )
+                st.cache_data.clear()
+                st.session_state["_pending_result_db"] = taxonomy_write_db
+                st.session_state["_phase2_result_db"] = taxonomy_write_db
+                st.session_state["_phase2_recent_run_ids"] = [
+                    run["run_id"] for run in report["runs"] if run.get("run_id")
+                ]
+                st.session_state["_phase2_recent_taxonomy_run_id"] = report.get("taxonomy_run_id", "")
+                st.success(f"Taxonomy 계획 실행 완료 · type/provider 실행 {len(report['runs'])}회")
+                st.dataframe([
+                    {"Taxonomy": run["lv2"], "Type": run["type"], "Provider": run["provider"],
+                     "저장": run.get("stored_records", 0), "run_id": run.get("run_id", "")}
+                    for run in report["runs"]
+                ], width="stretch", hide_index=True)
+                st.info("상단 **2차 수집 결과** 탭에서 provider별 후보·본문 수집·OpenAI 검수 결과를 실행 이력별로 확인하세요.")
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Taxonomy 계획 수집 실패: {exc}")
+    else:
+        st.info("taxonomy 계획을 표시할 수 없습니다. taxonomy·targeted_collection 설정을 확인하세요.")
+
+if False:  # 개별 provider 실행 UI는 taxonomy 수집이 대체한다. 하위 호환을 위해 코드만 보관한다.
     # ── 2차 실행 컨트롤 (①intent → ②discovery → ③보강). 결과는 이 아래 뷰어에서 바로 확인.
     st.subheader("2단계 Tavily 수집")
     st.markdown(
@@ -577,6 +680,12 @@ with phase2_tab:
         st.error(f"intent 로드 실패: {exc}")
         p2_intents = []
     p2_by_lv2 = {it["lv2"]: it for it in p2_intents}
+    # 전략 LV2는 고정 검색문이 아니라 실행 시 OpenAI가 만든 검색 계획으로 수집한다.
+    # 따라서 1·2단계의 고정 검색문 미리보기와 discovery 캐시 대상이 아니다.
+    try:
+        _strategy_lv2s = set(_p2._load_phase2_config(p2_config).get("source_strategies_by_lv2", {}) or {})
+    except Exception:  # noqa: BLE001
+        _strategy_lv2s = set()
     try:
         _pol_meta = {p.taxonomy_lv2: (p.taxonomy_lv2_name or p.taxonomy_lv2, p.description or "")
                      for p in load_policies(taxo_cfg)}
@@ -657,9 +766,17 @@ with phase2_tab:
         st.warning("실제 content.db에 저장합니다. Tavily/OpenAI 유료 호출이 발생할 수 있습니다.")
 
     _cache = st.session_state.get("p2_discovery_cache", {})
-    _cached_sel = [lv2 for lv2 in p2_selected
-                   if (lv2, discovery_cache_key(p2_by_lv2[lv2]["intent"], p2_overrides["rerank"])) in _cache] if p2_selected else []
+    _planned_sel = [lv2 for lv2 in p2_selected if lv2 in _strategy_lv2s] if p2_selected else []
+    _fixed_sel = [lv2 for lv2 in p2_selected if lv2 not in _strategy_lv2s] if p2_selected else []
+    _cached_sel = [lv2 for lv2 in _fixed_sel
+                   if (lv2, discovery_cache_key(p2_by_lv2[lv2]["intent"], p2_overrides["rerank"])) in _cache]
     _n = len(p2_selected)
+    if _planned_sel:
+        st.info(
+            "검색 계획 방식 카테고리 " + ", ".join(_planned_sel) + " — 고정 검색문 대신 실행 시 "
+            "OpenAI가 최근 seed를 보고 검색어를 만들고, 저장은 규칙 기반 acceptance gate가 판정합니다. "
+            "본문 taxonomy 재분류는 하지 않습니다. 1·2단계 미리보기는 이 카테고리에 적용되지 않습니다."
+        )
 
     st.markdown("#### 실행 순서 — 위에서 아래로")
     if not p2_selected:
@@ -681,7 +798,7 @@ with phase2_tab:
                                 "검증 점수": check["score"], "상태": check["status"],
                                 "경고": " · ".join(check["warnings"]) or "없음"})
         st.dataframe(intent_rows, hide_index=True, width="stretch")
-        for lv2 in p2_selected:
+        for lv2 in _fixed_sel:
             it = p2_by_lv2.get(lv2)
             if it:
                 intent = it["intent"]
@@ -699,13 +816,13 @@ with phase2_tab:
         _s2 = f"미리보기 캐시 {len(_cached_sel)}/{_n}개 준비됨" if p2_selected else "카테고리 선택 대기"
         st.markdown("**2단계 · 검색 미리보기**　`선택`　`소량 비용`")
         st.caption(f"Tavily로 실제 검색해 후보 URL·점수를 확인합니다. {_s2}.")
-        _go2 = st.button("검색 미리보기 실행", key="p2_b2", width="stretch", disabled=not p2_selected)
+        _go2 = st.button("검색 미리보기 실행", key="p2_b2", width="stretch", disabled=not _fixed_sel)
     if _go2:
-        if not p2_selected:
-            st.warning("카테고리를 하나 이상 선택하세요.")
+        if not _fixed_sel:
+            st.warning("고정 검색문 방식 카테고리를 하나 이상 선택하세요.")
         else:
             provider = _p2._default_provider(_p2._load_phase2_config(p2_config))
-            for lv2 in p2_selected:
+            for lv2 in _fixed_sel:
                 it = p2_by_lv2.get(lv2)
                 if not it:
                     continue
@@ -759,9 +876,11 @@ with phase2_tab:
     with st.container(border=True):
         # 캐시된 LV2는 재검색하지 않는다. 남은 LV2의 검색어 수가 실제 호출 수.
         _will = sum(len(p2_by_lv2[lv2]["intent"].queries)
-                    for lv2 in p2_selected if lv2 not in _cached_sel)
+                    for lv2 in _fixed_sel if lv2 not in _cached_sel)
+        _will_note = f" + 계획 방식 {len(_planned_sel)}개 카테고리(실행 시 계획 수만큼)" if _planned_sel else ""
         st.markdown("**3단계 · 수집 · 저장**　`필수`　`비용 발생`")
-        st.caption(f"후보 본문을 가져와 분류·저장합니다. 신규 웹검색 {_will}회 예정 · 저장 위치 `{p2_write_db}`.")
+        st.caption(f"후보 본문을 가져와 분류·저장합니다. 신규 웹검색 {_will}회 예정{_will_note} · "
+                   f"저장 위치 `{p2_write_db}`.")
         _go3 = st.button("수집 · 저장 실행", key="p2_b3", type="primary", width="stretch", disabled=not p2_selected)
     if _go3:
         if not p2_selected:
@@ -770,9 +889,10 @@ with phase2_tab:
             bar = st.progress(0.0, text="실행 중…")
             try:
                 session_cache = st.session_state.get("p2_discovery_cache", {})
+                # 전략 LV2는 캐시를 쓰면 검색 계획 경로가 통째로 우회된다. 캐시 대상에서 뺀다.
                 cached_discovery = {
                     lv2: session_cache[(lv2, discovery_cache_key(p2_by_lv2[lv2]["intent"], p2_overrides["rerank"]))]
-                    for lv2 in p2_selected
+                    for lv2 in _fixed_sel
                     if (lv2, discovery_cache_key(p2_by_lv2[lv2]["intent"], p2_overrides["rerank"])) in session_cache
                 }
                 if cached_discovery:
@@ -796,6 +916,7 @@ with phase2_tab:
                 st.subheader("이번 실행 저장 결과")
                 st.dataframe(query(p2_write_db, """
                     SELECT title,taxonomy_lv2_candidate AS target_taxonomy,taxonomy_lv2 AS predicted_taxonomy,
+                           target_type,classification_source,korea_evidence,lv2_evidence,
                            action,filter_reason,llm_total_tokens,
                            ROUND(llm_estimated_cost_usd,6) AS llm_cost_usd,source_url
                     FROM content_records WHERE run_id=? ORDER BY rowid DESC
@@ -812,11 +933,24 @@ with phase2_tab:
                     st.caption("candidate 대비 저장(accepted+candidate) 비율이 낮은 검색어가 "
                                "다음 라운드에 교체할 대상입니다.")
                     st.dataframe([
-                        {"검색어": q["query"], "LV2": q["lv2"], "후보": q["candidate_count"],
+                        {"검색어": q["query"], "LV2": q["lv2"],
+                         "source": q.get("source_id", ""), "생성": q.get("generation_source", "고정"),
+                         "후보": q["candidate_count"],
                          "fetch": q["rerank_fetch_count"], "추출성공": q["extract_success_count"],
                          "accepted": q["accepted"], "candidate": q["candidate"],
                          "discard": q["discard"], "중복": q["duplicate"]}
                         for q in rep["by_query"]
+                    ], hide_index=True, width="stretch")
+                if rep.get("query_plans"):
+                    st.subheader("검색 계획 성과 (누적)")
+                    st.caption("stored/discovered 비율이 낮은 계획은 다음 실행에서 자동 재생성됩니다. "
+                               "source 우선순위 변경은 사람이 설정에서 직접 합니다.")
+                    st.dataframe([
+                        {"LV2": p["lv2"], "type": p["target_type"], "source": p["source_id"],
+                         "검색어": p["query"], "생성": p["generation_source"], "생성일": p["created_at"],
+                         "발견": p["discovered_count"], "추출성공": p["fetch_success_count"],
+                         "저장": p["stored_count"]}
+                        for p in rep["query_plans"]
                     ], hide_index=True, width="stretch")
                 tu = rep.get("tavily_usage", {})
                 st.subheader("Tavily API 사용량")
@@ -828,7 +962,7 @@ with phase2_tab:
             except Exception as exc:  # noqa: BLE001
                 st.error(f"실행 실패: {exc}")
 
-with serpapi_tab:
+if False:  # 개별 provider 실행 UI는 taxonomy 수집이 대체한다. 하위 호환을 위해 코드만 보관한다.
     st.subheader("2차 SerpAPI 수집")
     st.caption("Google의 `site:` 검색으로 커뮤니티·질문·기술 토론 원문 후보를 찾고, 기존 2차 본문 추출·판정·저장 흐름으로 처리합니다.")
     serpapi_ready, serpapi_reason = dependency_status("serpapi", "SERPAPI_KEY")
@@ -875,12 +1009,13 @@ with serpapi_tab:
         format_func=lambda lv2: f"{lv2} · 부족 {serpapi_by_lv2[lv2]['deficit']:g}건",
     )
     sc1, sc2, _ = st.columns([1, 1, 3])
-    if sc1.button("추천 전체 선택", key="serpapi_select_all"):
-        st.session_state[serpapi_selection_key] = serpapi_members
-        st.rerun()
-    if sc2.button("부족분 상위로 복원", key="serpapi_select_top"):
-        st.session_state[serpapi_selection_key] = serpapi_default
-        st.rerun()
+    def _set_serpapi_selection(values: list[str]) -> None:
+        st.session_state[serpapi_selection_key] = values
+
+    sc1.button("추천 전체 선택", key="serpapi_select_all",
+               on_click=_set_serpapi_selection, args=(serpapi_members,))
+    sc2.button("부족분 상위로 복원", key="serpapi_select_top",
+               on_click=_set_serpapi_selection, args=(serpapi_default,))
 
     serp_cols = st.columns(3)
     serpapi_db = serp_cols[0].text_input("Small Run 저장 DB", "data/db/phase2_pilot.db", key="serpapi_db")
@@ -924,10 +1059,36 @@ with serpapi_tab:
             st.error(f"SerpAPI 수집 실패: {exc}")
 
 with phase2_results_tab:
-    st.subheader("Tavily 수집 결과")
-    st.caption("Tavily 검색 후보, 본문 수집, OpenAI 검수와 저장된 본문을 실행별로 확인합니다.")
-    result_runs = query(db_path, """
+    st.subheader("2차 Taxonomy 수집 결과")
+    phase2_result_db = st.session_state.get("_phase2_result_db", db_path)
+    st.caption(
+        "Taxonomy 계획에서 Tavily·SerpAPI를 순차 실행한 결과입니다. "
+        "검색 후보, 본문 수집, OpenAI 검수와 저장된 본문을 실행 이력별로 확인합니다."
+    )
+    st.caption(f"조회 DB: `{phase2_result_db}`")
+    has_taxonomy_run_id = has_column(phase2_result_db, "url_candidates", "taxonomy_run_id")
+    if has_taxonomy_run_id:
+        taxonomy_runs = query(phase2_result_db, """
+            SELECT taxonomy_run_id, MAX(rowid) AS latest_row,
+                   GROUP_CONCAT(DISTINCT discovery_provider) AS providers,
+                   GROUP_CONCAT(DISTINCT taxonomy_lv2_candidate) AS taxonomies,
+                   GROUP_CONCAT(DISTINCT NULLIF(subtype_candidate,'')) AS types,
+                   COUNT(DISTINCT run_id) AS provider_runs, COUNT(*) AS discovered,
+                   SUM(CASE WHEN status='extraction_failed' THEN 1 ELSE 0 END) AS extract_failed,
+                   SUM(CASE WHEN status IN ('trend_candidate','trend_accepted') THEN 1 ELSE 0 END) AS stored
+            FROM url_candidates
+            WHERE collection_phase=2 AND taxonomy_run_id IS NOT NULL AND taxonomy_run_id!=''
+            GROUP BY taxonomy_run_id ORDER BY latest_row DESC
+        """)
+    else:
+        taxonomy_runs = []
+    result_runs = query(phase2_result_db, """
         SELECT run_id,MAX(rowid) AS latest_row,COUNT(*) AS discovered,
+               COALESCE(MAX(NULLIF(discovery_provider,'')),
+                   CASE WHEN run_id LIKE 'serpapi_%' THEN 'serpapi'
+                        WHEN run_id LIKE 'tavily_%' THEN 'tavily' ELSE 'unknown' END) AS provider,
+               GROUP_CONCAT(DISTINCT taxonomy_lv2_candidate) AS taxonomies,
+               GROUP_CONCAT(DISTINCT NULLIF(subtype_candidate,'')) AS types,
                SUM(CASE WHEN status='rerank_skipped' THEN 1 ELSE 0 END) AS skipped,
                SUM(CASE WHEN status='extraction_failed' THEN 1 ELSE 0 END) AS extract_failed,
                SUM(CASE WHEN status='trend_candidate' THEN 1 ELSE 0 END) AS unverified,
@@ -937,45 +1098,99 @@ with phase2_results_tab:
         GROUP BY run_id ORDER BY latest_row DESC
     """)
     if not result_runs:
-        st.info("현재 선택한 DB에는 Tavily 2차 실행 이력이 없습니다.")
+        st.info("현재 조회 DB에는 2차 Taxonomy 수집 이력이 없습니다.")
     else:
-        result_run_id = st.selectbox(
-            "실행 이력", [row["run_id"] for row in result_runs], key="phase2_results_run",
-            format_func=_tavily_run_label,
-        )
-        result_summary = next(row for row in result_runs if row["run_id"] == result_run_id)
-        result_metrics = st.columns(6)
+        if taxonomy_runs:
+            batch_by_id = {row["taxonomy_run_id"]: row for row in taxonomy_runs}
+            selected_batch_id = st.selectbox(
+                "실행 선택",
+                list(batch_by_id),
+                key="phase2_results_taxonomy_batch",
+                format_func=lambda batch_id: (
+                    f"{_tavily_run_label(batch_id).split(' · ')[0]} · "
+                    f"{batch_by_id[batch_id]['taxonomies'] or 'taxonomy 미확인'} · "
+                    f"{batch_by_id[batch_id]['providers'] or '수집원 미확인'}"
+                ),
+            )
+            batch = batch_by_id[selected_batch_id]
+            active_run_ids = [row["run_id"] for row in query(phase2_result_db, """
+                SELECT DISTINCT run_id FROM url_candidates
+                WHERE collection_phase=2 AND taxonomy_run_id=? AND run_id IS NOT NULL
+                ORDER BY rowid
+            """, (selected_batch_id,))]
+            st.caption(
+                f"선택한 실행은 `{batch['taxonomies'] or '—'}`를 대상으로 "
+                f"{batch['providers'] or '—'}를 순차 실행한 결과입니다. "
+                "아래 숫자와 콘텐츠는 해당 실행 전체를 합산합니다."
+            )
+        else:
+            st.info("이전 형식의 실행 이력입니다. provider/type 단위로 결과를 표시합니다.")
+            legacy_run_id = st.selectbox(
+                "실행 선택", [row["run_id"] for row in result_runs], key="phase2_results_legacy_run",
+                format_func=_tavily_run_label,
+            )
+            active_run_ids = [legacy_run_id]
+
+        run_placeholders = ",".join("?" for _ in active_run_ids)
+        run_clause = f"run_id IN ({run_placeholders})"
+        result_summary = query(phase2_result_db, f"""
+            SELECT COUNT(*) AS discovered,
+                   SUM(CASE WHEN status='rerank_skipped' THEN 1 ELSE 0 END) AS skipped,
+                   SUM(CASE WHEN status='extraction_failed' THEN 1 ELSE 0 END) AS extract_failed,
+                   SUM(CASE WHEN status='trend_candidate' THEN 1 ELSE 0 END) AS unverified,
+                   SUM(CASE WHEN status='trend_accepted' THEN 1 ELSE 0 END) AS accepted,
+                   SUM(CASE WHEN status IN ('trend_discard','duplicate','quality_failed') THEN 1 ELSE 0 END) AS excluded
+            FROM url_candidates WHERE collection_phase=2 AND {run_clause}
+        """, tuple(active_run_ids))[0]
+        result_metrics = st.columns(4)
         for col, label, value in zip(
-            result_metrics, ["Tavily 검색 결과", "검색 후보 제외", "본문 수집 실패", "Tavily 미검수 후보", "OpenAI 검수 통과", "본문 확인 후 제외"],
-            [result_summary["discovered"], result_summary["skipped"], result_summary["extract_failed"],
-             result_summary["unverified"], result_summary["accepted"], result_summary["discarded"]],
+            result_metrics, ["검색 후보", "본문 수집 실패", "최종 accepted", "제외·중복"],
+            [result_summary["discovered"], result_summary["extract_failed"],
+             result_summary["accepted"], (result_summary["skipped"] or 0) + (result_summary["excluded"] or 0)],
         ):
-            col.metric(label, value)
-        result_targets = [row["taxonomy_lv2_candidate"] for row in query(db_path, """
+            col.metric(label, value or 0)
+        with st.expander("세부 실행 이력 보기", expanded=False):
+            st.caption("한 taxonomy 실행 안에서 type별로 Tavily·SerpAPI가 처리한 세부 내역입니다. 문제가 있을 때만 확인하세요.")
+            st.dataframe([
+                {
+                    "실행 시각": _tavily_run_label(row["run_id"]).split(" · ")[0],
+                    "탐색 방식": row["provider"],
+                    "대상 Taxonomy": row["taxonomies"] or "—",
+                    "Targeted Type": row["types"] or "—",
+                    "검색 후보": row["discovered"],
+                    "본문 수집 실패": row["extract_failed"] or 0,
+                    "accepted": row["accepted"] or 0,
+                }
+                for row in result_runs if row["run_id"] in active_run_ids
+            ], width="stretch", hide_index=True)
+        st.caption("‘검색 관련성’은 Tavily·SerpAPI의 제목·snippet 기반 후보 점수입니다. 본문을 읽은 뒤 산정하는 taxonomy fit(최종 적합도)과는 다르며, 낮은 후보는 본문 수집 전에 제외됩니다.")
+        result_targets = [row["taxonomy_lv2_candidate"] for row in query(phase2_result_db, """
             SELECT DISTINCT taxonomy_lv2_candidate FROM url_candidates
-            WHERE run_id=? AND taxonomy_lv2_candidate IS NOT NULL ORDER BY taxonomy_lv2_candidate
-        """, (result_run_id,))]
+            WHERE collection_phase=2 AND """ + run_clause + """ AND taxonomy_lv2_candidate IS NOT NULL
+            ORDER BY taxonomy_lv2_candidate
+        """, tuple(active_run_ids))]
         result_target = st.selectbox("대상 taxonomy", ["전체"] + result_targets, key="phase2_results_target")
         result_target_clause = "" if result_target == "전체" else " AND taxonomy_lv2_candidate=?"
-        result_target_params = (result_run_id,) if result_target == "전체" else (result_run_id, result_target)
+        result_target_params = tuple(active_run_ids) if result_target == "전체" else (*active_run_ids, result_target)
 
-        unverified_count = scalar(db_path, f"""
+        unverified_count = scalar(phase2_result_db, f"""
             SELECT COUNT(*) AS n FROM content_records
-            WHERE run_id=? AND collection_phase=2 AND action='candidate'
-              AND classification_source LIKE '%_unverified'{result_target_clause}
+            WHERE {run_clause} AND collection_phase=2
+              AND (classification_source LIKE '%_unverified' OR classification_source LIKE '%_targeted')
+              {result_target_clause}
         """, result_target_params)
-        if unverified_count:
-            with st.container(border=True):
-                st.markdown("#### Tavily 미검수 후보 OpenAI 검수")
-                st.caption("Tavily 검색·본문 수집은 다시 하지 않고, 저장된 masked 본문만 OpenAI에 보냅니다.")
+        if unverified_count and len(active_run_ids) == 1:
+            with st.expander("고급 · 저장 콘텐츠 OpenAI 재검수", expanded=False):
+                st.markdown("#### 저장 콘텐츠 OpenAI 재검수")
+                st.caption("검색·본문 수집은 다시 하지 않고, 저장된 정제 본문만 OpenAI에 보냅니다(원문 raw는 전송하지 않음. PII 마스킹은 현재 미적용).")
                 vc1, vc2 = st.columns([1, 2])
                 verify_limit = vc1.number_input("검수할 후보 수", 1, int(unverified_count), int(unverified_count),
                                                 key="phase2_results_verify_limit")
-                if vc2.button("미검수 후보 OpenAI 검수 실행", key="phase2_results_verify", type="primary"):
+                if vc2.button("OpenAI 재검수 실행", key="phase2_results_verify", type="primary"):
                     try:
                         from src import pipeline as _p2_verify
                         verify_report = _p2_verify.verify_unverified_candidates(
-                            result_run_id, db_path, p2_config, taxonomy_config=taxo_cfg,
+                            active_run_ids[0], phase2_result_db, p2_config, taxonomy_config=taxo_cfg,
                             settings_config=settings_cfg,
                             target_lv2=None if result_target == "전체" else result_target,
                             limit=int(verify_limit), overrides=p2_overrides,
@@ -987,44 +1202,24 @@ with phase2_results_tab:
                             st.success(f"OpenAI 검수 {verify_report['verified']}건 · 채택 {verify_report['accepted']}건 · 제외 {verify_report['discarded']}건")
                     except Exception as exc:  # noqa: BLE001
                         st.error(f"기존 후보 OpenAI 검수 실패: {exc}")
+        elif unverified_count:
+            st.caption("미검수 후보 OpenAI 검수는 아래 세부 실행 이력에서 provider/type 실행 하나를 선택해 진행할 수 있습니다.")
 
-        candidate_result_tab, stored_result_tab = st.tabs(["Tavily 검색 후보·처리 결과", "본문 저장 결과"])
-        with candidate_result_tab:
-            result_status = st.selectbox(
-                "결과 상태", ["전체", "Tavily 미검수 후보", "OpenAI 검수 후보", "본문 수집 실패", "검색 단계 제외", "본문 확인 후 제외"],
-                key="phase2_results_status",
-            )
-            status_map = {
-                "Tavily 미검수 후보": "trend_candidate", "OpenAI 검수 후보": "trend_accepted",
-                "본문 수집 실패": "extraction_failed", "검색 단계 제외": "rerank_skipped", "본문 확인 후 제외": "trend_discard",
-            }
-            result_status_clause = "" if result_status == "전체" else " AND status=?"
-            result_params = result_target_params if result_status == "전체" else (*result_target_params, status_map[result_status])
-            result_rows = query(db_path, f"""
-                SELECT title,published_at_hint,taxonomy_lv2_candidate,status,
-                       ROUND(discovery_relevance_score,2) AS discovery_score,
-                       ROUND(korea_relevance_score,2) AS korea_score,filter_reason,source_url
-                FROM url_candidates WHERE run_id=?{result_target_clause}{result_status_clause} ORDER BY rowid DESC LIMIT 500
-            """, result_params)
-            st.dataframe([
-                {"제목": row["title"] or "(제목 없음)", "Tavily 제공 발행일": row["published_at_hint"] or "미제공",
-                 "대상 taxonomy": row["taxonomy_lv2_candidate"], "처리 결과": _STATUS_LABEL.get(row["status"], row["status"]),
-                 "관련성": row["discovery_score"], "한국성": row["korea_score"], "이유": row["filter_reason"] or "—",
-                 "원문": row["source_url"]}
-                for row in result_rows
-            ], width="stretch", hide_index=True,
-                column_config={"원문": st.column_config.LinkColumn("원문", display_text="열기")})
+        stored_result_tab, candidate_result_tab = st.tabs(["✅ 최종 accepted 콘텐츠", "전체 처리 결과"])
         with stored_result_tab:
-            stored_rows = query(db_path, f"""
-                SELECT content_id,title,published_at,taxonomy_lv2_candidate AS target_taxonomy,
+            st.caption("이 실행에서 최종 accepted된 콘텐츠입니다. 행을 선택하면 아래에서 taxonomy 판정 근거와 정제 본문을 확인할 수 있습니다.")
+            stored_rows = query(phase2_result_db, f"""
+                SELECT content_id,title,published_at,site_name,domain,discovery_provider,taxonomy_lv2_candidate AS target_taxonomy,
                        taxonomy_lv2 AS predicted_taxonomy,COALESCE(category, subtype) AS content_type,
                        action,source_url
-                FROM content_records WHERE run_id=?{result_target_clause} ORDER BY rowid DESC LIMIT 500
+                FROM content_records WHERE {run_clause}{result_target_clause} AND action='accepted'
+                ORDER BY rowid DESC LIMIT 500
             """, result_target_params)
-            st.caption("행을 선택하면 아래에서 taxonomy 판정 근거와 masked 본문을 확인할 수 있습니다.")
+            st.caption(f"최종 accepted {len(stored_rows)}건")
             stored_table = [{
                 "제목": row["title"] or "(제목 없음)",
                 "작성일": row["published_at"] or "미제공",
+                "원문 사이트": row["site_name"] or row["domain"] or "—",
                 "Targeted Taxonomy": row["target_taxonomy"] or "—",
                 "Taxonomy lv2 (LLM)": row["predicted_taxonomy"] or "—",
                 "Type (LLM)": row["content_type"] or "—",
@@ -1040,11 +1235,16 @@ with phase2_results_tab:
             selected_stored_index = stored_selected[0] if stored_selected else None
             if stored_rows and selected_stored_index is not None and selected_stored_index < len(stored_rows):
                 selected_stored_id = stored_rows[selected_stored_index]["content_id"]
-                stored_detail = query(db_path, """
-                    SELECT title,source_url,published_at,source,extractor,masked_text,filter_reason,
+                has_core_text = has_column(phase2_result_db, "content_records", "core_text")
+                qa_fields = "question_body,answer_body," if has_core_text else "'' AS question_body,'' AS answer_body,"
+                display_field = "COALESCE(NULLIF(core_text,''), masked_text) AS display_text" if has_core_text else "masked_text AS display_text"
+                stored_detail = query(phase2_result_db, f"""
+                    SELECT title,source_url,published_at,source,extractor,{qa_fields}
+                           {display_field},filter_reason,
                            taxonomy_lv2_candidate,taxonomy_lv1,taxonomy_lv2,COALESCE(category, subtype) AS content_type,
                            action,classification_source,classification_reason,
-                           taxonomy_fit_score,harmfulness_score,korea_relevance_score,concrete_context_score,evidence_spans
+                           taxonomy_fit_score,harmfulness_score,korean_language_ratio,korea_relevance_score,
+                           korea_context_evidence,concrete_context_score,evidence_spans
                     FROM content_records WHERE content_id=?
                 """, (selected_stored_id,))[0]
                 st.markdown(f"### {stored_detail['title'] or '(제목 없음)'}")
@@ -1066,8 +1266,21 @@ with phase2_results_tab:
                         f"**{label}**  \n<span style='color: #6b7280'>: {description}</span>\n\n## {score}",
                         unsafe_allow_html=True,
                     )
-                with st.expander("본문 (masked)", expanded=True):
-                    st.write(stored_detail["masked_text"] or "(본문 없음)")
+                korea_evidence = json.loads(stored_detail["korea_context_evidence"] or "[]")
+                st.caption(
+                    f"본문 한글 비율: {stored_detail['korean_language_ratio']} · "
+                    f"한국 맥락 근거: {' · '.join(korea_evidence) if korea_evidence else '감지되지 않음'}"
+                )
+                with st.expander("핵심 본문", expanded=True):
+                    st.write(stored_detail["display_text"] or "(본문 없음)")
+                if stored_detail["question_body"] or stored_detail["answer_body"]:
+                    with st.expander("Q&A 구조 보기", expanded=False):
+                        if stored_detail["question_body"]:
+                            st.markdown("**질문**")
+                            st.write(stored_detail["question_body"])
+                        if stored_detail["answer_body"]:
+                            st.markdown("**답변**")
+                            st.write(stored_detail["answer_body"])
                 st.caption(
                     f"{stored_detail['source'] or '—'} · {stored_detail['extractor'] or '—'} · "
                     f"{stored_detail['published_at'] or '날짜 없음'} · [원문 열기]({stored_detail['source_url']})"
@@ -1075,17 +1288,44 @@ with phase2_results_tab:
                 if stored_detail["filter_reason"]:
                     st.caption(f"판정 사유 · {stored_detail['filter_reason']}")
 
+        with candidate_result_tab:
+            result_status = st.selectbox(
+                "결과 상태", ["전체", "미검수 후보", "OpenAI 검수 후보", "본문 수집 실패", "검색 단계 제외", "본문 확인 후 제외"],
+                key="phase2_results_status",
+            )
+            status_map = {
+                "미검수 후보": "trend_candidate", "OpenAI 검수 후보": "trend_accepted",
+                "본문 수집 실패": "extraction_failed", "검색 단계 제외": "rerank_skipped", "본문 확인 후 제외": "trend_discard",
+            }
+            result_status_clause = "" if result_status == "전체" else " AND status=?"
+            result_params = result_target_params if result_status == "전체" else (*result_target_params, status_map[result_status])
+            result_rows = query(phase2_result_db, f"""
+                SELECT title,published_at_hint,taxonomy_lv2_candidate,subtype_candidate,site_name,domain,discovery_provider,status,
+                       ROUND(discovery_relevance_score,2) AS discovery_score,
+                       ROUND(korea_relevance_score,2) AS korea_score,filter_reason,source_url
+                FROM url_candidates WHERE {run_clause}{result_target_clause}{result_status_clause} ORDER BY rowid DESC LIMIT 500
+            """, result_params)
+            st.dataframe([
+                {"제목": row["title"] or "(제목 없음)", "원문 사이트": row["site_name"] or row["domain"] or "—",
+                 "검색 제공 발행일": row["published_at_hint"] or "미제공",
+                 "대상 taxonomy": row["taxonomy_lv2_candidate"], "Targeted Type": row["subtype_candidate"] or "—",
+                 "처리 결과": _STATUS_LABEL.get(row["status"], row["status"]),
+                 "검색 관련성": row["discovery_score"], "한국성": row["korea_score"], "이유": row["filter_reason"] or "—",
+                 "원문": row["source_url"]}
+                for row in result_rows
+            ], width="stretch", hide_index=True,
+                column_config={"원문": st.column_config.LinkColumn("원문", display_text="열기")})
+
 with overview:
     st.subheader("통합 · 전체 수집 요약")
     st.caption("1차 트렌드 수집과 2차 Tavily 보강 수집을 합산한 현황입니다. 단계별 상세는 각 전용 탭에서 확인하세요.")
     accepted_count = scalar(db_path, "SELECT COUNT(*) AS n FROM content_records WHERE action='accepted'")
     discard_count = scalar(db_path, "SELECT COUNT(*) AS n FROM url_candidates WHERE status IN ('prefilter_discarded','trend_discard','matched_fail')")
-    pii_count = scalar(db_path, "SELECT COUNT(*) AS n FROM content_records WHERE pii_detected=1")
-    cols = st.columns(5)
+    cols = st.columns(4)
     for col, label, value in zip(
         cols,
-        ["URL 후보", "저장 콘텐츠", "✅ accepted", "🗑️ discard", "PII 탐지"],
-        [total_candidates, total_content, accepted_count, discard_count, pii_count],
+        ["URL 후보", "저장 콘텐츠", "✅ accepted", "🗑️ discard"],
+        [total_candidates, total_content, accepted_count, discard_count],
     ):
         col.metric(label, value)
 
@@ -1219,15 +1459,19 @@ with candidates_tab:
     stage_cols[2].metric("본문·LLM 제외", scalar(db_path, "SELECT COUNT(*) AS n FROM url_candidates WHERE status IN ('trend_discard','trend_excluded','duplicate')"))
     stage_cols[3].metric("최종 확보", scalar(db_path, "SELECT COUNT(*) AS n FROM url_candidates WHERE status='trend_accepted'"))
     statuses = ["전체"] + [row["status"] for row in query(
-        db_path, "SELECT DISTINCT status FROM url_candidates WHERE status IS NOT NULL ORDER BY status")]
+        db_path, "SELECT DISTINCT status FROM url_candidates WHERE status IS NOT NULL "
+        "AND status <> 'supplementary_collected' ORDER BY status")]
     methods = ["전체"] + [row["discovery_method"] for row in query(
         db_path,
-        "SELECT DISTINCT discovery_method FROM url_candidates WHERE discovery_method IS NOT NULL ORDER BY discovery_method")]
+        "SELECT DISTINCT discovery_method FROM url_candidates "
+        "WHERE discovery_method IS NOT NULL AND discovery_method <> 'in_body_link' "
+        "ORDER BY discovery_method")]
     c1, c2, c3 = st.columns(3)
     status = c1.selectbox("처리 결과", statuses, format_func=lambda x: _STATUS_LABEL.get(x, x))
     method = c2.selectbox("발견 경로", methods, format_func=lambda x: _METHOD_LABEL.get(x, x))
     candidate_phase = c3.selectbox("수집 단계", ["전체", "① 1차 수집", "② Tavily 2차"], key="candidate_phase_filter")
-    where, params = [], []
+    # 본문 속 링크 추종은 폐지된 기능이라 과거 이력을 화면에 노출하지 않는다(DB에는 남긴다).
+    where, params = ["COALESCE(discovery_method,'') <> 'in_body_link'"], []
     if status != "전체":
         where.append("status=?"); params.append(status)
     if method != "전체":
@@ -1265,52 +1509,72 @@ with candidates_tab:
 
 with content_tab:
     st.subheader("통합 · 저장 콘텐츠 탐색")
-    st.caption("1·2차에서 최종 accepted된 콘텐츠만 봅니다. 보조 링크 콘텐츠와 수집원이 unknown인 기록은 표시하지 않습니다.")
-    # ── 요약 지표 ──
-    def _n(where=""):
-        return scalar(db_path, f"SELECT COUNT(*) AS n FROM content_records {where}")
-    accepted_where = "WHERE action='accepted' AND COALESCE(is_supplementary,0)=0 AND COALESCE(source,'') NOT IN ('', 'unknown')"
+    st.caption("1차 content.db와 2차 phase2_pilot.db의 최종 accepted 콘텐츠를 함께 봅니다. 행을 선택하면 해당 DB의 정제 본문을 엽니다.")
+
+    def _accepted_rows_for_explorer(record_db_path: str, db_label: str) -> list[dict]:
+        """1차 source와 2차 원문 사이트(site_name)의 저장 위치 차이를 화면에서 통일한다."""
+        if not Path(record_db_path).exists():
+            return []
+        rows = query(record_db_path, """
+            SELECT content_id,title,source_url,canonical_url,source,site_name,domain,discovery_provider,
+                   taxonomy_lv1,taxonomy_lv2,COALESCE(category, subtype) AS content_type,
+                   action,collection_phase,collected_at
+            FROM content_records
+            WHERE action='accepted' AND COALESCE(is_supplementary,0)=0
+        """)
+        site_labels = {
+            "naver_kin": "네이버 지식인", "doctornow": "닥터나우", "instiz": "인스티즈",
+            "yonhap_news": "연합뉴스", "dcinside": "디시인사이드", "ilbe": "일간베스트",
+        }
+        for row in rows:
+            # provider는 URL을 찾은 방식일 뿐 수집원이 아니다. 2차는 실제 원문 사이트를 우선 표기한다.
+            row["수집원"] = row["source"] or site_labels.get(row["site_name"], row["domain"] or "unknown")
+            row["수집 단계"] = "2차 taxonomy 수집" if row["collection_phase"] == 2 else "1차 수집"
+            row["_db_path"] = record_db_path
+            row["_db_label"] = db_label
+        return rows
+
+    explorer_rows = (
+        _accepted_rows_for_explorer("data/db/content.db", "content.db")
+        + _accepted_rows_for_explorer("data/db/phase2_pilot.db", "phase2_pilot.db")
+    )
+    # 동일 URL이 두 DB에 있을 땐 2차 기록을 우선하고 한 번만 표시한다.
+    deduped_rows: dict[str, dict] = {}
+    for row in sorted(explorer_rows, key=lambda r: (r["collection_phase"] == 2, r["collected_at"] or ""), reverse=True):
+        deduped_rows.setdefault(row["canonical_url"] or row["source_url"] or row["content_id"], row)
+    explorer_rows = list(deduped_rows.values())
+
     mc = st.columns(2)
-    mc[0].metric("최종 accepted", _n(accepted_where))
-    mc[1].metric("Taxonomy 매핑 완료", _n(accepted_where + " AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''"))
+    mc[0].metric("최종 accepted", len(explorer_rows))
+    mc[1].metric("Taxonomy 매핑 완료", sum(bool(row["taxonomy_lv2"]) for row in explorer_rows))
 
     # ── taxonomy 분포 차트 (매핑된 콘텐츠) ──
-    dist = query(db_path, """SELECT taxonomy_lv2 AS lv2, COUNT(*) AS count FROM content_records
-                             WHERE action='accepted' AND COALESCE(is_supplementary,0)=0
-                               AND COALESCE(source,'') NOT IN ('', 'unknown')
-                               AND taxonomy_lv2 IS NOT NULL AND taxonomy_lv2!=''
-                             GROUP BY taxonomy_lv2 ORDER BY count DESC""")
+    dist = (
+        pd.DataFrame(explorer_rows).dropna(subset=["taxonomy_lv2"]).groupby("taxonomy_lv2").size()
+        .reset_index(name="count").rename(columns={"taxonomy_lv2": "lv2"}).sort_values("count", ascending=False)
+        .to_dict("records") if explorer_rows else []
+    )
     if dist:
         st.caption("Taxonomy lv2 분포 (매핑된 콘텐츠)")
         st.bar_chart(dist, x="lv2", y="count", horizontal=True)
 
     # ── 필터 ──
-    lv2_rows = query(
-        db_path, "SELECT DISTINCT taxonomy_lv2 FROM content_records WHERE taxonomy_lv2 IS NOT NULL ORDER BY taxonomy_lv2")
-    src_rows = query(
-        db_path, "SELECT DISTINCT source FROM content_records WHERE COALESCE(source,'') NOT IN ('', 'unknown') ORDER BY source")
+    lv2_rows = sorted({row["taxonomy_lv2"] for row in explorer_rows if row["taxonomy_lv2"]})
+    src_rows = sorted({row["수집원"] for row in explorer_rows if row["수집원"] != "unknown"})
     f1, f2, f3 = st.columns(3)
-    lv2 = f1.selectbox("Taxonomy lv2", ["전체"] + [row["taxonomy_lv2"] for row in lv2_rows])
-    source_sel = f2.selectbox("수집원", ["전체"] + [row["source"] for row in src_rows])
-    content_phase = f3.selectbox("수집 단계", ["전체", "1차 수집", "2차 Tavily 수집"], key="content_phase_filter")
-    where, params = ["action='accepted'", "COALESCE(is_supplementary,0)=0", "COALESCE(source,'') NOT IN ('', 'unknown')"], []
-    if lv2 != "전체":
-        where.append("taxonomy_lv2=?"); params.append(lv2)
-    if source_sel != "전체":
-        where.append("source=?"); params.append(source_sel)
-    if content_phase == "1차 수집":
-        where.append("COALESCE(collection_phase,1)=1")
-    elif content_phase == "2차 Tavily 수집":
-        where.append("collection_phase=2")
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
-    records = query(
-        db_path,
-        f"""SELECT content_id,title,source_url,source,taxonomy_lv1,taxonomy_lv2,COALESCE(category, subtype) AS content_type,action
-            FROM content_records {clause} ORDER BY collected_at DESC LIMIT 300""",
-        tuple(params),
-    )
+    lv2 = f1.selectbox("Taxonomy lv2", ["전체"] + lv2_rows)
+    source_sel = f2.selectbox("수집원", ["전체"] + src_rows)
+    content_phase = f3.selectbox("수집 단계", ["전체", "1차 수집", "2차 taxonomy 수집"], key="content_phase_filter")
+    records = [
+        row for row in explorer_rows
+        if (lv2 == "전체" or row["taxonomy_lv2"] == lv2)
+        and (source_sel == "전체" or row["수집원"] == source_sel)
+        and (content_phase == "전체" or row["수집 단계"] == content_phase)
+    ]
+    records.sort(key=lambda row: row["collected_at"] or "", reverse=True)
+    records = records[:300]
     st.caption(f"{len(records)}건")
-    table = [{"제목": r["title"] or "(제목 없음)", "수집원": r["source"], "URL": r["source_url"],
+    table = [{"제목": r["title"] or "(제목 없음)", "수집원": r["수집원"], "수집 단계": r["수집 단계"], "URL": r["source_url"],
               "Taxonomy lv1": r["taxonomy_lv1"] or "—", "Taxonomy lv2": r["taxonomy_lv2"] or "—",
               "Type": r["content_type"] or "—", "처리 상태": _ACTION_LABEL.get(r["action"], r["action"])} for r in records]
     st.caption("표의 행을 클릭하면 아래에 상세 내용이 열립니다.")
@@ -1325,12 +1589,18 @@ with content_tab:
     # ── 상세 카드 ──
     if records and selected_index is not None and selected_index < len(records):
         selected_id = records[selected_index]["content_id"]
+        detail_db_path = records[selected_index]["_db_path"]
+        has_core_text = has_column(detail_db_path, "content_records", "core_text")
+        qa_fields = "question_body,answer_body," if has_core_text else "'' AS question_body,'' AS answer_body,"
+        display_field = "COALESCE(NULLIF(core_text,''), masked_text) AS display_text" if has_core_text else "masked_text AS display_text"
         detail = query(
-            db_path,
-            """SELECT title,source_url,masked_text,masked_comments,filter_reason,
+            detail_db_path,
+            f"""SELECT title,source_url,{qa_fields}
+                      {display_field},masked_comments,filter_reason,
                       taxonomy_lv1,taxonomy_lv2,category,action,risk_score,trend_score,confidence,is_risk_candidate,
                       risk_signals,secondary_flags,matched_keywords,classification_source,classification_reason,
-                      harmfulness_score,taxonomy_fit_score,korea_relevance_score,concrete_context_score,
+                      harmfulness_score,taxonomy_fit_score,korean_language_ratio,korea_relevance_score,
+                      korea_context_evidence,concrete_context_score,
                       is_harmful,evidence_spans,
                       original_comment_count,kept_comment_count,duplicate_comments_removed,unrelated_comments_removed,
                       llm_model,llm_input_tokens,llm_output_tokens,llm_total_tokens,llm_estimated_cost_usd,
@@ -1367,6 +1637,11 @@ with content_tab:
             evidence = _jl(detail["evidence_spans"])
             if evidence:
                 st.caption("판정 근거 문구: " + " · ".join(f"‘{x}’" for x in evidence))
+            korea_evidence = _jl(detail["korea_context_evidence"])
+            st.caption(
+                f"본문 한글 비율: {detail['korean_language_ratio']} · "
+                f"한국 맥락 근거: {' · '.join(korea_evidence) if korea_evidence else '감지되지 않음'}"
+            )
         else:
             st.info(f"매핑 안 됨 · {_ACTION_LABEL.get(detail['action'], detail['action'])} "
                     f"(위험신호 후보={'예' if detail['is_risk_candidate'] else '아니오'})")
@@ -1374,14 +1649,22 @@ with content_tab:
             f"{detail['source'] or '?'} · {detail['board_name'] or ''} · {detail['extractor']} · "
             f"{detail['published_at'] or '날짜 없음'}  ·  [원문 열기]({detail['source_url']})"
         )
-        with st.expander("본문 (masked)", expanded=True):
-            st.write(detail["masked_text"] or "(본문 없음)")
+        with st.expander("핵심 본문", expanded=True):
+            st.write(detail["display_text"] or "(본문 없음)")
+        if detail["question_body"] or detail["answer_body"]:
+            with st.expander("Q&A 구조 보기", expanded=False):
+                if detail["question_body"]:
+                    st.markdown("**질문**")
+                    st.write(detail["question_body"])
+                if detail["answer_body"]:
+                    st.markdown("**답변**")
+                    st.write(detail["answer_body"])
         if detail["masked_comments"]:
             try:
                 comments = json.loads(detail["masked_comments"])
             except (json.JSONDecodeError, TypeError):
                 comments = [detail["masked_comments"]]
-            with st.expander(f"댓글 {len(comments)}개 (masked · 과거 수집분)"):
+            with st.expander(f"댓글 {len(comments)}개 (과거 수집분)"):
                 st.caption(
                     f"원본 {detail['original_comment_count']} · 유지 {detail['kept_comment_count']} · "
                     f"중복 제거 {detail['duplicate_comments_removed']} · 무관 제거 {detail['unrelated_comments_removed']}"
@@ -1398,7 +1681,7 @@ with content_tab:
             st.caption(f"판정 사유: `{detail['filter_reason']}`")
 
         linked = query(
-            db_path,
+            detail_db_path,
             """SELECT title,source_url,masked_text,link_source
                FROM content_records
                WHERE is_supplementary=1 AND parent_source_url=?
@@ -1406,7 +1689,7 @@ with content_tab:
             (detail["source_url"],),
         )
         linked_candidates = query(
-            db_path,
+            detail_db_path,
             """SELECT source_url,status,
                       CASE WHEN status='extraction_failed' THEN COALESCE(
                         (SELECT reason FROM filter_logs f WHERE f.source_url=url_candidates.source_url
@@ -1485,14 +1768,65 @@ with failures_tab:
            WHERE status='extraction_failed' GROUP BY domain ORDER BY count DESC""",
     ), width="stretch", hide_index=True)
 
-with pii_tab:
-    st.subheader("공통 · PII 점검")
-    st.warning("raw_text와 원문 PII는 이 화면에서 조회하지 않습니다.")
-    st.dataframe(query(
-        db_path,
-        """SELECT title,source_url,subtype,pii_types,ROUND(pii_risk_score,3) AS pii_risk,
-                  masking_version,masking_warnings,masked_entities
-           FROM content_records WHERE pii_detected=1
-           ORDER BY pii_risk_score DESC LIMIT 300""",
-    ), width="stretch", hide_index=True,
-        column_config={"source_url": st.column_config.LinkColumn("URL")})
+
+with source_compare_tab:
+    st.subheader("수집원 비교")
+    st.caption("같은 수량 기준으로 수집원별 결과가 어떻게 갈리는지 봅니다. "
+               "총 수집 대비 accepted 비율(수율)과 어떤 taxonomy로 매핑되는지가 핵심 지표입니다.")
+
+    since = st.selectbox("기간", ["전체", "최근 1일", "최근 7일", "최근 30일"], index=0,
+                         help="content_records.collected_at 기준입니다.")
+    _days = {"최근 1일": 1, "최근 7일": 7, "최근 30일": 30}.get(since)
+    _where = f"WHERE date(collected_at) >= date('now', '-{_days} day')" if _days else ""
+
+    rows = query(db_path, f"""
+        SELECT COALESCE(source, site_type, 'unknown') AS 수집원,
+               COALESCE(NULLIF(board_name,''), NULLIF(category_name,''), '-') AS 카테고리,
+               COUNT(*) AS 총수집,
+               SUM(action='accepted') AS accepted,
+               SUM(action='discard') AS discard,
+               SUM(action NOT IN ('accepted','discard')) AS 기타
+        FROM content_records {_where or 'WHERE 1=1'} AND COALESCE(is_supplementary,0)=0
+        GROUP BY 수집원, 카테고리 ORDER BY 총수집 DESC
+    """)
+    if not rows:
+        st.info("해당 기간에 수집된 콘텐츠가 없습니다.")
+    else:
+        for r in rows:
+            r["수율"] = round(r["accepted"] / r["총수집"], 3) if r["총수집"] else 0.0
+        st.dataframe(rows, hide_index=True, width="stretch",
+                     column_config={"수율": st.column_config.ProgressColumn(
+                         "accepted 수율", min_value=0.0, max_value=1.0, format="%.1f%%")})
+
+        st.markdown("**수집원 × taxonomy 매핑 양상**")
+        st.caption("같은 수량을 모아도 수집원마다 어떤 taxonomy가 나오는지가 다릅니다. accepted 기준입니다.")
+        tax = query(db_path, f"""
+            SELECT COALESCE(source, site_type, 'unknown') AS 수집원,
+                   COALESCE(taxonomy_lv2,'-') AS taxonomy, COUNT(*) AS 건수
+            FROM content_records {_where or 'WHERE 1=1'} AND action='accepted'
+              AND COALESCE(is_supplementary,0)=0
+            GROUP BY 수집원, taxonomy ORDER BY 수집원, 건수 DESC
+        """)
+        if tax:
+            st.markdown("**taxonomy별 수집원 accepted 수량**")
+            st.caption("가로축은 Taxonomy lv2, 세로축은 accepted 콘텐츠 수량이며 색상은 수집원입니다.")
+            st.bar_chart(tax, x="taxonomy", y="건수", color="수집원")
+            pivot: dict = {}
+            for t in tax:
+                pivot.setdefault(t["taxonomy"], {"taxonomy": t["taxonomy"]})[t["수집원"]] = t["건수"]
+            st.dataframe(sorted(pivot.values(),
+                                key=lambda r: -sum(v for k, v in r.items() if k != "taxonomy")),
+                         hide_index=True, width="stretch")
+        else:
+            st.info("accepted 콘텐츠가 아직 없습니다.")
+
+        st.markdown("**후보 단계 탈락 사유**")
+        st.caption("본문을 가져오기 전에 어디서 걸러졌는지. 수율이 낮은 수집원의 원인을 여기서 확인합니다.")
+        st.dataframe(query(db_path, """
+            SELECT COALESCE(source, source_type, 'unknown') AS 수집원,
+                   COALESCE(NULLIF(status,''),'-') AS 후보상태, COUNT(*) AS 건수
+            FROM url_candidates
+            WHERE COALESCE(discovery_method,'') <> 'in_body_link'
+              AND COALESCE(is_supplementary,0)=0
+            GROUP BY 수집원, 후보상태 ORDER BY 수집원, 건수 DESC
+        """), hide_index=True, width="stretch")
