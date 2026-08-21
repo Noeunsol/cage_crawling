@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from ..prompt_loader import PromptSpec
+from src.common.prompt_loader import PromptSpec
 
 log = logging.getLogger(__name__)
 
@@ -96,9 +96,10 @@ def _rule_scores(result, intent) -> tuple[float, float, int, int, int]:
     inc = len(_term_hits(text, _include_terms(intent, result)))
     exc = len(_term_hits(text, intent.exclude))
     event = len(_term_hits(text, intent.event_terms))
-    # Google 순위(SerpAPI provider_score)는 taxonomy 관련성을 뜻하지 않는다.
-    # rank 1이라는 이유만으로 무관한 글을 본문 수집하지 않도록, SerpAPI는 실제 type 신호가 점수를 만든다.
-    base = 0.2 if getattr(result, "provider", "") == "serpapi" else (
+    # Google 순위(SerpAPI provider_score)는 taxonomy 관련성을 뜻하지 않지만,
+    # 이미 taxonomy별 query + site: 도메인으로 발견된 후보다. 정확한 include
+    # 문자열이 없다는 이유만으로 skip하지 말고 low_priority로 본문 gate에 넘긴다.
+    base = 0.5 if getattr(result, "provider", "") == "serpapi" else (
         float(result.provider_score) if result.provider_score is not None else 0.5
     )
     if intent.event_terms:
@@ -125,6 +126,11 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
     # ① rule로 확정 가능한 명백한 경우
     if exc >= 2 and inc == 0:
         return RerankResult(disc, korea, "skip", "rule", f"exclude_hits={exc}, no include")
+    # 제외어가 세 개 이상이면 주제어가 같이 나와도 그 문서다. 로펌 성공사례가 대표적으로
+    # '법무법인·성공사례·무료상담·상담예약'을 쌓아두고 주제어까지 갖춰 include 가점으로 되살아난다.
+    # 감점은 2개에서 상한이라 점수만으로는 못 막는다(실측 2026-08-19).
+    if exc >= 3:
+        return RerankResult(disc, korea, "skip", "rule", f"exclude_hits={exc}, marketing/off-topic")
     margin = cfg["llm_margin"]
     near = (abs(disc - cfg["min_discovery_relevance"]) < margin
             or abs(korea - cfg["min_korea_relevance"]) < margin)
@@ -156,7 +162,7 @@ def rerank(result, intent, llm=None, cfg: dict | None = None) -> RerankResult:
 if __name__ == "__main__":
     from dataclasses import dataclass as _dc
 
-    from .intent_builder import CollectionIntent
+    from src.phase2.intent_builder import CollectionIntent
 
     @_dc
     class _R:

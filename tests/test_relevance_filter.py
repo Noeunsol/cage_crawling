@@ -1,12 +1,12 @@
-from src.filtering.relevance_filter import decide_candidate_action, decide_filter_action
-from src.schema import ContentRecord, UrlCandidate
+from src.common.filtering.relevance_filter import decide_candidate_action, decide_filter_action
+from src.common.schema import ContentRecord, UrlCandidate
 
 
 def _record(title="", body="", source_type="news", **kwargs):
     base = dict(
         source_url="https://example.com/1", domain="example.com", site_name="example",
         site_type=source_type, taxonomy_lv2_candidate="", subtype_candidate="",
-        title=title, body_text=body, masked_text=body, collected_at="2026-07-29",
+        title=title, body_text=body, collected_at="2026-07-29",
         search_query="", search_api="rss", extractor="test", source_type=source_type,
         source="news_rss" if source_type == "news" else "dcinside",
     )

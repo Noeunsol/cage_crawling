@@ -1,17 +1,16 @@
 # Safety Taxonomy 단일 정본.
 # accepted 콘텐츠 1개는 type 1개를 선택하고, type이 속한 lv2/lv1 경로에 일대일 매핑된다.
-# keywords는 1차 수집 후보 탐색용이며 최종 taxonomy 매핑은 LLM rubric으로만 수행한다.
+# 최종 taxonomy 매핑은 LLM이 definition/description + 각 type의 llm_rubric으로 판정한다.
+# llm_rubric의 prerequisite/inclusion_criteria/exclusion_criteria/boundary_resolution은
+# prompts/taxonomy_mapping.yaml의 type_format을 통해 실제 시스템 프롬프트로 들어간다.
+# few_shot_examples는 프롬프트에 싣지 않는다(67개분이면 프롬프트가 6.5배가 된다) —
+# 판정 예시는 prompts/taxonomy_mapping.yaml의 examples 선별본이 담당한다.
 # 공통 원칙: 출처는 힌트일 뿐이며, 모든 taxonomy는 "행동·대상·피해·맥락" 기준으로 같은 잣대를 쓴다.
 # 뉴스는 완곡한 보도체라도 사건 구조가 구체적이면 포괄하고, 커뮤니티는 욕설/은어라도 중심 행위가 약하면 과매핑하지 않는다.
 # 직접 인용된 발언·캡처 문구·댓글은 독립 신호로 본다. 사과/해명/비판 문맥이라도 인용문 자체가 위험 행위면 해당 taxonomy로 매핑한다.
 defaults:
   collection_type: raw_expression
-  preferred_extractors: [trafilatura, site_parser, playwright]
-  preservation_policy:
-    preserve_harmful_expression: true
-    mask_pii: true
-    restrict_actionable_detail: false
-    mask_credentials: true
+  preferred_extractors: [trafilatura, site_parser]
 
 policies:
   - taxonomy_lv1: Toxicity Harms
@@ -47,8 +46,16 @@ policies:
               reason: "키워드(좌표)가 포함되었으나 실존 게임(메이플스토리) 내의 파티 플레이 정보 공유 목적이며 타인에 대한 괴롭힘이 아님"
 
       - name: cyberstalking
-        description: 특정인의 온라인 활동, 계정, 위치, 관계 등을 지속적으로 추적하거나 차단 이후에도 반복적으로 접근·연락하는 행위
-        keywords: [스토킹, 미행, 위치추적, 집착, 신상추적, 뒷조사, 계정추적, 주소털림, 목격담]
+        description: >-
+          특정인의 온라인 활동, 계정, 위치, 관계 등을 지속적으로 추적하거나 차단 이후에도
+          반복적으로 접근·연락하는 행위. 구체적으로는
+          (1) 차단해도 새 계정·부계정·다른 번호로 계속 연락,
+          (2) SNS 활동·위치·인간관계·게시물·접속 상태를 반복 감시,
+          (3) DM·카카오톡·이메일·댓글·게임 채팅으로 지속 접근,
+          (4) 지인 계정이나 익명 계정을 이용한 우회 접촉,
+          (5) 온라인에서 모은 정보로 오프라인 접근이나 협박으로 이어지는 경우.
+        keywords: [스토킹, 미행, 위치추적, 집착, 신상추적, 뒷조사, 계정추적, 주소털림, 목격담,
+                   부계정, 새 계정, 차단, 우회 접촉, 반복 연락, DM, 게임 채팅, 접속 상태]
         llm_rubric:
           prerequisite: "대상의 '동의 없는 프라이버시 침해'와 '지속성 또는 물리적/디지털 접근 위협' 중 하나 이상이 포함되어야 함."
           inclusion_criteria:

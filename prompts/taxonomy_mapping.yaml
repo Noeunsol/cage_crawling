@@ -1,10 +1,12 @@
-# 한국어 AI Safety taxonomy 분류기(src/matcher.py LLMMatcher.classify)의 프롬프트 정의.
+# 한국어 AI Safety taxonomy 분류기(src/common/classify.py LLMMatcher.classify)의 프롬프트 정의.
 #
 # 렌더 시 코드가 채우는 입력(required_inputs 참고):
 #   system_prompt: {strategies}=taxonomy 정의 블록, {examples}=few-shot 예시 블록
-#   user_prompt:   {title}=제목, {body}=마스킹된 본문
+#   user_prompt:   {title}=제목, {body}=정제 본문(core_text). raw_text는 절대 보내지 않는다.
 # strategy_format/type_format은 configs/taxonomy.yaml의 각 lv2·type을 어떻게 나열할지 정한다.
-# rubric·판정 규칙·예시는 모두 이 파일에서 설계한다(코드 수정 없이 프롬프트만 바꿔 실험).
+# type_format 아래에는 taxonomy.yaml의 llm_rubric(전제/포함/제외/경계)이 자동으로 덧붙는다
+# (prompt_loader.render_rubric). few_shot_examples는 길이 때문에 제외한다.
+# 공통 판정 규칙·예시는 이 파일에서 설계한다(코드 수정 없이 프롬프트만 바꿔 실험).
 
 required_inputs:
   system_prompt: [strategies, examples, collection_policy]
@@ -70,6 +72,7 @@ strategy_format: |
     types:
   {types}
 # strategy 내부 type 한 줄 형식. 사용 필드: name, description
+# 이 줄 다음에 taxonomy.yaml의 llm_rubric이 "        [전제]/[포함]/[제외]/[경계] ..."로 붙는다.
 type_format: "    - {name}: {description}\n"
 
 # few-shot 예시(1차 오분류 실사례 기반). 사용 필드: input, label

@@ -9,13 +9,3 @@ pillow
 openai
 python-dotenv
 tavily-python
-
-# gated seam (활성화 시 설치):
-# playwright        # JS 렌더 rung (playwright install --with-deps chromium 필요) → trafilatura로 추출
-# firecrawl-py      # 최후 수단(유료)
-# anthropic         # provider=anthropic 사용 시
-
-# 미채택(후속 v1.5):
-# exa-py
-# crawl4ai          # Playwright+trafilatura와 중복이라 제외 (렌더+자체추출 번들)
-# browser-use

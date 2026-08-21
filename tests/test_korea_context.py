@@ -1,4 +1,4 @@
-from src.filtering.korea_context import score_korea_context
+from src.common.filtering.korea_context import score_korea_context
 
 
 def test_foreign_event_with_korean_impact_scores_as_korean_context():

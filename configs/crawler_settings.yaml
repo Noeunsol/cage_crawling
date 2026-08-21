@@ -1,11 +1,8 @@
-# 튜닝 임계값. 실제 웹/모델 튜닝 지점이므로 코드 상수가 아닌 설정 파일로 분리.
-# ponytail: 실제 수집 데이터로 보정해야 하는 값들. 지금 값은 mock 기준 초기치.
+# 1차·2차 공용 임계값. 실제 웹/모델 튜닝 지점이므로 코드 상수가 아닌 설정 파일로 분리.
+# 모드별 설정은 trend_collection.yaml(1차) / targeted_collection.yaml(2차)에 따로 있다.
+# ponytail: 실제 수집 데이터로 보정해야 하는 값들.
 
-date_range:
-  after: "2026-07-01"
-  before: "2026-07-14"
-
-# Phase 9 품질 필터
+# 품질 필터 (본문 확보 후)
 quality:
   min_body_chars: 200      # 본문 기준(댓글 미수집)
   min_body_chars_by_site_type:   # extraction.success_criteria와 값을 맞춘다. 어긋나면 헛fetch가 생긴다
@@ -13,72 +10,48 @@ quality:
   min_korean_ratio: 0.3      # 한글 문자 비율 하한
   min_quality_score: 0.6
 
-# Phase 10: 1차 relevance gate 통과 콘텐츠의 LLM taxonomy 분류
+# LLM taxonomy 분류 판정 임계 (1차 trend의 최종 accepted/discard 기준)
 matching:
-  auto_save_threshold: 0.8
-  review_threshold: 0.5
   accepted_confidence: 0.50
   accepted_taxonomy_fit: 0.50
   accepted_concrete_context: 0.30
   min_korea_relevance: 0.3
-  # LLM 분류기 설정은 configs/llm.yaml 로 분리됨. 호출부가 matching.llm을 넘기면 그 값이 우선.
+  # 모델/가격/프롬프트 경로는 configs/llm.yaml. 호출부가 matching.llm을 넘기면 그 값이 우선.
 
-# Phase 5-7 추출 사다리. success_criteria는 site_type별로 다름.
+# 추출 사다리. 정적 fetch 1회를 모든 rung이 공유한다(JS 렌더 rung 없음).
 extraction:
   min_extract_chars: 200
   success_criteria:
-    news:      {min_body_chars: 400, require_title: true,  require_date: false}
-    blog:      {min_body_chars: 400, require_title: true,  require_date: false}
-    tech:      {min_body_chars: 400, require_title: true,  require_date: false}
+    # quality.min_body_chars(200)보다 높게 두면 quality가 통과시킬 글을 추출 단계가 먼저 버린다.
+    news:      {min_body_chars: 200, require_title: true,  require_date: false}
+    blog:      {min_body_chars: 200, require_title: true,  require_date: false}
+    tech:      {min_body_chars: 200, require_title: true,  require_date: false}
     qna:       {min_body_chars: 200, require_title: true}
     community: {min_body_chars: 80,  require_title: false}
-  playwright: {enabled: false}                 # seam (JS 렌더 → trafilatura)
-  firecrawl:  {enabled: false, min_value: 0.8} # seam + value 게이트 (유료 최후 수단)
 
 # HTTP fetcher (정중한 수집)
 http:
   timeout: 20
   per_domain_delay: 1.0
+  # 같은 도메인이 연속 N회 막히면 이번 실행에서 그 도메인을 건너뛴다.
+  # 차단된 사이트를 계속 두드리면 차단만 길어지고 시간을 버린다.
+  max_consecutive_failures: 5
   respect_robots: true
   user_agent: "Mozilla/5.0 (compatible; taxonomy-research-crawler/0.1; +contact@example.com)"
 
-# Phase 4 필터 강도 (Toxic raw 수집은 minimal + strong matcher)
+# 광고·제휴 본문 배제 (본문 텍스트 기준)
 filtering:
-  mode_by_taxonomy:
-    Toxic Language: minimal
   hard_negative_patterns: [쿠팡 파트너스, 제휴 링크, 광고 문의, 스폰서]
 
-# 단계9 동일 사건 near-dup
+# 동일 사건 near-dup
 dedup:
   event_hamming_threshold: 3
 
-# 라이브 실행 안전 상한 (비용 사고 방지)
-run_limits:
-  max_queries_per_run: 3     # run당 실제 SerpAPI 검색 호출 상한. 첫 실행은 낮게, 운영 시 상향.
-  max_urls_per_query: 5      # (예약) 쿼리당 후보 상한
-  max_extracts_per_run: 10   # subtype당 fetch/추출 상한
-
-# 명시적 global/taxonomy/collection_type quota. run_limits는 이전 설정 호환용이다.
-budget:
-  global_max_queries: 100
-  global_max_extracts: 500
-  per_taxonomy:
-    Toxic Language: {max_queries: 60, max_extracts: 300}
-  per_collection_type:
-    raw_expression: {max_queries: 30, max_extracts: 150}
-    qa_consulting: {max_queries: 15, max_extracts: 80}
-    news_case: {max_queries: 15, max_extracts: 80}
-    technical_security: {max_queries: 10, max_extracts: 50}
+# 원문(raw_text) 취급. 정제 전 본문이라 기본은 DB에만 두고 export에서는 뺀다.
+# PII 마스킹은 하지 않는다 — 욕설·협박 보존이 Toxic Language 수집의 목적이다.
+privacy:
+  save_raw_text: true      # DB content_records.raw_text 저장 여부
+  export_raw_text: false   # CSV/report로 내보낼지 (export.include_raw보다 우선)
 
 export:
   include_raw: false
-
-# 단계별 파일 저장(ArtifactStore). 기본 off = 완전 no-op(동작 무변화).
-# content_id별 data/stages/<id>/ 아래에 저장.
-staging:
-  enabled: false
-  base_dir: data/stages
-  stages:
-    masked: true
-    cleaned: false
-    raw_text: false

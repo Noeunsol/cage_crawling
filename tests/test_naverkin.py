@@ -1,5 +1,5 @@
-from src.extract.site_parser import NaverKinExtractor
-from src.schema import UrlCandidate
+from src.common.extract.site_parser import NaverKinExtractor
+from src.common.schema import UrlCandidate
 
 
 def _candidate():

@@ -1,13 +1,14 @@
 # 도메인 → site_name / site_type / preferred_extractor 매핑.
 # site_registry.py 가 로드하여 URL 도메인 판별과 ExtractorRouter 분기에 사용.
-# preferred_extractor: site_parser | firecrawl | playwright | browser_use
+# preferred_extractor: site_parser | community | trafilatura
+#   (JS 렌더·유료 rung은 v23에서 제거 — 정적으로 안 되면 수집하지 않는다)
 sites:
   naver_kin:
     domains:
       - kin.naver.com
       - m.kin.naver.com
     site_type: qna
-    preferred_extractor: site_parser   # MockNaverKinExtractor
+    preferred_extractor: site_parser
 
   ilbe:
     domains:
@@ -54,60 +55,64 @@ sites:
       max_candidates_per_board: 20
       request_delay: 2.0
       exclude_notice: true
+  # 아래 두 곳은 robots.txt가 `User-agent: *`를 전면 차단한다(2026-08 실측).
+  # 수집 대상이 아니라 도메인→site_type 조회용 등록일 뿐이다.
+  # 검색 대상 도메인에 다시 넣지 말 것 — tests/test_targeted.py가 막는다.
   fmkorea:
     domains:
       - fmkorea.com
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
   nate_pann:
     domains:
       - pann.nate.com
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
   humoruniv:
     domains:
       - humoruniv.com
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
   ruliweb:
     domains:
       - ruliweb.com
       - bbs.ruliweb.com
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
   clien:
     domains:
       - clien.net
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
   inven:
     domains:
       - inven.co.kr
     site_type: community
-    preferred_extractor: playwright
+    preferred_extractor: community
 
+  # velog은 SPA라 정적 추출이 0자다(2026-08 실측). 검색 대상 도메인에서 제외했다.
   velog:
     domains:
       - velog.io
     site_type: blog
-    preferred_extractor: firecrawl
+    preferred_extractor: trafilatura
 
   tistory:
     domains:
       - tistory.com
     site_type: blog
-    preferred_extractor: firecrawl
+    preferred_extractor: trafilatura
 
   news_generic:
     domains:
       - news.naver.com
     site_type: news
-    preferred_extractor: firecrawl
+    preferred_extractor: trafilatura
 
   yonhap_news:
     domains:
@@ -136,8 +141,10 @@ sites:
     site_type: government
     preferred_extractor: trafilatura
 
-  ministry_of_environment:
-    domains: [me.go.kr, nics.me.go.kr]
+  # 환경부는 기후에너지환경부(mcee.go.kr)로 개편됐다. me.go.kr는 리디렉트 셸이라 본문이 없어
+  # 검색 대상에서는 mcee.go.kr을 쓴다(구 도메인은 과거 URL 조회용으로만 남긴다).
+  ministry_of_climate_energy_environment:
+    domains: [mcee.go.kr, me.go.kr, nics.me.go.kr]
     site_type: government
     preferred_extractor: trafilatura
 
@@ -156,7 +163,7 @@ sites:
     domains:
       - lawtalk.co.kr
     site_type: qna
-    preferred_extractor: site_parser
+    preferred_extractor: trafilatura
 
   namuwiki:
     domains:
@@ -164,3 +171,78 @@ sites:
     site_type: reference
     preferred_extractor: trafilatura
     use_for_keyword_expansion: true
+
+  # ── 아래는 robots 허용 + 정적 서버렌더를 실측 확인하고 추가한 수집원(2026-08) ──
+  boannews:
+    domains:
+      - boannews.com
+    site_type: news
+    preferred_extractor: trafilatura
+
+  dailysecu:
+    domains:
+      - dailysecu.com
+    site_type: news
+    preferred_extractor: trafilatura
+
+  zdnet_korea:
+    domains:
+      - zdnet.co.kr
+    site_type: news
+    preferred_extractor: trafilatura
+
+  personal_information_protection_commission:
+    domains:
+      - pipc.go.kr
+    site_type: government
+    preferred_extractor: trafilatura
+
+  hidoc:
+    domains:
+      - hidoc.co.kr
+    site_type: qna
+    preferred_extractor: trafilatura
+
+  ppomppu:
+    domains:
+      - ppomppu.co.kr
+    site_type: community
+    preferred_extractor: community
+
+  coinpan:
+    domains:
+      - coinpan.com
+    site_type: community
+    preferred_extractor: community
+
+  okky:
+    domains:
+      - okky.kr
+    site_type: tech
+    preferred_extractor: trafilatura
+
+  donga:
+    domains:
+      - donga.com
+    site_type: news
+    preferred_extractor: trafilatura
+
+  sbs_news:
+    domains:
+      - news.sbs.co.kr
+      - sbs.co.kr
+    site_type: news
+    preferred_extractor: trafilatura
+
+  arca_live:
+    domains:
+      - arca.live
+    site_type: community
+    preferred_extractor: community
+
+  bobaedream:
+    domains:
+      - bobaedream.co.kr
+      - www.bobaedream.co.kr
+    site_type: community
+    preferred_extractor: community

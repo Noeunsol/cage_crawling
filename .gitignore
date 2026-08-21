@@ -224,12 +224,11 @@ data/db/*.db
 data/db/*.db-journal
 data/exports/*.json
 data/exports/*.csv
-data/stages/
 data/archive/
 !data/exports/.gitkeep
-!data/stages/.gitkeep
 
 # 로그 (앱 회전 로그 + LLM 사용량 감사 로그)
 logs/*.log*
 logs/*.jsonl
 !logs/.gitkeep
+uv.lock

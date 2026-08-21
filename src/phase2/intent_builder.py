@@ -121,8 +121,15 @@ def build_collection_intent(policy, config: dict) -> CollectionIntent:
     # 비용 상한. 자를 때 조용히 넘어가지 않는다 — 로그 + intent에 기록해 UI/dry-run에서도 보이게 한다.
     dropped_queries = queries[max_searches:]
     if dropped_queries:
-        log.warning("%s: 손으로 쓴 쿼리 %d개 중 %d개만 사용(max_searches=%d), 버림: %s",
-                    lv2, len(queries), max_searches, max_searches, dropped_queries)
+        # 전략(검색 계획) LV2는 이 고정 검색문을 아예 실행하지 않는다. LLM이 실패했을 때의
+        # 폴백일 뿐이라 "몇 개를 버렸다"고 경고하면 안 쓰는 검색어를 걱정하게 만든다.
+        # preview_intents가 선택과 무관하게 19개를 다 만들기 때문에 화면이 이 경고로 덮인다.
+        strategy_lv2 = lv2 in (config.get("source_strategies_by_lv2") or {})
+        log.log(logging.DEBUG if strategy_lv2 else logging.WARNING,
+                "%s: 손으로 쓴 쿼리 %d개 중 %d개만 사용(max_searches=%d)%s, 버림: %s",
+                lv2, len(queries), max_searches, max_searches,
+                " — 폴백 경로라 이번 실행에서는 쓰이지 않는다" if strategy_lv2 else "",
+                dropped_queries)
         queries = queries[:max_searches]
     query_types = {query: query_types.get(query, "") for query in queries}
 
@@ -206,7 +213,7 @@ def validate_collection_intent(intent: CollectionIntent) -> dict:
 
 
 if __name__ == "__main__":
-    from ..policy import load_policies
+    from src.common.policy import load_policies
 
     all_policies = load_policies("configs/taxonomy.yaml")
     policies = {p.taxonomy_lv2: p for p in all_policies}

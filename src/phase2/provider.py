@@ -12,8 +12,8 @@ import importlib.util
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from ..schema import UrlCandidate, canonicalize_url
-from .intent_builder import CollectionIntent
+from src.common.schema import UrlCandidate, canonicalize_url
+from src.phase2.intent_builder import CollectionIntent
 
 log = logging.getLogger(__name__)
 
@@ -88,6 +88,10 @@ class TavilyProvider(DiscoveryProvider):
                 include_answer=False,
                 include_raw_content=False,      # 본문은 우리가 추출한다
                 exclude_domains=intent.excluded_domains or None,
+                # topic=news면 Tavily 뉴스 색인이 영어권 위주라 한국어 검색어에도
+                # abcnews·CNN·reuters가 대거 나온다(실측 2026-08-20: 후보 27건 중 18건).
+                # country는 순위 가중치일 뿐 필터가 아니므로 도메인 화이트리스트로 건다.
+                include_domains=list(opts.get("include_domains") or []) or None,
             )
             # country는 general에서만 지원하는 랭킹 boost다. 한국 관련성 판정은 rerank/acceptance가 한다.
             if intent.korea_relevance_requirement and request["topic"] == "general":
@@ -158,6 +162,16 @@ class SerpApiProvider(DiscoveryProvider):
             :max_domains
         ]
 
+    def _append_terms(self, rule: dict, query_type: str) -> str:
+        """taxonomy 성격 어휘를 OR 그룹으로 덧붙인다.
+
+        AND로 붙이면 세 어휘를 모두 포함한 문서만 남아 결과가 사실상 0이 된다.
+        type별 지정이 있으면 그쪽이 LV2 공통보다 우선한다.
+        """
+        terms = (rule.get("append_terms_by_type", {}).get(query_type)
+                 or rule.get("append_terms") or [])
+        return f" ({' OR '.join(terms)})" if terms else ""
+
     def _search_terms(self, intent: CollectionIntent) -> list[tuple[str, str]]:
         """SerpAPI 전용 키워드 그룹이 있으면 type당 한 번만 확장한다."""
         rule = self.rules_by_lv2.get(intent.target_taxonomy_lv2, {})
@@ -166,14 +180,15 @@ class SerpApiProvider(DiscoveryProvider):
         expanded_types: set[str] = set()
         for query in intent.queries:
             query_type = intent.query_types.get(query, "")
+            extra = self._append_terms(rule, query_type)
             groups = groups_by_type.get(query_type, [])
             if groups:
                 if query_type in expanded_types:
                     continue
                 expanded_types.add(query_type)
-                out.extend((" ".join(group), query_type) for group in groups)
+                out.extend((" ".join(group) + extra, query_type) for group in groups)
             else:
-                out.append((query, query_type))
+                out.append((query + extra, query_type))
         return out
 
     @staticmethod
@@ -182,12 +197,18 @@ class SerpApiProvider(DiscoveryProvider):
         try:
             return client.search(payload)
         except Exception as exc:  # SDK가 requests 예외를 그대로 전달한다.
-            status = getattr(getattr(exc, "response", None), "status_code", None)
+            wrapped = exc.args[0] if exc.args and isinstance(exc.args[0], Exception) else None
+            response = getattr(exc, "response", None) or getattr(wrapped, "response", None)
+            status = getattr(response, "status_code", None)
             message = str(exc)
-            if status == 401 or "401" in message:
+            if status in {401, 403} or any(code in message for code in ("401", "403")):
                 raise RuntimeError("SerpAPI 인증 실패: SERPAPI_KEY를 재발급한 키로 교체하세요.") from None
             if status == 429 or "429" in message:
                 raise RuntimeError("SerpAPI 요청 한도 또는 크레딧이 부족합니다.") from None
+            if status == 400 or "400" in message:
+                raise RuntimeError("SerpAPI가 검색 요청을 거부했습니다. 검색어와 요청 옵션을 확인하세요.") from None
+            if status and status >= 500:
+                raise RuntimeError("SerpAPI 서버 오류입니다. 잠시 후 다시 시도하세요.") from None
             raise RuntimeError("SerpAPI 검색 요청에 실패했습니다. 네트워크와 SerpAPI 상태를 확인하세요.") from None
 
     def search(self, intent: CollectionIntent) -> list[SearchResult]:
@@ -212,7 +233,10 @@ class SerpApiProvider(DiscoveryProvider):
             for domain in domains:
                 # 목록·태그 페이지는 개별 원문이 아니므로 URL 후보로 가져오지 않는다.
                 # taxonomy별/도메인별 보정은 config에서만 둔다.
-                suffixes = (rule.get("query_suffixes_by_domain", {}).get(domain, []) if domain else [])
+                # 여러 도메인을 site: OR 한 줄로 묶어 보낼 때는 domain이 None이라
+                # 도메인별 키가 잡히지 않는다. 그때는 "*"(전체 적용) 항목을 쓴다.
+                suffix_map = rule.get("query_suffixes_by_domain", {})
+                suffixes = suffix_map.get(domain, []) if domain else suffix_map.get("*", [])
                 search_query = " ".join(
                     part for part in ([f"site:{domain}"] if domain else []) + [query] + list(suffixes) if part
                 )

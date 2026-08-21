@@ -7,9 +7,28 @@
 """
 import pytest
 
-from src.classify import matcher
+from src.common import classify as matcher
+from src.phase2 import provider as _provider
 
 
 @pytest.fixture(autouse=True)
 def _offline_llm(monkeypatch):
     monkeypatch.setattr(matcher.LLMMatcher, "_complete_json", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _offline_search(monkeypatch):
+    """검색 API도 막는다.
+
+    LLM만 막아두면 2차 전략 경로가 source_router 안에서 TavilyProvider·SerpApiProvider를
+    직접 만들어 실제 API를 호출한다(테스트에 provider=Mock을 넘겨도 소용없다).
+    실측: 전략을 19개로 늘리자 테스트가 14초 → 158초가 되고 크레딧을 썼다.
+    실제 호출이 필요한 테스트는 본문에서 다시 monkeypatch한다.
+    """
+    def _blocked(self, intent):
+        raise AssertionError(
+            f"테스트가 실제 {type(self).__name__} 검색을 호출했다. "
+            "MockTavilyProvider를 쓰거나 source_router.discover를 monkeypatch할 것.")
+
+    monkeypatch.setattr(_provider.TavilyProvider, "search", _blocked)
+    monkeypatch.setattr(_provider.SerpApiProvider, "search", _blocked)

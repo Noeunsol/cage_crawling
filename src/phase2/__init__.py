@@ -1,5 +1,8 @@
-"""2차 semantic targeted discovery (phase-2).
+"""2차 수집 — 1차가 남긴 부족 taxonomy를 목표로 정밀 보강한다.
 
-taxonomy.yaml 기준 → 자연어 collection intent → semantic provider(Tavily) 후보 발견 →
-기존 fetch/extract/clean/mask/LLM classify 파이프라인 재검증.
+LV2마다 두 경로 중 하나를 탄다:
+  (a) 검색 계획 경로 — OpenAI가 검색 계획을 만들고, 결정론적 acceptance gate가 저장을 판정한다.
+  (b) 고정 intent 경로 — 손으로 쓴 검색어를 그대로 보내고 목표 taxonomy를 신뢰해 저장한다.
+어느 쪽도 수집 중에 본문을 LLM으로 재분류하지 않는다. 사후 점검은 review.py에 모여 있다.
+1차(src/phase1)와는 구현이 완전히 다르며 서로 import하지 않는다.
 """
