@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+uv.lock
+
+# Logs / DB / Cache
+*.log
+*.sqlite3
+data/
+logs/
+.cache/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
