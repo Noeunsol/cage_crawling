@@ -1,0 +1,44 @@
+# 실패/제외 사유별 재시도 정책 (11.5절). reason code는 discarded_candidates.reason에 그대로 저장된다.
+reasons:
+  timeout:
+    retryable: true
+    max_attempts: 3
+    backoff_seconds: 5
+  temporary_http_error:
+    retryable: true
+    max_attempts: 3
+    backoff_seconds: 5
+  access_denied:            # 로그인/권한이 필요해 본문에 접근할 수 없음 (9.5절)
+    retryable: false
+  not_found:                 # 삭제되었거나 존재하지 않는 글
+    retryable: false
+  date_out_of_range:
+    retryable: false                       # 이번 실행 날짜 범위에서는 재시도 안 함
+    retryable_for_different_date_range: true  # 다른 기간으로 재실행하면 재시도 가능
+  duplicate:
+    retryable: false
+  blacklisted_domain:
+    retryable: false
+  low_korea_relevance:
+    retryable: false
+  taxonomy_mismatch:
+    retryable: false
+  extraction_failed:
+    retryable: true
+    max_attempts: 2
+    backoff_seconds: 5
+
+# provider별 요청 간 최소 간격(초)과 동시 요청 수 (16.3절).
+rate_limit:
+  tavily:
+    min_interval_seconds: 0.5
+    max_concurrency: 4
+  serpapi:
+    min_interval_seconds: 0.5
+    max_concurrency: 4
+  fetch:
+    min_interval_seconds: 1.0
+    max_concurrency: 4
+
+request:
+  timeout_seconds: 15

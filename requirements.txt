@@ -1,0 +1,11 @@
+# Phase 1~3에서 쓰는 패키지. 이후 Phase에서 streamlit/tavily-python/
+# google-search-results/requests/beautifulsoup4 등을 그때그때 추가한다.
+pyyaml
+python-dotenv
+pytest
+openai
+streamlit
+tavily-python
+serpapi
+requests
+trafilatura

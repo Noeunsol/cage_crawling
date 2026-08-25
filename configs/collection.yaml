@@ -1,0 +1,65 @@
+# 목표량/후보 배수/스케줄링/도메인 분리 설정 (7절).
+# 이 파일의 숫자는 전부 조정 가능한 기본값이며 Python 코드에 하드코딩하지 않는다 (2.1절).
+
+defaults:
+  target_count: 50          # LV2별 이번 실행 신규 목표 수집량 (같은 LV2의 type들이 나눠 가짐, 나머지는 올림)
+  candidate_multiplier: 2.0 # candidate_target = ceil(target_count * candidate_multiplier)
+  date_range_years: 1       # 기본 수집 기간(최근 N년)
+
+dates:
+  allow_future_end_date: false  # 미래 종료일 허용 여부 (8.1절, 기본은 차단)
+
+  # LV2별 기본 수집 기간(개월 단위). 여기 없는 LV2는 defaults.date_range_years(연 단위)를 그대로 쓴다.
+  # Streamlit "1. 수집 설정" 화면에서 LV2 카드별로 실행 시점에 더 조정할 수도 있다.
+  date_range_months_by_lv2:
+    3_G_Misinformation_and_Disinformation: 6   # 허위정보는 최신성이 중요해 6개월로 단축
+
+candidate_multiplier_options: [1.0, 1.5, 2.0, 3.0]
+
+# type당 provider별 검색어 생성 개수 기본값.
+# "3. 검색어 생성 및 검토" 화면은 target_count/candidate_multiplier/provider_ratio로 필요한
+# 후보 수를 역산해서 개수를 제안한다: 콜당 최대 결과 수(providers.yaml)로 나눈 최소 호출 수에
+# safety_factor를 곱한다 — 실제 콜당 수확은 중복·필터링 탓에 이론치보다 낮기 때문.
+# 그 계산이 안 되는 경우(수집 설정 미확정 등)에는 아래 *_count_per_type을 그대로 쓴다.
+query_generation:
+  tavily_count_per_type: 3
+  serpapi_count_per_type: 3
+  safety_factor: 1.5
+
+scheduling:
+  strategy: round_robin
+  stop_before_new_request_when_target_met: true
+  finish_started_requests: true
+  save_over_target_results: true
+
+domain_partition:
+  enabled: true
+  tavily_excludes_serpapi_domains: true
+  tavily_excludes_global_blacklist: true
+
+# provider 비율 (7.6절). LV2 성격(뉴스형/커뮤니티형/혼합형)에 따라 사용자가 확정한 표.
+# by_lv2에 없는 LV2는 default(5:5)를 쓴다. Streamlit "1. 수집 설정" 화면에서 실행 시점에 개별 조정도 가능.
+provider_ratio:
+  default:
+    tavily: 50
+    serpapi: 50
+  by_lv2:
+    1_A_Toxic_Language: {tavily: 50, serpapi: 50}                        # 혼합형
+    1_B_Sexual_Content: {tavily: 70, serpapi: 30}                        # 뉴스형
+    1_C_Self_Harm: {tavily: 30, serpapi: 70}                             # 커뮤니티형
+    1_D_Child_Exploitation: {tavily: 70, serpapi: 30}                    # 뉴스형
+    2_E_Discrimination: {tavily: 30, serpapi: 70}                        # 커뮤니티형
+    2_F_Bias_and_Hate: {tavily: 30, serpapi: 70}                         # 커뮤니티형
+    3_G_Misinformation_and_Disinformation: {tavily: 50, serpapi: 50}     # 혼합형
+    3_H_Prohibited_Advisory: {tavily: 30, serpapi: 70}                   # 커뮤니티형
+    4_I_Privacy_Infringement: {tavily: 30, serpapi: 70}                  # 커뮤니티형
+    4_J_Public_Sensitive_Info_Leakage: {tavily: 70, serpapi: 30}         # 뉴스형
+    4_K_Intellectual_Property_Infringement: {tavily: 70, serpapi: 30}    # 뉴스형
+    5_L_Illegal_Activity: {tavily: 30, serpapi: 70}                      # 커뮤니티형
+    5_M_Violence_and_Extremism: {tavily: 70, serpapi: 30}                # 뉴스형
+    5_N_Encouraging_Unethical_Actions: {tavily: 30, serpapi: 70}         # 커뮤니티형
+    6_O_CBRNE: {tavily: 70, serpapi: 30}                                 # 뉴스형
+    6_P_Cybersecurity: {tavily: 50, serpapi: 50}                         # 혼합형
+    6_Q_Prompt_Attack: {tavily: 30, serpapi: 70}                         # 커뮤니티형
+    6_R_System_Leakage: {tavily: 30, serpapi: 70}                        # 커뮤니티형
+    6_S_Unbounded_Consumption: {tavily: 30, serpapi: 70}                 # 커뮤니티형

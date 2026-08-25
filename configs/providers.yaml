@@ -1,0 +1,21 @@
+# API provider 설정 (5절). API key 값 자체는 여기 두지 않고 .env의 환경변수 이름만 참조한다 (16.1절).
+openai:
+  model: gpt-4o-mini
+  api_key_env: OPENAI_API_KEY
+  # 1M 토큰당 USD (model 바꾸면 같이 갱신해야 함 — OpenAI 공식 가격표 참고)
+  input_price_per_1m_usd: 0.15
+  output_price_per_1m_usd: 0.60
+
+tavily:
+  api_key_env: TAVILY_API_KEY
+  max_results_per_request: 20
+  search_depth: basic
+  country: south korea   # 한국 관련 결과로 편향 (Tavily 네이티브 파라미터)
+
+serpapi:
+  api_key_env: SERPAPI_KEY
+  # ponytail: Google이 2025-09-14에 num 파라미터를 사실상 무력화해서 지금은 요청값과 무관하게
+  # 결과가 10개로 고정된다. 실제와 맞춰 10으로 낮춤 — Google/SerpAPI가 복구하면 100으로 되돌릴 것.
+  max_results_per_request: 10
+  allow_cache: true
+  no_cache: false

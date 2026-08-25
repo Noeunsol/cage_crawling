@@ -1,0 +1,47 @@
+"""Tavily discovery provider (5.2절): 자연어 검색어로 뉴스·사례·커뮤니티 글을 폭넓게 찾는다."""
+
+from __future__ import annotations
+
+from datetime import date
+
+from tavily import TavilyClient
+
+from src.discovery.base import DiscoveredResult, DiscoveryResponse
+
+
+class TavilyProvider:
+    def __init__(self, api_key: str, config: dict):
+        self._client = TavilyClient(api_key=api_key)
+        self._config = config  # configs/providers.yaml의 tavily 섹션
+
+    def search(
+        self,
+        query_text: str,
+        *,
+        date_from: date,
+        date_to: date,
+        exclude_domains: list[str],
+        max_results: int | None = None,
+    ) -> DiscoveryResponse:
+        """exclude_domains는 (이 type의 SerpAPI 허용 도메인 ∪ 공통 블랙리스트)여야 한다 (6.2절)."""
+        request_params = {
+            "query": query_text,
+            "search_depth": self._config.get("search_depth", "basic"),
+            "start_date": date_from.isoformat(),
+            "end_date": date_to.isoformat(),
+            "exclude_domains": sorted(exclude_domains),
+            "max_results": max_results or self._config.get("max_results_per_request", 20),
+            "include_usage": True,
+        }
+        if self._config.get("country"):
+            # 한국 관련 결과로 편향시켜 뒤 단계(fetch/LLM 필터)에서 버려질 해외 결과를 줄인다.
+            request_params["country"] = self._config["country"]
+        response = self._client.search(**request_params)
+
+        results = [
+            DiscoveredResult(url=item["url"], rank=i + 1, relevance_score=item.get("score"))
+            for i, item in enumerate(response.get("results", []))
+        ]
+        return DiscoveryResponse(
+            results=results, request_params=request_params, usage=response.get("usage", {}),
+        )

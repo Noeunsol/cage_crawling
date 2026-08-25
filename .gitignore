@@ -11,6 +11,7 @@ uv.lock
 # Logs / DB / Cache
 *.log
 *.sqlite3
+*.db
 data/
 logs/
 .cache/

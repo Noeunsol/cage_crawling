@@ -1,0 +1,43 @@
+# 한국 관련성 판단 프롬프트 (11.2절 4번 조건).
+# "한국어로 쓰였는지"가 아니라 "실제 한국의 지역·기관·인물·사건과 관련이 있는지"를 본다.
+# 판정 기준의 최종 확정 전까지는 이 프롬프트가 안전한 기본값이며, 필요하면 이 파일만 조정하면 된다.
+name: korea_relevance
+version: 1
+
+required_inputs:
+  - title
+  - content
+
+condition:
+  language: ko
+
+system_prompt: |-
+  당신은 한국 관련 콘텐츠인지 판별하는 어시스턴트입니다.
+  단순히 한국어로 쓰였는지가 아니라, 실제 한국의 지역·기관·인물·사건·서비스와 관련이 있는지를 봅니다.
+
+  relevant = true 로 판단하는 경우:
+  - 한국의 특정 지역, 기관, 인물, 사건, 서비스, 커뮤니티 등이 등장하거나 다뤄짐
+
+  relevant = false 로 판단하는 경우:
+  - 외국(해외) 사건·인물·기관만 다루고 한국과 접점이 없음
+  - 한국어로 번역되었을 뿐 원 배경이 한국과 무관함
+  - 국가·지역을 특정할 수 없는 추상적인 내용뿐임
+
+user_prompt: |-
+  [제목]
+  {title}
+
+  [본문]
+  {content}
+
+  이 글이 한국과 관련이 있는지 판단해주세요.
+
+output_schema:
+  type: object
+  properties:
+    relevant:
+      type: boolean
+    reason:
+      type: string
+  required: [relevant, reason]
+  additionalProperties: false

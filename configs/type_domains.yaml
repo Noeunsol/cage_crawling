@@ -1,0 +1,435 @@
+types:
+  cyberbullying_and_harassment:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - inven.co.kr
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  cyberstalking:
+    serpapi_allowed_domains:
+    - a-ha.io
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+  defamation:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - a-ha.io
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+  profanity_and_insults:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - inven.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  threats_and_intimidation:
+    serpapi_allowed_domains:
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - inven.co.kr
+    - lawtalk.co.kr
+    - newsis.com
+    - ppomppu.co.kr
+    - yna.co.kr
+  explicit_sexual_content:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - ecrm.police.go.kr
+  non_consensual_intimate_imagery:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - ecrm.police.go.kr
+    - a-ha.io
+  sexual_coercion_and_manipulation:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+  sexual_solicitation_and_prostitution:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - ecrm.police.go.kr
+  eating_disorder:
+    serpapi_allowed_domains:
+    - doctornow.co.kr
+    - 82cook.com
+  self_injury:
+    serpapi_allowed_domains:
+    - doctornow.co.kr
+    - 82cook.com
+  suicide:
+    serpapi_allowed_domains:
+    - doctornow.co.kr
+    - 82cook.com
+  child_endangerment:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - ecrm.police.go.kr
+    - doctornow.co.kr
+    - 82cook.com
+    - newsis.com
+    - yna.co.kr
+  child_trafficking:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+    - newsis.com
+    - yna.co.kr
+  csam_distribution:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+  online_grooming:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+  discriminatory_activity:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - a-ha.io
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+  age:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  beliefs:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  color:
+    serpapi_allowed_domains:
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  disability:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - inven.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  gender:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - inven.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  geographic_region:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - inven.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  nationality:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  occupation:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  race_and_ethnicity:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  religion:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  sexual_orientation:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+    - ruliweb.com
+  false_news:
+    serpapi_allowed_domains:
+    - gall.dcinside.com
+    - newstof.com
+    - ppomppu.co.kr
+    - ruliweb.com
+  misinterpretation_or_wrong_context:
+    serpapi_allowed_domains:
+    - newstof.com
+    - ruliweb.com
+    - 82cook.com
+    - gall.dcinside.com
+  propaganda:
+    serpapi_allowed_domains:
+    - newstof.com
+    - gall.dcinside.com
+    - ppomppu.co.kr
+    - ruliweb.com
+    - 82cook.com
+  rumors:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - gall.dcinside.com
+    - ppomppu.co.kr
+    - ruliweb.com
+    - newstof.com
+  financial_advice:
+    serpapi_allowed_domains:
+    - a-ha.io
+    - kca.go.kr
+    - 82cook.com
+  legal_advice:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - a-ha.io
+  medical_advice:
+    serpapi_allowed_domains:
+    - doctornow.co.kr
+    - a-ha.io
+    - 82cook.com
+  privacy_violation:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - a-ha.io
+    - gall.dcinside.com
+    - lawtalk.co.kr
+    - pipc.go.kr
+  confidential_operations:
+    serpapi_allowed_domains:
+    - boannews.com
+    - dailysecu.com
+    - lawtalk.co.kr
+  cybersecurity_vulnerabilities:
+    serpapi_allowed_domains:
+    - boannews.com
+    - dailysecu.com
+    - krcert.or.kr
+    - okky.kr
+  financial_and_budgetary_information:
+    serpapi_allowed_domains:
+    - fss.or.kr
+    - hankyung.com
+    - lawtalk.co.kr
+    - taxwatch.co.kr
+  internal_communications:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - 82cook.com
+    - clien.net
+    - moel.go.kr
+  internal_policies_and_classified_documents:
+    serpapi_allowed_domains:
+    - privacy.go.kr
+    - boannews.com
+    - lawtalk.co.kr
+    - lawtimes.co.kr
+  legal_information:
+    serpapi_allowed_domains:
+    - lawtalk.co.kr
+    - lawtimes.co.kr
+  sensitive_technological_details:
+    serpapi_allowed_domains:
+    - boannews.com
+    - kipo.go.kr
+    - okky.kr
+    - lawtalk.co.kr
+  copyright_piracy:
+    serpapi_allowed_domains:
+    - kcopa.or.kr
+    - lawtalk.co.kr
+    - ecrm.police.go.kr
+    - a-ha.io
+  counterfeit_trademark:
+    serpapi_allowed_domains:
+    - kipo.go.kr
+    - lawtalk.co.kr
+    - kca.go.kr
+    - a-ha.io
+  patent_infringement:
+    serpapi_allowed_domains:
+    - kipo.go.kr
+    - lawtalk.co.kr
+    - a-ha.io
+  trade_secret_theft:
+    serpapi_allowed_domains:
+    - kipo.go.kr
+    - lawtalk.co.kr
+    - krcert.or.kr
+    - a-ha.io
+  facilitating_criminal_activities:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - lawtalk.co.kr
+    - newsis.com
+    - ppomppu.co.kr
+    - yna.co.kr
+  fraudulent_schemes_and_deception:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - kca.go.kr
+    - lawtalk.co.kr
+    - 82cook.com
+    - a-ha.io
+    - newsis.com
+    - yna.co.kr
+  illegal_services_exploitation:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+    - ruliweb.com
+    - inven.co.kr
+    - newsis.com
+    - yna.co.kr
+  depicting_violence:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - inven.co.kr
+    - ppomppu.co.kr
+    - ruliweb.com
+  supporting_malicious_organized_groups:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - ruliweb.com
+  violent_crimes_and_acts:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - lawtalk.co.kr
+    - newsis.com
+    - ppomppu.co.kr
+    - yna.co.kr
+  cheating_and_academic_dishonesty:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - a-ha.io
+    - acrc.go.kr
+    - clien.net
+    - dcinside.com
+    - instiz.net
+    - ppomppu.co.kr
+  deception_and_fraud:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - ecrm.police.go.kr
+    - instiz.net
+    - kca.go.kr
+    - lawtalk.co.kr
+    - newsis.com
+    - ppomppu.co.kr
+    - yna.co.kr
+  manipulative_persuasion:
+    serpapi_allowed_domains:
+    - 82cook.com
+    - clien.net
+    - dcinside.com
+    - doctornow.co.kr
+    - instiz.net
+    - lawtalk.co.kr
+    - ppomppu.co.kr
+  biological:
+    serpapi_allowed_domains:
+    - kdca.go.kr
+  chemical:
+    serpapi_allowed_domains:
+    - nics.me.go.kr
+  explosive:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+  nuclear:
+    serpapi_allowed_domains:
+    - kins.re.kr
+  radiological:
+    serpapi_allowed_domains:
+    - kins.re.kr
+  cyber_attack:
+    serpapi_allowed_domains:
+    - krcert.or.kr
+    - okky.kr
+  malware_generation:
+    serpapi_allowed_domains:
+    - krcert.or.kr
+    - okky.kr
+  weapon_usage_development:
+    serpapi_allowed_domains:
+    - ecrm.police.go.kr
+    - lawtalk.co.kr
+    - ruliweb.com
+  prompt_attack:
+    serpapi_allowed_domains:
+    - okky.kr
+  system_leakage:
+    serpapi_allowed_domains:
+    - okky.kr
+    - krcert.or.kr
+  unbounded_consumption:
+    serpapi_allowed_domains:
+    - okky.kr
