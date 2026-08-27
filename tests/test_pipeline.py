@@ -52,7 +52,7 @@ TYPE_CFG = {
 
 
 class _FakeResponse:
-    def __init__(self, status_code, text="", url="https://kin.naver.com/final"):
+    def __init__(self, status_code, text="", url="https://example.com/final"):
         self.status_code = status_code
         self.text = text
         self.url = url
@@ -85,7 +85,7 @@ ACCEPT_ALL_OPENAI = lambda: RoutingFakeOpenAI({
 })
 
 
-def _candidate(query_id, url="https://kin.naver.com/a"):
+def _candidate(query_id, url="https://example.com/a"):
     return ScheduledCandidate(
         lv2_id="1_C_Self_Harm", type_name="suicide", provider="tavily",
         query_id=query_id, url=url, rank=1, relevance_score=0.9,
@@ -140,7 +140,7 @@ def test_process_candidate_excludes_blacklisted_domain(tmp_path, monkeypatch):
 
     from src.filtering.pipeline import build_filter_chain
     checks = build_filter_chain(
-        conn=conn, blacklist_domains=["kin.naver.com"], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini",
+        conn=conn, blacklist_domains=["example.com"], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini",
     )
 
     outcome = process_candidate(conn, _candidate(query_id), **_common_kwargs(conn, checks))
@@ -149,6 +149,27 @@ def test_process_candidate_excludes_blacklisted_domain(tmp_path, monkeypatch):
     assert outcome.reason == "blacklisted_domain"
     row = conn.execute("SELECT * FROM contents").fetchone()
     assert row["status"] == "excluded"   # 본문은 그대로 저장된다 (11.3절)
+
+
+def test_process_candidate_skips_fetch_entirely_for_blacklisted_domain(tmp_path, monkeypatch):
+    # blacklist_domains를 process_candidate에 직접 넘기면 fetch 시도조차 하지 않고 discarded
+    # 처리한다 — 유튜브 같은 애초에 못 가져오는 사이트에 요청을 낭비하지 않기 위함 (2026-08-26).
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+
+    def boom(*a, **kw):
+        raise AssertionError("블랙리스트 도메인인데 fetch를 시도했다")
+
+    monkeypatch.setattr("requests.get", boom)
+
+    outcome = process_candidate(
+        conn, _candidate(query_id, url="https://m.kin.naver.com/qna/1"),
+        **_common_kwargs(conn, []), blacklist_domains=["kin.naver.com"],
+    )
+
+    assert outcome.status == "discarded"
+    assert outcome.reason == "blacklisted_domain"
+    assert conn.execute("SELECT COUNT(*) c FROM contents").fetchone()["c"] == 0
 
 
 def test_process_candidate_discards_duplicate_url_without_fetching(tmp_path, monkeypatch):
@@ -161,8 +182,8 @@ def test_process_candidate_discards_duplicate_url_without_fetching(tmp_path, mon
 
     from src.storage.repositories import contents as contents_repo
     contents_repo.upsert_content(
-        conn, title="t", content="c", published_date=None, canonical_url="https://kin.naver.com/a",
-        source_name=None, source_domain="kin.naver.com", source_category=None,
+        conn, title="t", content="c", published_date=None, canonical_url="https://example.com/a",
+        source_name=None, source_domain="example.com", source_category=None,
         status="accepted", content_hash="h",
     )
 
@@ -203,26 +224,48 @@ def test_process_candidate_discards_extraction_failure(tmp_path, monkeypatch):
     assert outcome.reason == "extraction_failed"
 
 
+def test_process_candidate_discards_unexpected_exception_instead_of_crashing(tmp_path, monkeypatch):
+    # 알려진 예외(FetchError/ExtractionError)가 아닌 어떤 버그가 나도, 이 후보 하나만
+    # discarded 처리되고 예외가 run_collection 루프까지 전파되면 안 된다 (2026-08-26 사고 이후 추가).
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+
+    def boom(*a, **kw):
+        raise ValueError("boom")
+
+    monkeypatch.setattr("requests.get", boom)
+
+    outcome = process_candidate(
+        conn, _candidate(query_id), run_id="run-1", type_cfg=TYPE_CFG,
+        date_from=date(2025, 1, 1), date_to=date(2026, 1, 1),
+        extraction_cfg=EXTRACTION_CFG, retry_policy=RETRY_POLICY, filter_checks=[],
+    )
+
+    assert outcome.status == "discarded"
+    assert outcome.reason == "unexpected_error"
+    assert "boom" in outcome.detail
+
+
 def test_process_candidate_discards_same_content_different_url(tmp_path, monkeypatch):
     conn = _make_conn(tmp_path)
     query_id = _seed_query(conn)
-    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML, url="https://kin.naver.com/mirror"))
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML, url="https://example.com/mirror"))
 
     from src.extraction.general_extractor import extract
     from src.storage.repositories import contents as contents_repo
 
     # extractor가 만들어낼 해시와 맞추기 위해 실제로 한 번 뽑아본 뒤 그 해시로 기존 콘텐츠를 만든다.
-    pre_extracted = extract(SAMPLE_HTML, "https://kin.naver.com/original", 10)
+    pre_extracted = extract(SAMPLE_HTML, "https://example.com/original", 10)
     real_hash = compute_content_hash(pre_extracted.title, pre_extracted.content)
 
     contents_repo.upsert_content(
         conn, title=pre_extracted.title, content=pre_extracted.content, published_date=None,
-        canonical_url="https://kin.naver.com/original", source_name=None,
-        source_domain="kin.naver.com", source_category=None, status="accepted", content_hash=real_hash,
+        canonical_url="https://example.com/original", source_name=None,
+        source_domain="example.com", source_category=None, status="accepted", content_hash=real_hash,
     )
 
     outcome = process_candidate(
-        conn, _candidate(query_id, url="https://kin.naver.com/mirror-entry"),
+        conn, _candidate(query_id, url="https://example.com/mirror-entry"),
         **_common_kwargs(conn, filter_checks=[]),
     )
     assert outcome.status == "discarded"
@@ -242,7 +285,7 @@ def test_run_collection_end_to_end(tmp_path, monkeypatch):
     class FakeTavily:
         def search(self, query_text, **kwargs):
             return DiscoveryResponse(
-                results=[DiscoveredResult(url="https://kin.naver.com/a", rank=1)],
+                results=[DiscoveredResult(url="https://example.com/a", rank=1)],
                 request_params={"query": query_text}, usage={"requests": 1},
             )
 

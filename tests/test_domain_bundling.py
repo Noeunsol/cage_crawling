@@ -1,11 +1,17 @@
-"""도메인 번들링 순수 로직 검증: 최대 3개씩 묶고, alias는 절대 쪼개지 않는다."""
+"""도메인 교차 조합 검증: 모든 사이트를 균등 순환하고 alias는 쪼개지 않는다."""
 
 from src.discovery.domain_bundling import build_bundles
 
 
-def test_splits_into_bundles_of_at_most_three():
+def test_builds_deterministic_balanced_rolling_bundles():
     bundles = build_bundles(["d1", "d2", "d3", "d4"], alias_groups={})
-    assert bundles == [["d1", "d2", "d3"], ["d4"]]
+    assert bundles == [
+        ["d1", "d2", "d3"], ["d2", "d3", "d4"],
+        ["d3", "d4", "d1"], ["d4", "d1", "d2"],
+    ]
+    assert {domain: sum(domain in b for b in bundles) for domain in ["d1", "d2", "d3", "d4"]} == {
+        "d1": 3, "d2": 3, "d3": 3, "d4": 3,
+    }
 
 
 def test_no_domains_produces_no_bundles():
@@ -26,7 +32,11 @@ def test_alias_group_never_split_across_bundles():
     for bundle in bundles:
         if "krcert.or.kr" in bundle or "boho.or.kr" in bundle:
             assert "krcert.or.kr" in bundle and "boho.or.kr" in bundle
-    assert bundles == [["d1", "krcert.or.kr", "boho.or.kr"], ["d2"]]
+    assert bundles == [
+        ["d1", "krcert.or.kr", "boho.or.kr"],
+        ["krcert.or.kr", "boho.or.kr", "d2"],
+        ["d2", "d1"],
+    ]
 
 
 def test_alias_group_starts_new_bundle_when_it_would_overflow():
@@ -36,7 +46,11 @@ def test_alias_group_starts_new_bundle_when_it_would_overflow():
 
     bundles = build_bundles(domains, alias_groups)
 
-    assert bundles == [["d1", "d2"], ["krcert.or.kr", "boho.or.kr"]]
+    assert bundles == [
+        ["d1", "d2"],
+        ["d2", "krcert.or.kr", "boho.or.kr"],
+        ["krcert.or.kr", "boho.or.kr", "d1"],
+    ]
 
 
 def test_original_domain_order_is_preserved_within_bundles():

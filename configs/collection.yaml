@@ -21,10 +21,12 @@ candidate_multiplier_options: [1.0, 1.5, 2.0, 3.0]
 # 후보 수를 역산해서 개수를 제안한다: 콜당 최대 결과 수(providers.yaml)로 나눈 최소 호출 수에
 # safety_factor를 곱한다 — 실제 콜당 수확은 중복·필터링 탓에 이론치보다 낮기 때문.
 # 그 계산이 안 되는 경우(수집 설정 미확정 등)에는 아래 *_count_per_type을 그대로 쓴다.
+# safety_factor 2.5: run-10 실측(2026-08-26) 결과 검색어 6개 중 3개가 0건을 반환했다 —
+# 검색어 다양화(prompts/query_generation.yaml)만으로는 부족해 개수 자체도 넉넉히 늘렸다.
 query_generation:
   tavily_count_per_type: 3
   serpapi_count_per_type: 3
-  safety_factor: 1.5
+  safety_factor: 2.5
 
 scheduling:
   strategy: round_robin
@@ -34,6 +36,9 @@ scheduling:
 
 domain_partition:
   enabled: true
+  # false: Tavily도 SerpAPI 등록 사이트를 검색하고, 같은 URL은 수집 단계에서 중복 제거한다.
+  # true: provider를 도메인 기준으로 완전히 분리한다. (2026-08-26 실측: 4_I/3_G에서 SerpAPI
+  # 전담 도메인 accepted 콘텐츠 중 tavily 기여분 0건 확인 — 꺼둬서 얻는 실익이 없어 켬)
   tavily_excludes_serpapi_domains: true
   tavily_excludes_global_blacklist: true
 

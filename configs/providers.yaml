@@ -17,5 +17,6 @@ serpapi:
   # ponytail: Google이 2025-09-14에 num 파라미터를 사실상 무력화해서 지금은 요청값과 무관하게
   # 결과가 10개로 고정된다. 실제와 맞춰 10으로 낮춤 — Google/SerpAPI가 복구하면 100으로 되돌릴 것.
   max_results_per_request: 10
+  max_pages_per_query: 10  # 1페이지가 가득 차고 후보 목표가 부족할 때만 다음 페이지 요청
   allow_cache: true
   no_cache: false

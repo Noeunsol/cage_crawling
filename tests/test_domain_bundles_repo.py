@@ -13,7 +13,7 @@ def test_sync_creates_bundles_matching_pure_algorithm(tmp_path):
     bundles_repo.sync_bundles(conn, "suicide", ["d1", "d2", "d3", "d4"], alias_groups={})
 
     rows = bundles_repo.list_bundles(conn, "suicide")
-    assert [r["bundle_index"] for r in rows] == [0, 1]
+    assert [r["bundle_index"] for r in rows] == [0, 1, 2, 3]
     assert bundles_repo.pick_bundle(conn, "suicide").domains == ["d1", "d2", "d3"]
 
 
@@ -32,7 +32,7 @@ def test_sync_is_idempotent_and_preserves_last_used_at(tmp_path):
 def test_sync_removes_stale_bundle_indices_when_domain_count_shrinks(tmp_path):
     conn = _conn(tmp_path)
     bundles_repo.sync_bundles(conn, "suicide", ["d1", "d2", "d3", "d4"], alias_groups={})
-    assert len(bundles_repo.list_bundles(conn, "suicide")) == 2
+    assert len(bundles_repo.list_bundles(conn, "suicide")) == 4
 
     bundles_repo.sync_bundles(conn, "suicide", ["d1"], alias_groups={})
 
@@ -52,7 +52,14 @@ def test_pick_bundle_prefers_never_used_then_least_recently_used(tmp_path):
 
     bundles_repo.mark_used(conn, "suicide", second.bundle_index)
     third = bundles_repo.pick_bundle(conn, "suicide")
-    assert third.bundle_index == 0   # 이제 둘 다 쓰였으니 더 오래된 쪽(0)으로 되돌아온다
+    assert third.bundle_index == 2   # 아직 사용하지 않은 교차 조합이 계속 우선된다
+    bundles_repo.mark_used(conn, "suicide", third.bundle_index)
+
+    fourth = bundles_repo.pick_bundle(conn, "suicide")
+    assert fourth.bundle_index == 3
+    bundles_repo.mark_used(conn, "suicide", fourth.bundle_index)
+
+    assert bundles_repo.pick_bundle(conn, "suicide").bundle_index == 0
 
 
 def test_disabled_bundle_is_skipped_by_pick(tmp_path):

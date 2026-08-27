@@ -6,12 +6,11 @@ HTML 태그·광고·메뉴·네비게이션 제거는 trafilatura가 담당한�
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
 import trafilatura
 
-from src.utils.text import normalize_whitespace
+from src.extraction.cleaner import clean_article_text
 
 
 class ExtractionError(Exception):
@@ -27,6 +26,17 @@ class ExtractedContent:
     published_date: str | None   # YYYY-MM-DD 또는 None (8.3절: 못 찾으면 저장하지 않는다)
 
 
+def build_or_raise(title: str, content: str, min_content_length: int, published_date: str | None) -> ExtractedContent:
+    """제목이 없거나 본문이 min_content_length 미만이면 실패로 처리한다 (사이트 전용 파서 공용).
+
+    general_extractor.extract()와 cook82/dcinside/ruliweb/instiz/kin_parser가 전부 이 기준으로
+    성공/실패를 판단해서, 기준 자체가 바뀌면 여기 한 곳만 고치면 되게 모아뒀다.
+    """
+    if not title or len(content) < min_content_length:
+        raise ExtractionError("extraction_failed")
+    return ExtractedContent(title=title, content=content, published_date=published_date)
+
+
 def extract(
     html: str, url: str, min_content_length: int, extraction_cfg: dict | None = None,
 ) -> ExtractedContent:
@@ -36,8 +46,11 @@ def extract(
     아닌 부분을 뺄지 조정할 수 있다. 안 넘기면 "본문만" 기본값을 그대로 쓴다.
     """
     trafilatura_cfg = (extraction_cfg or {}).get("trafilatura", {})
-    raw = trafilatura.extract(
-        html, url=url, output_format="json", with_metadata=True,
+    # bare_extraction()으로 dict를 바로 받는다 — output_format="json" + json.loads는 본문에
+    # 백슬래시가 섞이면("\초성" 이모티콘, 수식, 윈도 경로 등) trafilatura가 만든 JSON 문자열
+    # 자체가 깨져서 JSONDecodeError가 난다(2026-08-26 실측). dict로 받으면 이 왕복이 아예 없다.
+    document = trafilatura.bare_extraction(
+        html, url=url, with_metadata=True,
         include_comments=trafilatura_cfg.get("include_comments", False),
         favor_precision=trafilatura_cfg.get("favor_precision", True),
         # date_extraction_params.original_date: 내부적으로 htmldate를 쓰는데 기본값(False)은
@@ -45,14 +58,14 @@ def extract(
         # 아니라서 기간 필터에서 엉뚱하게 date_out_of_range로 빠지는 원인이 된다.
         date_extraction_params={"original_date": True},
     )
-    if raw is None:
+    if document is None:
         raise ExtractionError("extraction_failed")
 
-    data = json.loads(raw)
+    data = document.as_dict()
     title = (data.get("title") or "").strip()
-    content = normalize_whitespace(data.get("text") or "")
+    content = clean_article_text(
+        data.get("text") or "",
+        (extraction_cfg or {}).get("cleaning", {}),
+    )
 
-    if not title or len(content) < min_content_length:
-        raise ExtractionError("extraction_failed")
-
-    return ExtractedContent(title=title, content=content, published_date=data.get("date"))
+    return build_or_raise(title, content, min_content_length, data.get("date"))

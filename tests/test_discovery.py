@@ -10,10 +10,23 @@ from src.discovery.serpapi_provider import SerpApiProvider
 from src.discovery.tavily_provider import TavilyProvider
 
 
-def test_tavily_exclude_domains_merges_allowed_and_blacklist_dedup():
+def test_tavily_exclude_domains_excludes_serpapi_domains_by_default():
+    # 2026-08-26 실측 결정: SerpAPI 전담 도메인은 기본적으로 Tavily에서도 제외한다
+    # (provider를 도메인 기준으로 분리 — src/discovery/allocator.py 모듈 docstring 참고).
     type_domains_cfg = {"suicide": {"serpapi_allowed_domains": ["kin.naver.com", "b.com"]}}
     result = tavily_exclude_domains(type_domains_cfg, ["b.com", "youtube.com"], "suicide")
-    assert result == ["b.com", "kin.naver.com", "youtube.com"]  # 정렬 + 중복 제거
+    assert result == ["b.com", "kin.naver.com", "youtube.com"]
+
+
+def test_tavily_exclude_domains_can_use_only_blacklist():
+    type_domains_cfg = {"suicide": {"serpapi_allowed_domains": ["kin.naver.com", "b.com"]}}
+    result = tavily_exclude_domains(
+        type_domains_cfg,
+        ["b.com", "youtube.com"],
+        "suicide",
+        exclude_serpapi_domains=False,
+    )
+    assert result == ["b.com", "youtube.com"]  # 정렬 + 중복 제거
 
 
 def test_has_serpapi_domains():
@@ -24,9 +37,21 @@ def test_has_serpapi_domains():
 
 def test_serpapi_allowed_domains_filters_out_blacklist():
     # type_domains.yaml에 블랙리스트 도메인이 실수로 남아 있어도 실제 검색엔 안 쓰여야 한다.
-    cfg = {"rumors": {"serpapi_allowed_domains": ["pann.nate.com", "ppomppu.co.kr"]}}
+    cfg = {"rumors": {"serpapi_allowed_domains": ["m.pann.nate.com", "ppomppu.co.kr"]}}
     assert serpapi_allowed_domains(cfg, "rumors", ["pann.nate.com"]) == ["ppomppu.co.kr"]
     assert has_serpapi_domains(cfg, "rumors", ["pann.nate.com", "ppomppu.co.kr"]) is False
+
+
+def test_serpapi_allowed_domains_are_scoped_by_lv2_with_flat_fallback():
+    cfg = {
+        "2_E_Discrimination": {"gender": {"serpapi_allowed_domains": ["news.example"]}},
+        "2_F_Bias_and_Hate": {"gender": {"serpapi_allowed_domains": ["community.example"]}},
+        "suicide": {"serpapi_allowed_domains": ["legacy.example"]},
+    }
+
+    assert serpapi_allowed_domains(cfg, "gender", lv2_id="2_E_Discrimination") == ["news.example"]
+    assert serpapi_allowed_domains(cfg, "gender", lv2_id="2_F_Bias_and_Hate") == ["community.example"]
+    assert serpapi_allowed_domains(cfg, "suicide", lv2_id="1_C_Self_Harm") == ["legacy.example"]
 
 
 def test_tavily_provider_sends_exclude_domains_and_date_filter(monkeypatch):
@@ -95,7 +120,28 @@ def test_serpapi_provider_combines_site_filter_with_query(monkeypatch):
 
     assert captured["q"] == "(site:kin.naver.com OR site:pann.nate.com) 자살 상담 후기"
     assert "cd_min:01/01/2025" in captured["tbs"]
+    assert captured["start"] == 0
     assert [r.url for r in response.results] == ["https://kin.naver.com/1"]
+
+
+def test_serpapi_provider_uses_page_offset_without_storing_api_key(monkeypatch):
+    captured = {}
+
+    def fake_search(self, params):
+        params["api_key"] = "secret-added-by-client"
+        captured.update(params)
+        return {"organic_results": [{"link": "https://a.com/2", "position": 1}]}
+
+    monkeypatch.setattr("serpapi.Client.search", fake_search)
+    provider = SerpApiProvider(api_key="dummy", config={"max_results_per_request": 10})
+    response = provider.search(
+        "괴담 확산", date_from=date(2025, 1, 1), date_to=date(2026, 1, 1),
+        allowed_domains=["a.com"], start=10,
+    )
+
+    assert captured["start"] == 10
+    assert response.results[0].rank == 11
+    assert "api_key" not in response.request_params
 
 
 def test_serpapi_provider_requires_allowed_domains():

@@ -33,6 +33,10 @@ def validate_configs(configs: dict[str, dict]) -> None:
     _validate_type_domains(configs.get("type_domains", {}), issues)
     _validate_domain_aliases(configs.get("domain_aliases", {}), issues)
     _validate_blacklist(configs.get("blacklist", {}), issues)
+    _validate_domain_overlap(
+        configs.get("type_domains", {}), configs.get("blacklist", {}), issues,
+    )
+    _validate_extraction(configs.get("extraction", {}), issues)
     _validate_retry_policy(configs.get("retry_policy", {}), issues)
 
     if issues:
@@ -81,6 +85,9 @@ def _validate_providers(cfg: dict, issues: list[str]) -> None:
     for provider in ("openai", "tavily", "serpapi"):
         _require("api_key_env" in cfg.get(provider, {}), issues,
                  f"providers.yaml: {provider}.api_key_env가 없습니다.")
+    serpapi = cfg.get("serpapi", {})
+    _require(serpapi.get("max_pages_per_query", 0) > 0, issues,
+             "providers.yaml: serpapi.max_pages_per_query는 1 이상이어야 합니다.")
 
 
 def _validate_taxonomy(cfg: dict, issues: list[str]) -> None:
@@ -99,13 +106,44 @@ def _validate_taxonomy(cfg: dict, issues: list[str]) -> None:
 
 
 def _validate_type_domains(cfg: dict, issues: list[str]) -> None:
-    for type_name, info in cfg.get("types", {}).items():
-        _require(isinstance(info.get("serpapi_allowed_domains"), list), issues,
-                 f"type_domains.yaml: {type_name}.serpapi_allowed_domains는 리스트여야 합니다.")
+    for key, info in cfg.get("types", {}).items():
+        if not isinstance(info, dict):
+            _require(False, issues, f"type_domains.yaml: {key}는 매핑(값이 있는 항목)이어야 합니다.")
+            continue
+        entries = info.items() if "serpapi_allowed_domains" not in info else [(key, info)]
+        for type_name, type_info in entries:
+            _require(isinstance(type_info.get("serpapi_allowed_domains"), list), issues,
+                     f"type_domains.yaml: {key}.{type_name}.serpapi_allowed_domains는 리스트여야 합니다.")
 
 
 def _validate_blacklist(cfg: dict, issues: list[str]) -> None:
     _require(isinstance(cfg.get("domains"), list), issues, "blacklist.yaml: domains는 리스트여야 합니다.")
+
+
+def _validate_domain_overlap(type_domains_cfg: dict, blacklist_cfg: dict, issues: list[str]) -> None:
+    allowed: set[str] = set()
+    for info in type_domains_cfg.get("types", {}).values():
+        entries = info.values() if isinstance(info, dict) and "serpapi_allowed_domains" not in info else [info]
+        for type_info in entries:
+            if isinstance(type_info, dict):
+                allowed.update(type_info.get("serpapi_allowed_domains", []))
+
+    overlap = allowed & set(blacklist_cfg.get("domains", []))
+    _require(
+        not overlap, issues,
+        f"type_domains.yaml 허용 도메인이 blacklist.yaml에도 있습니다: {', '.join(sorted(overlap))}",
+    )
+
+
+def _validate_extraction(cfg: dict, issues: list[str]) -> None:
+    cleaning = cfg.get("cleaning", {})
+    _require(isinstance(cleaning.get("trailing_section_markers"), list), issues,
+             "extraction.yaml: cleaning.trailing_section_markers는 리스트여야 합니다.")
+    _require(isinstance(cleaning.get("remove_duplicate_paragraphs"), bool), issues,
+             "extraction.yaml: cleaning.remove_duplicate_paragraphs는 true/false여야 합니다.")
+    minimum = cleaning.get("duplicate_paragraph_min_length")
+    _require(isinstance(minimum, int) and minimum > 0, issues,
+             "extraction.yaml: cleaning.duplicate_paragraph_min_length는 1 이상의 정수여야 합니다.")
 
 
 def _validate_domain_aliases(cfg: dict, issues: list[str]) -> None:

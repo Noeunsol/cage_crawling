@@ -15,7 +15,7 @@ from src.discovery.scheduler import ScheduledCandidate, run_scheduler
 from src.extraction import duplicates
 from src.extraction.fetcher import FetchError, fetch
 from src.extraction.general_extractor import ExtractionError
-from src.extraction.parser_registry import get_parser
+from src.extraction.parser_registry import get_parser, get_source_category
 from src.filtering.pipeline import FilterContext, build_filter_chain, run_filters
 from src.pipeline.result import ProcessOutcome, ProgressEvent, RunSummary, summarize
 from src.storage.repositories import contents as contents_repo
@@ -23,8 +23,9 @@ from src.storage.repositories import discarded as discarded_repo
 from src.storage.repositories import discoveries as discoveries_repo
 from src.storage.repositories import duplicates as duplicates_repo
 from src.storage.repositories import taxonomy_mappings as mappings_repo
+from src.utils.quota import QuotaExceededError, classify as classify_quota_error
 from src.utils.text import compute_content_hash
-from src.utils.urls import normalize_url
+from src.utils.urls import is_blocklisted_domain, normalize_url
 
 
 def _domain(url: str) -> str:
@@ -52,6 +53,43 @@ def process_candidate(
     extraction_cfg: dict,
     retry_policy: dict,
     filter_checks: list,
+    blacklist_domains: list[str] = (),
+) -> ProcessOutcome:
+    """후보 하나를 처리한다. 예상 못 한 예외(라이브러리 버그 등)가 한 후보 때문에 전체 실행을
+    통째로 죽이지 않도록, 알려진 예외(FetchError/ExtractionError)를 벗어난 것은 여기서 잡아
+    discarded(reason=unexpected_error)로 기록하고 다음 후보로 넘어간다 (2026-08-26: JSONDecodeError
+    한 건이 92개 배치 전체를 중단시킨 사고 이후 추가).
+    """
+    try:
+        return _process_candidate(
+            conn, candidate, run_id=run_id, type_cfg=type_cfg, date_from=date_from, date_to=date_to,
+            extraction_cfg=extraction_cfg, retry_policy=retry_policy, filter_checks=filter_checks,
+            blacklist_domains=blacklist_domains,
+        )
+    except QuotaExceededError:
+        raise  # OpenAI 사용량 초과는 이 후보만의 문제가 아니라 실행 전체를 멈춰야 한다 — run_collection에서 처리.
+    except Exception as e:
+        quota_error = classify_quota_error("openai", e)
+        if quota_error is not None:
+            raise quota_error from e
+        return _discard(
+            conn, candidate=candidate, run_id=run_id, normalized_url=normalize_url(candidate.url),
+            reason="unexpected_error", retryable=True, detail=f"{type(e).__name__}: {e}",
+        )
+
+
+def _process_candidate(
+    conn: sqlite3.Connection,
+    candidate: ScheduledCandidate,
+    *,
+    run_id: str,
+    type_cfg: dict,
+    date_from: date,
+    date_to: date,
+    extraction_cfg: dict,
+    retry_policy: dict,
+    filter_checks: list,
+    blacklist_domains: list[str] = (),
 ) -> ProcessOutcome:
     normalized_url = normalize_url(candidate.url)
 
@@ -60,6 +98,15 @@ def process_candidate(
         return _discard(
             conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
             reason="duplicate", retryable=False, detail="이미 저장된 URL입니다.",
+        )
+
+    # 블랙리스트 도메인은 fetch/추출을 시도조차 하지 않는다 — 유튜브·인스타그램처럼 애초에
+    # 정적으로 못 가져오는 사이트가 fetch까지 갔다가 extraction_failed로 낭비되는 걸 막는다
+    # (2026-08-26 실측: youtube.com 9건, instagram.com 4건이 이 경로로 새고 있었음).
+    if is_blocklisted_domain(_domain(normalized_url), blacklist_domains):
+        return _discard(
+            conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
+            reason="blacklisted_domain", retryable=False, detail="블랙리스트 도메인이라 요청을 보내지 않았습니다.",
         )
 
     try:
@@ -78,7 +125,10 @@ def process_candidate(
         )
 
     domain = _domain(final_url)
-    min_length = extraction_cfg["min_content_length"]["default"]  # 도메인→source_category 매핑은 아직 없음
+    source_category = get_source_category(domain)
+    min_length = extraction_cfg["min_content_length"].get(
+        source_category, extraction_cfg["min_content_length"]["default"],
+    )
 
     try:
         extracted = get_parser(domain)(fetched.html, final_url, min_length, extraction_cfg)
@@ -112,7 +162,7 @@ def process_candidate(
     content_id, _ = contents_repo.upsert_content(
         conn, title=extracted.title, content=extracted.content,
         published_date=extracted.published_date, canonical_url=final_url,
-        source_name=None, source_domain=domain, source_category=None,
+        source_name=None, source_domain=domain, source_category=source_category,
         status=decision.status, content_hash=content_hash,
     )
     decision_reason = f"{decision.reason}: {decision.detail}" if decision.reason else (decision.detail or "accepted")
@@ -184,16 +234,32 @@ def run_collection(
     }
 
     events: list[ProgressEvent] = []
+    warnings = list(scheduler_result.warnings)
     total = len(scheduler_result.candidates)
+    consecutive_unexpected_errors = 0
+    # process_candidate는 라이브러리 버그 등 "알려지지 않은" 예외를 후보 1건의 discarded로
+    # 바꿔서 삼킨다(unexpected_error) — 그래야 후보 하나의 버그가 전체 실행을 멈추지 않는다.
+    # 하지만 그게 연속으로 계속 나오면 후보가 아니라 코드/설정 자체가 깨졌다는 신호라, 남은
+    # 후보를 전부 같은 이유로 낭비하기 전에 멈추고 사용자에게 알린다.
+    UNEXPECTED_ERROR_BREAKER = 5
     for i, candidate in enumerate(scheduler_result.candidates, start=1):
         type_cfg = taxonomy_lookup[(candidate.lv2_id, candidate.type_name)]
         date_from, date_to = date_range_by_lv2[candidate.lv2_id]
-        outcome = process_candidate(
-            conn, candidate, run_id=run_id, type_cfg=type_cfg,
-            date_from=date_from, date_to=date_to,
-            extraction_cfg=configs["extraction"], retry_policy=configs["retry_policy"],
-            filter_checks=filter_checks,
-        )
+        try:
+            outcome = process_candidate(
+                conn, candidate, run_id=run_id, type_cfg=type_cfg,
+                date_from=date_from, date_to=date_to,
+                extraction_cfg=configs["extraction"], retry_policy=configs["retry_policy"],
+                filter_checks=filter_checks, blacklist_domains=configs["blacklist"]["domains"],
+            )
+        except QuotaExceededError as quota_error:
+            # openai 사용량이 소진되면 남은 후보를 계속 돌려봤자 전부 같은 이유로 실패한다 —
+            # 여기서 멈추고 지금까지 처리한 결과(이미 DB에 반영됨)를 그대로 돌려준다.
+            warnings.append(
+                f"{quota_error.provider}: API 사용량 한도를 초과해 실행을 중단했습니다. "
+                f"지금까지 처리한 {len(events)}/{total}건은 그대로 저장되어 있습니다."
+            )
+            break
         event = ProgressEvent(
             lv2_id=candidate.lv2_id, type_name=candidate.type_name, url=candidate.url,
             outcome=outcome, processed=i, total=total,
@@ -202,7 +268,18 @@ def run_collection(
         if on_progress is not None:
             on_progress(event)
 
+        if outcome.reason == "unexpected_error":
+            consecutive_unexpected_errors += 1
+            if consecutive_unexpected_errors >= UNEXPECTED_ERROR_BREAKER:
+                warnings.append(
+                    f"알 수 없는 오류가 {UNEXPECTED_ERROR_BREAKER}건 연속 발생해 실행을 중단했습니다"
+                    f"(마지막 오류: {outcome.detail}). 개별 후보 문제가 아니라 설정/코드 문제일 수 있습니다. "
+                    f"지금까지 처리한 {len(events)}/{total}건은 그대로 저장되어 있습니다."
+                )
+                break
+        else:
+            consecutive_unexpected_errors = 0
+
     return summarize(
-        run_id, events, provider_usage=scheduler_result.provider_usage,
-        warnings=scheduler_result.warnings,
+        run_id, events, provider_usage=scheduler_result.provider_usage, warnings=warnings,
     )

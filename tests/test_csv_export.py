@@ -3,8 +3,11 @@
 import csv
 
 from src.storage import database
-from src.storage.csv_exporter import CSV_COLUMNS, accepted_type_pairs, export_all, export_type
+from src.storage.csv_exporter import CSV_COLUMNS, accepted_type_pairs, export_all, export_run, export_type
 from src.storage.repositories import contents as contents_repo
+from src.storage.repositories import discoveries as discoveries_repo
+from src.storage.repositories import queries as queries_repo
+from src.storage.repositories import runs as runs_repo
 from src.storage.repositories import taxonomy_mappings as mappings_repo
 from src.utils.text import compute_content_hash
 
@@ -123,3 +126,41 @@ def test_accepted_type_pairs_discovers_targets(tmp_path):
         decision="accepted", decision_reason=None, prompt_name=None, prompt_version=None, model=None,
     )
     assert accepted_type_pairs(conn) == [("1_C_Self_Harm", "suicide")]
+
+
+def test_export_run_keeps_existing_csv_and_adds_only_selected_run(tmp_path):
+    conn = database.connect(tmp_path / "test.db")
+    final_dir = tmp_path / "final"
+    lv2_id, type_name = "1_C_Self_Harm", "suicide"
+
+    existing_id = _add_content(conn, url="https://a.com/existing", title="기존", content="기존 본문")
+    mappings_repo.add_mapping(
+        conn, content_id=existing_id, taxonomy_lv2=lv2_id, type_name=type_name,
+        decision="accepted", decision_reason=None, prompt_name=None, prompt_version=None, model=None,
+    )
+    export_type(conn, lv2_id, type_name, final_dir)
+
+    for run_id, url, title in [
+        ("run-selected", "https://a.com/selected", "선택 결과"),
+        ("run-other", "https://a.com/other", "다른 실행 결과"),
+    ]:
+        runs_repo.create_run(conn, run_id, {})
+        query_id = queries_repo.create_query(
+            conn, taxonomy_lv2=lv2_id, type_name=type_name, provider="tavily",
+            query_text=run_id, status="used", created_by="user",
+        )
+        content_id = _add_content(conn, url=url, title=title, content=f"{title} 본문")
+        mappings_repo.add_mapping(
+            conn, content_id=content_id, taxonomy_lv2=lv2_id, type_name=type_name,
+            decision="accepted", decision_reason=None, prompt_name=None, prompt_version=None, model=None,
+        )
+        discoveries_repo.record_discovery(
+            conn, content_id=content_id, run_id=run_id, query_id=query_id,
+            provider="tavily", returned_url=url,
+        )
+
+    export_run(conn, "run-selected", final_dir)
+    export_run(conn, "run-selected", final_dir)  # 같은 run을 다시 눌러도 중복되지 않는다.
+
+    rows = _read_csv(final_dir / lv2_id / f"{type_name}.csv")
+    assert {row["title"] for row in rows} == {"기존", "선택 결과"}

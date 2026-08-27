@@ -19,11 +19,31 @@ def test_real_configs_pass_validation():
     validate_configs(configs)  # 예외가 나지 않아야 정상
 
 
-def test_taxonomy_has_67_types_in_19_groups():
+def test_allowed_domain_cannot_also_be_blacklisted():
+    configs = load_all_configs()
+    configs["blacklist"]["domains"].append("velog.io")
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_configs(configs)
+
+    assert any("velog.io" in issue for issue in exc_info.value.issues)
+
+
+def test_broken_type_domains_entry_reports_readable_error_instead_of_crashing():
+    configs = load_all_configs()
+    configs["type_domains"]["types"]["broken_type"] = None  # `broken_type:` 처럼 값 없는 YAML 키
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_configs(configs)
+
+    assert any("broken_type" in issue for issue in exc_info.value.issues)
+
+
+def test_taxonomy_has_75_types_in_19_groups():
     configs = load_all_configs()
     groups = configs["taxonomy"]["taxonomy"]
     assert len(groups) == 19
-    assert sum(len(g["types"]) for g in groups) == 67
+    assert sum(len(g["types"]) for g in groups) == 75
 
 
 def test_missing_required_field_raises_readable_error():

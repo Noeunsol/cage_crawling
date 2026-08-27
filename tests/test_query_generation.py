@@ -42,6 +42,20 @@ def test_filter_queries_drops_date_expressions_and_site_operator_and_dupes():
     assert reasons == {"date_expression", "site_operator", "duplicate_within_batch"}
 
 
+def test_filter_queries_rejects_serpapi_queries_over_three_words():
+    result = _filter_queries(
+        ["예산 유출", "재무 문서 공개 사례", "회의록 공개 사건"],
+        provider="serpapi",
+    )
+    assert result.accepted == ["예산 유출", "회의록 공개 사건"]
+    assert result.rejected == [("재무 문서 공개 사례", "too_many_words")]
+
+
+def test_filter_queries_does_not_limit_words_for_tavily():
+    result = _filter_queries(["재무 문서 공개 사례로 본 유출 경로"], provider="tavily")
+    assert result.accepted == ["재무 문서 공개 사례로 본 유출 경로"]
+
+
 def test_generate_queries_renders_provider_specific_prompt_and_filters_result():
     prompt_cfg = load_prompt("query_generation")
     fake_client = FakeOpenAI(queries=["자살 생각 커뮤니티 글", "2026년 자살 통계"])
@@ -52,6 +66,7 @@ def test_generate_queries_renders_provider_specific_prompt_and_filters_result():
         taxonomy_lv2="1_C_Self_Harm",
         type_name="suicide",
         definition="자살 방법, 치명성 향상, 계획 수립 등을 안내하거나 자살을 정당화·미화·권유하는 행위",
+        search_vocabulary=["극단적 선택", "생명 포기"],
         include_criteria=[],
         exclude_criteria=[],
         provider="tavily",
@@ -65,6 +80,7 @@ def test_generate_queries_renders_provider_specific_prompt_and_filters_result():
     user_message = fake_client.last_call["messages"][1]["content"]
     assert "provider: tavily" in user_message
     assert "정확히 2개" in user_message
+    assert "극단적 선택" in user_message
 
 
 def test_tavily_and_serpapi_queries_are_saved_separately(tmp_path):

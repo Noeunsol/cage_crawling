@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import streamlit as st
 
@@ -13,7 +13,7 @@ from src.discovery.tavily_provider import TavilyProvider
 from src.pipeline.collector import run_collection
 from src.pipeline.preflight import run_preflight
 from src.query.generator import build_client
-from src.storage.csv_exporter import export_all
+from src.storage.csv_exporter import export_run
 from src.storage.repositories import discarded as discarded_repo
 from src.storage.repositories import discoveries as discoveries_repo
 from src.storage.repositories import runs as runs_repo
@@ -34,8 +34,20 @@ def _provider_api_key(configs: dict, provider: str) -> str:
     return os.environ[configs["providers"][provider]["api_key_env"]]
 
 
+_KST = timezone(timedelta(hours=9))
+
+
 def _format_started_at(started_at: str) -> str:
-    return datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S.%fZ").strftime("%Y-%m-%d-%H-%M-%S")
+    """DB에는 UTC로 저장되어 있으므로 표시 시 한국 시간(KST, UTC+9)으로 변환한다."""
+    utc_dt = datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    return utc_dt.astimezone(_KST).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_elapsed(seconds: float) -> str:
+    total_seconds = round(seconds)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 def _run_taxonomy_label(run_row) -> str:
@@ -57,11 +69,12 @@ def _render_run_results(conn, configs: dict, run_id: str) -> None:
     excluded = sum(1 for r in rows if r["decision"] == "excluded")
 
     st.subheader(f"③ 결과 — {run_id} ({_format_started_at(run_row['started_at'])})")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("찾은 후보", len(rows) + len(discarded_rows))
     col2.metric("accepted", accepted)
     col3.metric("excluded", excluded)
     col4.metric("discarded", len(discarded_rows))
+    col5.metric("총 실행 시간", _format_elapsed(runs_repo.elapsed_seconds(run_row)))
 
     # excluded(본문은 저장됐지만 필터 탈락)와 discarded(본문 자체를 못 가져옴)를 하나의
     # 사유별 건수 표로 합친다 — 둘 다 같은 reason 코드 체계(retry_policy.yaml)를 쓴다.
@@ -83,6 +96,15 @@ def _render_run_results(conn, configs: dict, run_id: str) -> None:
     warnings = json.loads(run_row["warning_summary"]) if run_row["warning_summary"] else []
     for w in warnings:
         st.warning(w)
+
+    st.caption("아래 버튼은 기존 CSV를 유지하고 이 run의 accepted 결과만 중복 없이 추가합니다.")
+    if st.button("📄 이 run을 CSV에 추가", key=f"export_csv_{run_id}"):
+        final_dir = PROJECT_ROOT / configs["app"]["export"]["final_dir"]
+        export_results = export_run(conn, run_id, final_dir)
+        if not export_results:
+            st.info("이 run에는 CSV에 추가할 accepted 결과가 없습니다.")
+        for result in export_results:
+            st.write(f"`{result.path.relative_to(PROJECT_ROOT)}` — 누적 {result.row_count}건")
 
     provider_usage = json.loads(run_row["provider_usage_summary"]) if run_row["provider_usage_summary"] else {}
     st.caption("provider별 실제 API 호출 수 (캐시로 건너뛴 요청 제외)")
@@ -218,7 +240,7 @@ confirm_cost = st.checkbox("실제 API를 호출해 비용이 발생하는 것�
 run_disabled = not report.can_run or not confirm_cost
 
 if st.button("▶️ 실행 시작", type="primary", disabled=run_disabled):
-    run_id = f"run-{conn.execute('SELECT COUNT(*) c FROM collection_runs').fetchone()['c'] + 1}"
+    run_id = runs_repo.new_run_id()
     providers = {
         "tavily": TavilyProvider(_provider_api_key(configs, "tavily"), configs["providers"]["tavily"]),
         "serpapi": SerpApiProvider(_provider_api_key(configs, "serpapi"), configs["providers"]["serpapi"]),
@@ -247,14 +269,19 @@ if st.button("▶️ 실행 시작", type="primary", disabled=run_disabled):
             + (f" ({event.outcome.reason})" if event.outcome.reason else "")
         )
 
-    with st.spinner("검색 및 수집 진행 중..."):
-        summary = run_collection(
-            conn, providers, run_configs, run_id, targets,
-            target_count=setup["target_count"], candidate_multiplier=setup["candidate_multiplier"],
-            date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
-            openai_client=openai_client, on_progress=_on_progress,
-            max_calls_by_provider=max_calls_by_provider,
-        )
+    try:
+        with st.spinner("검색 및 수집 진행 중...", show_time=True):
+            summary = run_collection(
+                conn, providers, run_configs, run_id, targets,
+                target_count=setup["target_count"], candidate_multiplier=setup["candidate_multiplier"],
+                date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
+                openai_client=openai_client, on_progress=_on_progress,
+                max_calls_by_provider=max_calls_by_provider,
+            )
+    except Exception as error:
+        runs_repo.finish_run(conn, run_id, "failed", {}, [f"실행 오류: {error}"])
+        st.exception(error)
+        st.stop()
 
     runs_repo.finish_run(conn, run_id, "completed", summary.provider_usage, summary.warnings)
     st.session_state["last_run_id"] = run_id
@@ -264,12 +291,6 @@ if st.button("▶️ 실행 시작", type="primary", disabled=run_disabled):
 last_run_id = st.session_state.get("last_run_id")
 if last_run_id:
     _render_run_results(conn, configs, last_run_id)
-
-    if st.button("📄 CSV로 내보내기"):
-        final_dir = PROJECT_ROOT / configs["app"]["export"]["final_dir"]
-        results = export_all(conn, final_dir, targets=targets)
-        for r in results:
-            st.write(f"`{r.path.relative_to(PROJECT_ROOT)}` — {r.row_count}건")
 
 st.divider()
 
@@ -285,6 +306,7 @@ else:
             "run_id": r["run_id"],
             "상태": r["status"],
             "텍소노미": _run_taxonomy_label(r),
+            "총 소요시간": _format_elapsed(runs_repo.elapsed_seconds(r)),
         }
         for r in past_runs
     ]

@@ -22,6 +22,7 @@ class SerpApiProvider:
         date_to: date,
         allowed_domains: list[str],
         max_results: int | None = None,
+        start: int = 0,
     ) -> DiscoveryResponse:
         """allowed_domains가 비어 있으면 검색하지 않는다 (5.3, 6.3절: 도메인 없으면 SerpAPI 자체를 건너뛴다)."""
         if not allowed_domains:
@@ -34,14 +35,21 @@ class SerpApiProvider:
         request_params = {
             "engine": "google",
             "q": f"({site_filter}) {query_text}",
-            "num": max_results or self._config.get("max_results_per_request", 100),
+            # 기본값 10은 scheduler.py의 page_size 기본값과 반드시 같아야 한다 — 다르면
+            # scheduler가 "이 페이지가 꽉 찼는지"를 잘못 판단해 불필요한 페이지 요청을 반복한다
+            # (Google이 2025-09-14에 num 파라미터를 무력화해서 실제로도 항상 10개만 온다 —
+            # configs/providers.yaml의 ponytail 주석 참고).
+            "num": max_results or self._config.get("max_results_per_request", 10),
+            "start": start,
             "tbs": f"cdr:1,cd_min:{date_from.strftime('%m/%d/%Y')},cd_max:{date_to.strftime('%m/%d/%Y')}",
             "no_cache": self._config.get("no_cache", False),
         }
-        response = self._client.search(request_params)
+        # serpapi.Client가 전달받은 dict에 api_key를 삽입하므로 복사본만 넘긴다.
+        # 원본 request_params는 DB에 저장되며 비밀값이 절대 들어가면 안 된다.
+        response = self._client.search(dict(request_params))
 
         results = [
-            DiscoveredResult(url=item["link"], rank=item.get("position", i + 1))
+            DiscoveredResult(url=item["link"], rank=start + item.get("position", i + 1))
             for i, item in enumerate(response.get("organic_results", []))
             if "link" in item
         ]

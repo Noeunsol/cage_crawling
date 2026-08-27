@@ -23,7 +23,7 @@ class TavilyProvider:
         exclude_domains: list[str],
         max_results: int | None = None,
     ) -> DiscoveryResponse:
-        """exclude_domains는 (이 type의 SerpAPI 허용 도메인 ∪ 공통 블랙리스트)여야 한다 (6.2절)."""
+        """설정에서 계산한 제외 도메인(기본값: 공통 블랙리스트)으로 검색한다."""
         request_params = {
             "query": query_text,
             "search_depth": self._config.get("search_depth", "basic"),

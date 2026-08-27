@@ -27,6 +27,10 @@ reasons:
     retryable: true
     max_attempts: 2
     backoff_seconds: 5
+  unexpected_error:          # 알려지지 않은 예외(라이브러리 버그 등) — 한 후보 실패가 전체 실행을 막지 않는다
+    retryable: true
+    max_attempts: 2
+    backoff_seconds: 5
 
 # provider별 요청 간 최소 간격(초)과 동시 요청 수 (16.3절).
 rate_limit:

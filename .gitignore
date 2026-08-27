@@ -12,6 +12,7 @@ uv.lock
 *.log
 *.sqlite3
 *.db
+*.db.zip
 data/
 logs/
 .cache/

@@ -41,7 +41,7 @@ def _ctx(**overrides) -> FilterContext:
 
 # ---------------------------------------------------------------- blacklist_filter
 def test_blacklist_filter():
-    ctx = _ctx(source_domain="bad.com")
+    ctx = _ctx(source_domain="www.bad.com")
     assert blacklist_filter.check(ctx, ["bad.com"]).passed is False
     assert blacklist_filter.check(ctx, ["other.com"]).passed is True
 

@@ -9,3 +9,4 @@ tavily-python
 serpapi
 requests
 trafilatura
+beautifulsoup4

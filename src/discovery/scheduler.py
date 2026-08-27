@@ -18,7 +18,9 @@ from src.query.repository import list_active_queries
 from src.storage.repositories import domain_bundles as bundles_repo
 from src.storage.repositories import queries as queries_repo
 from src.storage.repositories import query_executions as exec_repo
+from src.utils.quota import classify as classify_quota_error
 from src.utils.rate_limit import throttle
+from src.utils.urls import normalize_url
 
 
 @dataclass
@@ -54,10 +56,14 @@ class _Lane:
     queries: list
 
     collected: int = 0
+    current_query: object | None = None
+    page_start: int = 0
+    current_domains: list[str] | None = None
+    seen_urls: set[str] = field(default_factory=set)
 
     @property
     def done(self) -> bool:
-        return self.collected >= self.target or not self.queries
+        return self.collected >= self.target or (not self.queries and self.current_query is None)
 
 
 def _build_lanes(
@@ -68,6 +74,10 @@ def _build_lanes(
     alias_groups = configs["domain_aliases"]["groups"]
     blacklist_domains = configs["blacklist"]["domains"]
     default_ratio = configs["collection"]["provider_ratio"]["default"]
+    partition_cfg = configs["collection"].get("domain_partition", {})
+    # 기본 True — config 키가 실수로 빠져도 실측 근거로 채택된 "provider 분리" 동작을 유지한다
+    # (src/discovery/allocator.py 모듈 docstring 참고).
+    exclude_serpapi_domains = partition_cfg.get("tavily_excludes_serpapi_domains", True)
     # target_count는 LV2 기준 목표다 — 같은 LV2에 type이 여럿이면 나눠 갖는다 (나머지는 올림).
     types_per_lv2 = Counter(lv2_id for lv2_id, _ in targets)
 
@@ -80,14 +90,15 @@ def _build_lanes(
         per_type_target_count = math.ceil(target_count / types_per_lv2[lv2_id])
         total = math.ceil(per_type_target_count * candidate_multiplier)
 
-        config_has_domains = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains)
+        config_has_domains = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains, lv2_id)
+        bundle_key = f"{lv2_id}::{type_name}"
         if config_has_domains:
             # 도메인을 최대 3개씩 번들로 묶고(alias는 항상 같은 묶음), 상태를 DB에 맞춰둔다.
             bundles_repo.sync_bundles(
-                conn, type_name,
-                serpapi_allowed_domains(type_domains_cfg, type_name, blacklist_domains), alias_groups,
+                conn, bundle_key,
+                serpapi_allowed_domains(type_domains_cfg, type_name, blacklist_domains, lv2_id), alias_groups,
             )
-        serpapi_available = config_has_domains and bundles_repo.has_enabled_bundle(conn, type_name)
+        serpapi_available = config_has_domains and bundles_repo.has_enabled_bundle(conn, bundle_key)
 
         if serpapi_available:
             tavily_target = round(total * ratio["tavily"] / 100)
@@ -100,7 +111,10 @@ def _build_lanes(
 
         provider_targets = [
             ("tavily", tavily_target, {"exclude_domains": tavily_exclude_domains(
-                type_domains_cfg, blacklist_domains, type_name)}),
+                type_domains_cfg, blacklist_domains, type_name,
+                exclude_serpapi_domains=exclude_serpapi_domains,
+                lv2_id=lv2_id,
+            )}),
             # allowed_domains는 여기서 고정하지 않는다 — 매 검색 호출마다 LRU로 번들을 골라 채운다.
             ("serpapi", serpapi_target, {}),
         ]
@@ -154,6 +168,8 @@ def run_scheduler(
     capped_providers: set[str] = set()
 
     def _is_capped(provider: str) -> bool:
+        if provider in capped_providers:
+            return True
         if not max_calls_by_provider or provider not in max_calls_by_provider:
             return False
         return calls_used[provider] >= max_calls_by_provider[provider]
@@ -168,22 +184,25 @@ def run_scheduler(
                     "도달해 남은 검색을 건너뜁니다."
                 )
             continue  # 이 lane은 더 진행할 수 없다 — 큐에 다시 넣지 않는다.
-        query_row = lane.queries.pop(0)
+        if lane.current_query is None:
+            lane.current_query = lane.queries.pop(0)
+        query_row = lane.current_query
 
         search_kwargs = dict(lane.search_kwargs)
         fingerprint_extra = None
         if lane.provider == "serpapi":
-            # 이미 계산된 예산(이 while 루프) 안에서만 번들을 고른다 — 로테이션 전용 추가 요청은 없다.
-            bundle = bundles_repo.pick_bundle(conn, lane.type_name)
-            if bundle is None:
-                result.warnings.append(
-                    f"{lane.lv2_id}::{lane.type_name} (serpapi): 사용 가능한 도메인 번들이 없어 중단합니다."
-                )
-                continue  # 이 lane은 더 진행할 수 없다 — 큐에 다시 넣지 않는다.
-            search_kwargs["allowed_domains"] = bundle.domains
-            fingerprint_extra = {"domains": bundle.domains}
-            # 실제 호출 여부와 무관하게 이번 라운드에 이 번들을 배정했다는 사실 자체가 순환을 진행시킨다.
-            bundles_repo.mark_used(conn, lane.type_name, bundle.bundle_index)
+            if lane.current_domains is None:
+                bundle_key = f"{lane.lv2_id}::{lane.type_name}"
+                bundle = bundles_repo.pick_bundle(conn, bundle_key)
+                if bundle is None:
+                    result.warnings.append(
+                        f"{lane.lv2_id}::{lane.type_name} (serpapi): 사용 가능한 도메인 번들이 없어 중단합니다."
+                    )
+                    continue
+                lane.current_domains = bundle.domains
+                bundles_repo.mark_used(conn, bundle_key, bundle.bundle_index)
+            search_kwargs.update(allowed_domains=lane.current_domains, start=lane.page_start)
+            fingerprint_extra = {"domains": lane.current_domains, "start": lane.page_start}
 
         fingerprint = build_fingerprint(
             provider=lane.provider, query_text=query_row["query_text"],
@@ -193,14 +212,27 @@ def run_scheduler(
         cached = exec_repo.get_by_fingerprint(conn, fingerprint)
         if cached is not None:
             # 이미 같은 조건(같은 도메인 번들 포함)으로 검색해봤다 — 다시 부르지 않는다.
-            lane.collected += cached["result_count"] or 0
+            page_result_count = cached["result_count"] or 0
+            returned_count = page_result_count
+            lane.collected += page_result_count
         else:
             provider_rate = configs.get("retry_policy", {}).get("rate_limit", {}).get(lane.provider, {})
             throttle(lane.provider, provider_rate.get("min_interval_seconds", 0))
-            response = providers[lane.provider].search(
-                query_row["query_text"], date_from=lane.date_from, date_to=lane.date_to,
-                **search_kwargs,
-            )
+            try:
+                response = providers[lane.provider].search(
+                    query_row["query_text"], date_from=lane.date_from, date_to=lane.date_to,
+                    **search_kwargs,
+                )
+            except Exception as exc:
+                quota_error = classify_quota_error(lane.provider, exc)
+                if quota_error is None:
+                    raise
+                capped_providers.add(lane.provider)
+                result.warnings.append(
+                    f"{lane.provider}: API 사용량 한도를 초과해 더 이상 호출할 수 없습니다 — "
+                    "이 provider는 건너뛰고 지금까지 모은 결과로 계속 진행합니다."
+                )
+                continue
             exec_id, _ = exec_repo.start_execution(
                 conn, run_id=run_id, query_id=query_row["id"],
                 request_params=response.request_params, request_fingerprint=fingerprint,
@@ -209,7 +241,6 @@ def run_scheduler(
                 conn, exec_id, status="success",
                 result_count=len(response.results), credit_usage=response.usage,
             )
-            queries_repo.update_status(conn, query_row["id"], "used")
             calls_used[lane.provider] += 1
 
             result.provider_usage.setdefault(lane.provider, []).append(response.usage)
@@ -221,7 +252,37 @@ def run_scheduler(
                 )
                 for item in response.results
             )
-            lane.collected += len(response.results)
+            returned_count = len(response.results)
+            page_result_count = 0
+            for item in response.results:
+                normalized_url = normalize_url(item.url)
+                if normalized_url in lane.seen_urls:
+                    continue
+                lane.seen_urls.add(normalized_url)
+                exists = conn.execute(
+                    "SELECT 1 FROM contents WHERE canonical_url = ? LIMIT 1", (normalized_url,)
+                ).fetchone()
+                if exists is None:
+                    page_result_count += 1
+            lane.collected += page_result_count
+
+        provider_cfg = configs.get("providers", {}).get("serpapi", {})
+        # 기본값 10은 serpapi_provider.py가 실제로 요청에 쓰는 기본값과 반드시 같아야 한다.
+        page_size = provider_cfg.get("max_results_per_request", 10)
+        max_pages = provider_cfg.get("max_pages_per_query", 1)
+        continue_query = (
+            lane.provider == "serpapi"
+            and returned_count >= page_size
+            and lane.collected < lane.target
+            and lane.page_start // page_size + 1 < max_pages
+        )
+        if continue_query:
+            lane.page_start += page_size
+        else:
+            queries_repo.update_status(conn, query_row["id"], "used")
+            lane.current_query = None
+            lane.page_start = 0
+            lane.current_domains = None
 
         if not lane.done:
             queue.append(lane)

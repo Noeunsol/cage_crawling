@@ -50,7 +50,7 @@ def run_preflight(
     for lv2_id, type_name in targets:
         tavily_queries = list_active_queries(conn, taxonomy_lv2=lv2_id, type_name=type_name, provider="tavily")
         serpapi_queries = list_active_queries(conn, taxonomy_lv2=lv2_id, type_name=type_name, provider="serpapi")
-        has_domain = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains)
+        has_domain = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains, lv2_id)
         per_type_target_count = math.ceil(target_count / types_per_lv2[lv2_id])
         candidate_target = math.ceil(per_type_target_count * candidate_multiplier)
 

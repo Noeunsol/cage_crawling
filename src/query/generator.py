@@ -45,8 +45,11 @@ def _format_criteria(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) if criteria else "(지정된 기준 없음)"
 
 
-def _filter_queries(raw_queries: list[str]) -> GeneratedQueries:
-    """중복·기간 표현·site: 연산자가 섞인 검색어를 걸러낸다."""
+_SERPAPI_MAX_WORDS = 3  # ponytail: LLM은 이 규칙을 프롬프트만으로 항상 지키지 않아, 코드로도 강제한다
+
+
+def _filter_queries(raw_queries: list[str], provider: str = "") -> GeneratedQueries:
+    """중복·기간 표현·site: 연산자가 섞인 검색어를 걸러낸다. serpapi는 단어 수 상한도 강제한다."""
     accepted, rejected, seen = [], [], set()
     for q in raw_queries:
         q = q.strip()
@@ -58,6 +61,8 @@ def _filter_queries(raw_queries: list[str]) -> GeneratedQueries:
             rejected.append((q, "date_expression"))
         elif _SITE_OPERATOR.search(q):
             rejected.append((q, "site_operator"))
+        elif provider == "serpapi" and len(q.split()) > _SERPAPI_MAX_WORDS:
+            rejected.append((q, "too_many_words"))
         else:
             seen.add(q)
             accepted.append(q)
@@ -71,6 +76,7 @@ def generate_queries(
     taxonomy_lv2: str,
     type_name: str,
     definition: str,
+    search_vocabulary: list[str] | None = None,
     include_criteria: list[str],
     exclude_criteria: list[str],
     provider: str,
@@ -83,6 +89,7 @@ def generate_queries(
         taxonomy_lv2=taxonomy_lv2,
         type_name=type_name,
         definition=definition,
+        search_vocabulary=_format_criteria(search_vocabulary or []),
         include_criteria=_format_criteria(include_criteria),
         exclude_criteria=_format_criteria(exclude_criteria),
         provider=provider,
@@ -103,7 +110,7 @@ def generate_queries(
     )
     elapsed_s = time.monotonic() - started
     payload = json.loads(response.choices[0].message.content)
-    result = _filter_queries(payload["queries"])
+    result = _filter_queries(payload["queries"], provider=provider)
     result.prompt_tokens = response.usage.prompt_tokens
     result.completion_tokens = response.usage.completion_tokens
     result.elapsed_s = elapsed_s

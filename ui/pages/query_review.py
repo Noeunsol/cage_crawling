@@ -11,6 +11,7 @@ from __future__ import annotations
 import streamlit as st
 
 from src.query import generator, repository
+from src.storage.repositories import query_executions as exec_repo
 from src.storage.repositories import query_generation_calls as generation_calls_repo
 from src.utils.prompts import load_prompt
 from ui.common import (
@@ -149,7 +150,9 @@ if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_
                     continue
                 result = generator.generate_queries(
                     client, prompt_cfg, taxonomy_lv2=lv2, type_name=type_name,
-                    definition=type_cfg["definition"], include_criteria=type_cfg["include_criteria"],
+                    definition=type_cfg["definition"],
+                    search_vocabulary=type_cfg.get("search_vocabulary", []),
+                    include_criteria=type_cfg["include_criteria"],
                     exclude_criteria=type_cfg["exclude_criteria"], provider=provider,
                     query_count=int(count), model=model,
                 )
@@ -240,12 +243,19 @@ def _render_provider_detail(lv2: str, type_name: str, provider: str) -> None:
         with st.expander(f"이미 사용됨 ({len(used_rows)}개)"):
             st.caption(
                 "실제 검색에 쓰인 검색어입니다. 그 실행이 도중에 죽어서 결과가 안 남았다면, "
-                "되돌리기를 눌러야 다음 실행에서 진짜로 다시 검색됩니다 (그냥 두면 '이미 검색했다'고 보고 건너뜁니다)."
+                "되돌리기를 눌러야 다음 실행에서 진짜로 다시 검색됩니다 (그냥 두면 '이미 검색했다'고 보고 건너뜁니다). "
+                "결과 수가 0건인 검색어는 그 표현으로는 못 찾는다는 뜻이니, 되돌린 뒤 검색어 자체를 바꿔보세요."
             )
             for row in used_rows:
-                c1, c2 = st.columns([5, 1])
+                result_count = exec_repo.get_latest_result_count(conn, row["id"])
+                count_label = "실행 기록 없음" if result_count is None else f"{result_count}건"
+                c1, c2, c3 = st.columns([5, 1, 1])
                 c1.caption(row["query_text"])
-                if c2.button("되돌리기", key=f"reactivate_{row['id']}"):
+                if result_count == 0:
+                    c2.markdown("⚠️ **0건**")
+                else:
+                    c2.caption(count_label)
+                if c3.button("되돌리기", key=f"reactivate_{row['id']}"):
                     repository.reactivate_query(conn, row["id"])
                     st.rerun()
 

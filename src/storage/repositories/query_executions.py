@@ -22,6 +22,22 @@ def count_by_provider(conn: sqlite3.Connection) -> dict[str, int]:
     return {r["provider"]: r["c"] for r in rows}
 
 
+def get_latest_result_count(conn: sqlite3.Connection, query_id: int) -> int | None:
+    """이 검색어의 가장 최근 실행이 실제로 몇 건을 돌려줬는지. 실행 기록이 없으면 None.
+
+    "3. 검색어 생성 및 검토"에서 0건짜리 검색어를 눈에 띄게 보여줘서 교체를 유도하는 데 쓴다.
+    """
+    row = conn.execute(
+        """
+        SELECT result_count FROM query_executions
+        WHERE query_id = ? AND status = 'success'
+        ORDER BY finished_at DESC LIMIT 1
+        """,
+        (query_id,),
+    ).fetchone()
+    return row["result_count"] if row else None
+
+
 def get_by_fingerprint(conn: sqlite3.Connection, request_fingerprint: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM query_executions WHERE request_fingerprint = ?",

@@ -1,5 +1,7 @@
 """Phase 2 완료 조건 검증: 성공/중복/실패 이력이 손실 없이 쌓이고, 같은 URL/쿼리는 재저장되지 않는다."""
 
+from datetime import datetime, timezone
+
 import pytest
 
 from src.storage import database
@@ -30,6 +32,29 @@ def test_run_lifecycle(conn):
     row = runs.get_run(conn, "run-1")
     assert row["status"] == "completed"
     assert row["finished_at"] is not None
+
+
+def test_new_run_id_does_not_depend_on_existing_run_count(conn):
+    runs.create_run(conn, "run-2", {})
+    runs.create_run(conn, "run-3", {})
+
+    generated = {runs.new_run_id() for _ in range(20)}
+
+    assert len(generated) == 20
+    assert "run-3" not in generated
+    for run_id in generated:
+        runs.create_run(conn, run_id, {})
+
+
+def test_elapsed_seconds_uses_finished_time_or_current_time():
+    finished = {
+        "started_at": "2026-08-26T01:00:00.000Z",
+        "finished_at": "2026-08-26T01:02:03.500Z",
+    }
+    running = {"started_at": "2026-08-26T01:00:00.000Z", "finished_at": None}
+
+    assert runs.elapsed_seconds(finished) == 123.5
+    assert runs.elapsed_seconds(running, datetime(2026, 8, 26, 1, 1, tzinfo=timezone.utc)) == 60
 
 
 def test_upsert_content_prevents_duplicate_url(conn):
@@ -100,6 +125,22 @@ def test_query_execution_fingerprint_blocks_reexecution(conn):
     query_executions.finish_execution(conn, exec_id1, status="success", result_count=8)
     row = query_executions.get_by_fingerprint(conn, "fp-1")
     assert row["result_count"] == 8
+
+
+def test_get_latest_result_count_reflects_most_recent_execution(conn):
+    runs.create_run(conn, "run-latest", {})
+    query_id = queries.create_query(
+        conn, taxonomy_lv2="1_C_Self_Harm", type_name="suicide", provider="tavily",
+        query_text="쿼리", status="generated", created_by="openai",
+    )
+    assert query_executions.get_latest_result_count(conn, query_id) is None
+
+    exec_id, _ = query_executions.start_execution(
+        conn, run_id="run-latest", query_id=query_id, request_params={}, request_fingerprint="fp-x",
+    )
+    query_executions.finish_execution(conn, exec_id, status="success", result_count=0)
+
+    assert query_executions.get_latest_result_count(conn, query_id) == 0
 
 
 def test_query_executions_count_by_provider_excludes_cached_reuse(conn):

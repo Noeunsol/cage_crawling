@@ -8,6 +8,27 @@ cleaning:
   strip_html: true
   collapse_blank_lines: true      # 문단 개행은 유지하되 과도한 빈 줄만 정리
   normalize_whitespace: true
+  remove_duplicate_paragraphs: true
+  duplicate_paragraph_min_length: 80  # 짧은 제목/목록 항목은 반복되어도 유지
+  # 본문 맨 앞에서부터 이 길이 이하인 줄이 연달아 나오면(네비게이션 메뉴 등) 잘라낸다.
+  # 실제 기사 문단을 만나는 순간(길이 초과) 멈춘다. 0이면 끔 (2026-08-26: a-ha.io 등에서 실측).
+  leading_short_line_max_length: 10
+  # 아래 문구가 문단 첫머리에 나오면 그 지점부터 작성자 소개·저작권 영역으로 보고 제거한다.
+  trailing_section_markers:
+    - "필자 소개"
+    - "필자소개"
+    - "기자 소개"
+    - "기자소개"
+    - "[글_"
+    - "[글="
+    - "저작권자"
+    - "<저작권자"
+    - "로톡의 모든 콘텐츠는"   # lawtalk.co.kr 저작권 안내 고정문구 (2026-08-26 실측: 16건 누락 확인)
+    - "ⓒ"                    # 한국 뉴스매체 공통 저작권 표기("ⓒ 한경닷컴, 무단전재 및 재배포 금지" 등)
+    - "무단전재"               # 위와 같은 문구가 ⓒ 없이 나오는 경우 (2026-08-26 실측: hankyung.com 7/7건 누락)
+    - "Copyright"             # 영문 저작권 고지 ("@Copyright OOO. All Right Reserved." 등)
+    - "상단의 좋아요"           # "칼럼이 도움이 됐다면 상단의 좋아요 버튼을 눌러주세요" 류 공유 유도 문구
+    - "후원은 더 좋은 기사에"    # mediatoday.co.kr 후원 유도 문구 (2026-08-26 실측: 19/19건 누락 확인)
 
 # trafilatura(본문 추출 라이브러리) 옵션. 댓글·관련기사 등을 빼고 메인 본문만 가져오게 한다.
 trafilatura:
@@ -25,10 +46,8 @@ taxonomy_filter:
   enabled: false
 
 # source_category별 최소 본문 길이(자수). 이보다 짧으면 extraction_failed 처리한다.
-# ponytail: 문서 9.4/11.2절 TBD 항목의 안전한 기본값. pilot 실행 결과를 보고 조정할 것.
 min_content_length:
   news: 200
-  community: 100
-  qna: 100
-  blog: 150
+  community: 50
+  qna: 80
   default: 100

@@ -4,6 +4,24 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
+from uuid import uuid4
+
+
+def new_run_id() -> str:
+    """삭제된 실행 번호나 동시 실행과 충돌하지 않는 새 run ID를 만든다."""
+    return f"run-{uuid4().hex}"
+
+
+def elapsed_seconds(run_row, now: datetime | None = None) -> float:
+    """DB 실행 기록의 시작~종료 시간을 초 단위로 반환한다."""
+    started_at = datetime.fromisoformat(run_row["started_at"].replace("Z", "+00:00"))
+    finished_at = run_row["finished_at"]
+    ended_at = (
+        datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+        if finished_at else (now or datetime.now(timezone.utc))
+    )
+    return max((ended_at - started_at).total_seconds(), 0.0)
 
 
 def create_run(conn: sqlite3.Connection, run_id: str, settings_snapshot: dict) -> None:

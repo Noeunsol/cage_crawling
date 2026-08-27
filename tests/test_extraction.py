@@ -47,6 +47,22 @@ def test_normalize_url_treats_trailing_slash_as_equivalent():
     assert normalize_url("https://example.com/a/") == normalize_url("https://example.com/a")
 
 
+def test_normalize_url_repairs_leaked_js_unicode_escape():
+    # 일부 사이트가 href의 "="을 =로 이스케이프해놓고 디코딩을 안 해서, 검색 API가 그
+    # raw 문자열을 그대로 돌려주는 경우가 있다 (2026-08-26 실측: mediatoday.co.kr).
+    leaked = "https://www.mediatoday.co.kr/news/articleView.html?idxno" + chr(92) + "u003d333363"
+    assert normalize_url(leaked) == normalize_url(
+        "https://www.mediatoday.co.kr/news/articleView.html?idxno=333363"
+    )
+
+
+def test_normalize_url_repairs_percent_encoded_js_unicode_escape():
+    leaked = "https://www.mediatoday.co.kr/news/articleView.html?idxno%5Cu003d333363="
+    assert normalize_url(leaked) == normalize_url(
+        "https://www.mediatoday.co.kr/news/articleView.html?idxno=333363"
+    )
+
+
 # ---------------------------------------------------------------- 콘텐츠 해시
 def test_compute_content_hash_ignores_whitespace_and_case_differences():
     h1 = compute_content_hash("제목", "본문 내용입니다.")
@@ -156,6 +172,22 @@ def test_fetch_500_is_temporary_http_error_retryable(monkeypatch):
 
 
 # ---------------------------------------------------------------- general_extractor
+def test_extract_handles_backslashes_in_body_without_json_decode_error():
+    # 예전엔 trafilatura output_format="json" + json.loads(raw)를 썼는데, 본문에 백슬래시가
+    # 섞이면 trafilatura가 만든 JSON 문자열 자체가 깨져 JSONDecodeError가 났다(2026-08-26 실측).
+    # bare_extraction()으로 dict를 바로 받으면 이 JSON 왕복이 없어 문제가 안 생긴다.
+    html = """
+    <html><head><title>메타 제목</title></head>
+    <body><article>
+    <h1>진짜 제목입니다</h1>
+    <p>윈도 경로 예시는 C:\\Users\\test\\file.txt 처럼 백슬래시가 들어갈 수 있습니다.
+    정규식이나 이스케이프 문자(\\n, \\t)도 본문에 그대로 등장할 수 있는 충분히 긴 문단입니다.</p>
+    </article></body></html>
+    """
+    result = extract(html, url="https://example.com/a", min_content_length=10)
+    assert "C:\\Users\\test\\file.txt" in result.content
+
+
 def test_extract_returns_clean_body_without_nav_ads_footer():
     result = extract(SAMPLE_HTML, url="https://example.com/a", min_content_length=10)
     assert result.title == "진짜 제목입니다"
@@ -169,11 +201,11 @@ def test_extract_returns_clean_body_without_nav_ads_footer():
 def test_extract_defaults_to_comments_off_and_precision_on(monkeypatch):
     captured = {}
 
-    def fake_extract(html, **kwargs):
+    def fake_bare_extraction(html, **kwargs):
         captured.update(kwargs)
         return None  # 본문 자체는 안 봐도 되니 실패로 짧게 끝낸다
 
-    monkeypatch.setattr("trafilatura.extract", fake_extract)
+    monkeypatch.setattr("trafilatura.bare_extraction", fake_bare_extraction)
     try:
         extract(SAMPLE_HTML, url="https://example.com/a", min_content_length=10)
     except ExtractionError:
@@ -186,11 +218,11 @@ def test_extract_defaults_to_comments_off_and_precision_on(monkeypatch):
 def test_extract_respects_extraction_cfg_overrides(monkeypatch):
     captured = {}
 
-    def fake_extract(html, **kwargs):
+    def fake_bare_extraction(html, **kwargs):
         captured.update(kwargs)
         return None
 
-    monkeypatch.setattr("trafilatura.extract", fake_extract)
+    monkeypatch.setattr("trafilatura.bare_extraction", fake_bare_extraction)
     cfg = {"trafilatura": {"include_comments": True, "favor_precision": False}}
     try:
         extract(SAMPLE_HTML, url="https://example.com/a", min_content_length=10, extraction_cfg=cfg)
@@ -199,6 +231,35 @@ def test_extract_respects_extraction_cfg_overrides(monkeypatch):
 
     assert captured["include_comments"] is True
     assert captured["favor_precision"] is False
+
+
+def test_extract_removes_author_profile_and_repeated_paragraphs(monkeypatch):
+    article = "\n".join([
+        "사건 발생 경위와 피해 내용을 설명하는 충분히 긴 첫 번째 본문 문단입니다.",
+        "수사기관이 확인한 후속 상황을 설명하는 충분히 긴 두 번째 본문 문단입니다.",
+        "사건 발생 경위와 피해 내용을 설명하는 충분히 긴 첫 번째 본문 문단입니다.",
+        "[글_홍길동 기자]",
+        "필자 소개_",
+        "- 어느 기관 전문위원",
+    ])
+
+    class FakeDocument:
+        def as_dict(self):
+            return {"title": "사건 기사", "text": article, "date": "2026-01-01"}
+
+    monkeypatch.setattr("trafilatura.bare_extraction", lambda *a, **kw: FakeDocument())
+    cfg = {"cleaning": {
+        "remove_duplicate_paragraphs": True,
+        "duplicate_paragraph_min_length": 20,
+        "trailing_section_markers": ["[글_", "필자 소개"],
+    }}
+
+    result = extract("<html></html>", "https://example.com/a", 10, cfg)
+
+    assert result.content.count("사건 발생 경위") == 1
+    assert "수사기관이 확인한" in result.content
+    assert "홍길동 기자" not in result.content
+    assert "전문위원" not in result.content
 
 
 def test_extract_fails_when_body_too_short():

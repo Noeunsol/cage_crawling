@@ -1,5 +1,4 @@
 # 같은 기관이 쓰는 서로 다른 도메인. 도메인 번들링 시 항상 같은 묶음으로 관리하고 절대 분리하지 않는다.
-# boho.or.kr(krcert.or.kr 별칭)은 robots.txt 리다이렉트 루프로 접근 불가해 제거했고,
-# police.go.kr(robots.txt가 대부분 차단)도 type_domains.yaml에서 빠져서 ecrm.police.go.kr만 단독으로 쓰인다.
+# 접근 가능한 같은 기관의 별칭이 확인되면 여기에 추가한다.
 # 새로 확인되는 alias가 생기면 여기 추가한다.
 groups: {}
