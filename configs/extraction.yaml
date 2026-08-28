@@ -45,6 +45,17 @@ korea_relevance:
 taxonomy_filter:
   enabled: false
 
+# 댓글 단위 유해 신호 분리용 설정 (self_injury처럼 원글은 도움 요청이고 댓글에만 위험한 응답이
+# 달리는 경우를 위함). src/extraction/comments.py의 select_comments()가 참조한다.
+# 주의: 사이트별 파서가 실제로 댓글을 긁어오는 부분은 아직 구현되지 않았다 — 여기 있는 건
+# "댓글 후보 목록이 주어졌을 때 대표 댓글을 어떻게 고를지"에 대한 선택 로직/설정뿐이다.
+comment_extraction:
+  max_comments: 3
+  selection_priority:
+    - taxonomy_relevance
+    - reaction_count
+    - representative_or_author_selected
+
 # source_category별 최소 본문 길이(자수). 이보다 짧으면 extraction_failed 처리한다.
 min_content_length:
   news: 200

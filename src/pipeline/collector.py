@@ -18,6 +18,7 @@ from src.extraction.general_extractor import ExtractionError
 from src.extraction.parser_registry import get_parser, get_source_category
 from src.filtering.pipeline import FilterContext, build_filter_chain, run_filters
 from src.pipeline.result import ProcessOutcome, ProgressEvent, RunSummary, summarize
+from src.query.vocabulary import effective_exclude_criteria
 from src.storage.repositories import contents as contents_repo
 from src.storage.repositories import discarded as discarded_repo
 from src.storage.repositories import discoveries as discoveries_repo
@@ -155,7 +156,7 @@ def _process_candidate(
         content=extracted.content, content_hash=content_hash,
         published_date=extracted.published_date, date_from=date_from, date_to=date_to,
         type_name=candidate.type_name, definition=type_cfg["definition"],
-        include_criteria=type_cfg["include_criteria"], exclude_criteria=type_cfg["exclude_criteria"],
+        include_criteria=type_cfg["include_criteria"], exclude_criteria=effective_exclude_criteria(type_cfg),
     )
     decision = run_filters(ctx, filter_checks)
 

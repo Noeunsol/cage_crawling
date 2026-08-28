@@ -12,6 +12,15 @@ tavily:
   search_depth: basic
   country: south korea   # 한국 관련 결과로 편향 (Tavily 네이티브 파라미터)
 
+query_limits:
+  # 검색어 검증 상한(핵심어 수/글자수). generator._filter_queries가 강제한다.
+  tavily:
+    max_terms: 8
+    max_characters: 80
+  serpapi:
+    max_terms: 5
+    max_characters: 45
+
 serpapi:
   api_key_env: SERPAPI_KEY
   # ponytail: Google이 2025-09-14에 num 파라미터를 사실상 무력화해서 지금은 요청값과 무관하게

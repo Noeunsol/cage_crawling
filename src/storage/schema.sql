@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS query_generation_calls (
     created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+-- 웹서치로 얻은 type별 최근 표현(fresh vocabulary) 캐시. TTL은 코드(fresh_vocabulary 레포)에서 판단.
+CREATE TABLE IF NOT EXISTS fresh_vocabulary_cache (
+    taxonomy_lv2  TEXT NOT NULL,
+    type_name     TEXT NOT NULL,
+    terms         TEXT NOT NULL,  -- JSON 문자열 배열
+    fetched_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (taxonomy_lv2, type_name)
+);
+
 -- 검색 결과로 어떤 콘텐츠가 어떤 실행/쿼리에서 발견됐는지 (provenance).
 CREATE TABLE IF NOT EXISTS content_discoveries (
     id              INTEGER PRIMARY KEY,

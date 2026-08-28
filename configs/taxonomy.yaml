@@ -3,6 +3,10 @@
 # - types[].definition/description: 사용자 표 1 (type 단위 상세 설명), 현재는 두 필드가 동일한 원문
 # - include_criteria/exclude_criteria: 원본 자료에 없어 빈 배열로 시작. Phase 4 Streamlit UI에서 채워야
 #   Phase 8 taxonomy 적합성 필터가 의미 있게 동작한다 (CLAUDE_CRAWLER_IMPLEMENTATION_PLAN.md 11.2 참고).
+# - search_vocabulary/collection_exclude_criteria/harm_positive_exclude_criteria/query_axes(type 단위),
+#   lv2_fallback_vocabulary(lv2 단위): 전부 선택 필드. 없는 type/lv2는 기존 동작(exclude_criteria만 사용,
+#   축 없이 생성 등)으로 폴백한다 (src/query/vocabulary.py). 있을 땐 config/validator.py가 문자열 리스트인지만
+#   검사한다 — 현재는 1_C_Self_Harm에만 채워져 있고 다른 LV2로 확장하려면 여기에 그대로 추가하면 된다.
 # - enabled: type 활성/비활성 스위치. 기본은 전체 true, UI에서 LV2 선택 시 하위 type이 이 값으로 토글된다.
 
 taxonomy:
@@ -113,6 +117,14 @@ taxonomy:
   lv2_name: Self_Harm
   lv2_definition: 자살, 자해, 섭식 장애의 구체적인 방법을 안내하거나 미화하며, 위험한 행위의 참여를 독려하는 행위
   lv2_description: 자살 및 자해 방법을 제공하거나 섭식 장애 등을 조장하는 콘텐츠
+  # 정적/최신/definition 폴백이 전부 비었을 때만 쓰는 최후 폴백 (vocabulary.build_vocabulary).
+  # 구체적인 방법·도구·신체 부위·치명성 정보는 넣지 않는다 — 신고/규제/정책 관련 일반 표현만.
+  lv2_fallback_vocabulary:
+  - 유해 콘텐츠 신고
+  - 온라인 커뮤니티 논란
+  - 콘텐츠 규제 조치
+  - 청소년 보호 정책
+  - 플랫폼 정책 위반
   types:
   - name: eating_disorder
     definition: 극단적 절식, 폭식·구토, 위험한 체중 감량 등 섭식 장애 행동을 조장하거나 구체적인 방법을 제공하는 행위
@@ -120,9 +132,44 @@ taxonomy:
     include_criteria:
     - 극단적 절식·폭식구토·위험한 체중감량 등 구체적 방법을 공유하거나 조장하는 실제 게시물·커뮤니티 글
     - 섭식장애 조장 콘텐츠로 인한 논란이나 규제 관련 보도
+    # exclude_criteria는 하위 호환용으로 유지 — 실제로는 collection_exclude_criteria가 우선 적용된다
+    # (vocabulary.effective_exclude_criteria).
     exclude_criteria:
     - 섭식장애 치료·상담·예방을 다루는 의료·계도 콘텐츠
     - 위험한 방법 조장이 없는 일반 다이어트·건강식 정보
+    # 수집(검색어 생성·taxonomy 적합성 판단) 단계에서만 쓴다 — 한국 사건·은어·플랫폼 문화·정책 맥락이
+    # 있으면 예방/치료/규제 기사라도 이 기준으로는 걸러내지 않는다.
+    collection_exclude_criteria:
+    - taxonomy와 무관한 일반 건강·다이어트 정보
+    - 단순 상품·서비스 광고
+    - 관련 맥락이 없는 통계 기사
+    - 본문 없이 상담기관 연락처만 제공하는 안내
+    - 구체적인 사건·표현·논란이 없는 일반 캠페인
+    # 아직 어떤 코드도 참조하지 않는다 — 추후 별도의 유해 positive 판정 단계가 생기면 그때 쓴다.
+    # self_injury/suicide와 기준이 동일해서 YAML 앵커로 공유한다.
+    harm_positive_exclude_criteria: &self_harm_harm_positive_exclude
+    - 치료와 회복을 권장하는 콘텐츠
+    - 예방 캠페인과 생명존중 교육
+    - 상담센터와 신고 방법 안내
+    - 위험 행동을 조장하지 않는 일반 보도
+    - 구체적인 방법이나 권유가 없는 사회현상·통계 콘텐츠
+    search_vocabulary:
+    - 섭식장애 조장
+    - 프로아나
+    - 뼈말라
+    - 거식 조장
+    - 극단적 다이어트
+    - 섭식장애 커뮤니티
+    - 체중 감량 강박
+    - 섭식장애 유해 콘텐츠
+    - 다이어트 인증
+    - 섭식장애 논란
+    query_axes:
+    - 조장·미화 콘텐츠
+    - 커뮤니티 은어·문화
+    - 청소년 모방 논란
+    - 플랫폼 규제·삭제
+    - 피해·회복 경험에서 언급된 유해 콘텐츠
     enabled: true
   - name: self_injury
     definition: 자해의 구체적인 방법, 도구, 부위, 은폐법 등을 안내하거나 자해를 미화·독려하는 행위
@@ -133,6 +180,30 @@ taxonomy:
     exclude_criteria:
     - 자해 예방 캠페인, 상담센터 안내, 정신건강 교육 콘텐츠
     - 방법 조장이 없는 자해 흉터 치료 등 의료 정보
+    collection_exclude_criteria: &self_harm_collection_exclude
+    - taxonomy와 무관한 일반 건강 정보
+    - 단순 상품·서비스 광고
+    - 관련 맥락이 없는 통계 기사
+    - 본문 없이 상담기관 연락처만 제공하는 안내
+    - 구체적인 사건·표현·논란이 없는 일반 캠페인
+    harm_positive_exclude_criteria: *self_harm_harm_positive_exclude
+    search_vocabulary:
+    - 자해 조장
+    - 자해 인증
+    - 자해 게시물
+    - 자해 유해정보
+    - 자해 커뮤니티
+    - 자해 미화
+    - 자해 콘텐츠 신고
+    - 자해 상담 게시물
+    - 자해 모방 위험
+    - 청소년 자해 콘텐츠
+    query_axes:
+    - 조장·미화 게시물
+    - 인증·모방 문화
+    - 도움 요청 게시물의 위험한 응답
+    - 청소년·학교 관련 논란
+    - 플랫폼 신고·규제
     enabled: true
   - name: suicide
     definition: 자살 방법, 치명성 향상, 계획 수립 등을 안내하거나 자살을 정당화·미화·권유하는 행위
@@ -143,6 +214,25 @@ taxonomy:
     exclude_criteria:
     - 자살예방 캠페인, 상담전화 안내, 생명존중 교육 콘텐츠
     - 구체적 방법 제공이 없는 자살 통계·사회현상 일반 뉴스
+    collection_exclude_criteria: *self_harm_collection_exclude
+    harm_positive_exclude_criteria: *self_harm_harm_positive_exclude
+    search_vocabulary:
+    - 자살 유해정보
+    - 자살 조장 콘텐츠
+    - 자살 미화
+    - 자살 권유 게시물
+    - 극단적 선택 모집
+    - 동반자살 모집
+    - 자살 유해 게시물
+    - 자살 콘텐츠 규제
+    - 온라인 자살 조장
+    - 자살 유해정보 처벌
+    query_axes:
+    - 조장·미화 콘텐츠
+    - 모집·권유 게시물 논란
+    - 온라인 유해정보 유통
+    - 플랫폼 규제·삭제
+    - 수사·처벌·정책 보도
     enabled: true
 - lv1_name: Toxicity Harms
   lv2_id: 1_D_Child_Exploitation

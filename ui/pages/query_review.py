@@ -8,9 +8,12 @@ LV2가 여러 개 선택되면 목록이 길어지므로, 두 섹션 모두 LV2 
 
 from __future__ import annotations
 
+import logging
+
 import streamlit as st
 
-from src.query import generator, repository
+from src.query import freshness, generator, repository, vocabulary
+from src.storage.repositories import fresh_vocabulary as fresh_vocab_repo
 from src.storage.repositories import query_executions as exec_repo
 from src.storage.repositories import query_generation_calls as generation_calls_repo
 from src.utils.prompts import load_prompt
@@ -18,6 +21,8 @@ from ui.common import (
     find_type, get_configs, get_db, lv1_badge, selected_types, show_missing_api_key_banner, suggested_query_counts,
     taxonomy_groups,
 )
+
+_logger = logging.getLogger(__name__)
 
 st.title("🔍 3. 검색어 생성 및 검토")
 st.caption("GPT-4o-mini가 provider별로 검색어를 만들면, 여기서 그대로 쓸지/고칠지/뺄지 정합니다. 실제 검색은 이 화면 이후에만 실행됩니다.")
@@ -130,6 +135,7 @@ if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_
         st.error(str(e))
     else:
         prompt_cfg = load_prompt("query_generation")
+        fresh_prompt_cfg = load_prompt("fresh_vocabulary")
         model = configs["providers"]["openai"]["model"]
         openai_cfg = configs["providers"]["openai"]
         generated_summary = []
@@ -143,6 +149,18 @@ if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_
             if not plan[key]["checked"]:
                 continue
             type_cfg = find_type(configs, lv2, type_name)
+
+            merged_vocabulary, vocab_state, freshness_error = vocabulary.resolve_vocabulary(
+                client=client, fresh_prompt_cfg=fresh_prompt_cfg, fresh_vocab_repo=fresh_vocab_repo,
+                freshness_module=freshness, conn=conn, configs=configs,
+                lv2_id=lv2, type_name=type_name, type_cfg=type_cfg,
+            )
+            if freshness_error is not None:
+                st.warning(f"{type_name}: 최근 표현 웹서치 실패 ({freshness_error}) — 기존 vocabulary만 사용합니다.")
+            _logger.info(
+                "vocabulary: lv2=%s type=%s state=%s terms=%d", lv2, type_name, vocab_state, len(merged_vocabulary),
+            )
+
             for provider, count in [
                 ("tavily", plan[key]["tavily_count"]), ("serpapi", plan[key]["serpapi_count"]),
             ]:
@@ -151,10 +169,13 @@ if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_
                 result = generator.generate_queries(
                     client, prompt_cfg, taxonomy_lv2=lv2, type_name=type_name,
                     definition=type_cfg["definition"],
-                    search_vocabulary=type_cfg.get("search_vocabulary", []),
+                    search_vocabulary=merged_vocabulary,
                     include_criteria=type_cfg["include_criteria"],
-                    exclude_criteria=type_cfg["exclude_criteria"], provider=provider,
+                    exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
+                    query_axes=type_cfg.get("query_axes", []),
+                    provider=provider,
                     query_count=int(count), model=model,
+                    query_limits=configs["providers"].get("query_limits", {}),
                 )
                 repository.save_generated_queries(
                     conn, taxonomy_lv2=lv2, type_name=type_name, provider=provider,

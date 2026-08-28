@@ -90,6 +90,20 @@ def _validate_providers(cfg: dict, issues: list[str]) -> None:
              "providers.yaml: serpapi.max_pages_per_query는 1 이상이어야 합니다.")
 
 
+# 있으면 필수 필드는 아니지만(1_C_Self_Harm 등 일부 type에만 있음), 있을 땐 문자열 리스트여야 한다.
+# 오타로 엉뚱한 키가 생겨도 .get() 기본값으로 조용히 무시되지 않도록 타입만 확인한다.
+_OPTIONAL_TYPE_LIST_FIELDS = ("search_vocabulary", "collection_exclude_criteria",
+                              "harm_positive_exclude_criteria", "query_axes")
+_OPTIONAL_LV2_LIST_FIELDS = ("lv2_fallback_vocabulary",)
+
+
+def _require_str_list(value, issues: list[str], where: str) -> None:
+    _require(
+        isinstance(value, list) and all(isinstance(v, str) for v in value),
+        issues, f"{where}는 문자열 리스트여야 합니다.",
+    )
+
+
 def _validate_taxonomy(cfg: dict, issues: list[str]) -> None:
     groups = cfg.get("taxonomy", [])
     _require(len(groups) > 0, issues, "taxonomy.yaml: taxonomy 목록이 비어 있습니다.")
@@ -98,11 +112,17 @@ def _validate_taxonomy(cfg: dict, issues: list[str]) -> None:
         lv2_id = group.get("lv2_id", "<unknown>")
         types = group.get("types", [])
         _require(len(types) > 0, issues, f"taxonomy.yaml: {lv2_id}에 type이 하나도 없습니다.")
+        for field in _OPTIONAL_LV2_LIST_FIELDS:
+            if field in group:
+                _require_str_list(group[field], issues, f"taxonomy.yaml: {lv2_id}.{field}")
         for t in types:
             for field in ("name", "definition", "description", "include_criteria",
                           "exclude_criteria", "enabled"):
                 _require(field in t, issues,
                          f"taxonomy.yaml: {lv2_id}.{t.get('name', '<unknown>')}에 '{field}' 필드가 없습니다.")
+            for field in _OPTIONAL_TYPE_LIST_FIELDS:
+                if field in t:
+                    _require_str_list(t[field], issues, f"taxonomy.yaml: {lv2_id}.{t.get('name')}.{field}")
 
 
 def _validate_type_domains(cfg: dict, issues: list[str]) -> None:

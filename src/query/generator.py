@@ -45,11 +45,26 @@ def _format_criteria(criteria: list[str]) -> str:
     return "\n".join(f"- {c}" for c in criteria) if criteria else "(지정된 기준 없음)"
 
 
-_SERPAPI_MAX_WORDS = 3  # ponytail: LLM은 이 규칙을 프롬프트만으로 항상 지키지 않아, 코드로도 강제한다
+# providers.yaml에 query_limits가 없을 때 쓰는 하위 호환 기본값 (기존 serpapi 3단어 상한과 동일).
+_DEFAULT_QUERY_LIMITS = {
+    "tavily": {"max_terms": None, "max_characters": None},
+    "serpapi": {"max_terms": 3, "max_characters": None},
+}
+# 검색어에 연결어가 토큰 하나를 그냥 차지하는 경우 핵심어 수에서 빼준다 (조사는 띄어쓰기 없이
+# 명사에 붙어서 별도 토큰이 되지 않으므로 따로 처리할 필요가 없다).
+_STOPWORDS = {"그리고", "또는", "및", "혹은"}
 
 
-def _filter_queries(raw_queries: list[str], provider: str = "") -> GeneratedQueries:
-    """중복·기간 표현·site: 연산자가 섞인 검색어를 걸러낸다. serpapi는 단어 수 상한도 강제한다."""
+def _content_word_count(q: str) -> int:
+    return len([w for w in q.split() if w not in _STOPWORDS])
+
+
+def _filter_queries(raw_queries: list[str], provider: str = "", limits: dict | None = None) -> GeneratedQueries:
+    """중복·기간 표현·site: 연산자가 섞인 검색어를 걸러낸다. provider별 단어수/글자수 상한도 강제한다."""
+    provider_limits = (limits or _DEFAULT_QUERY_LIMITS).get(provider, {})
+    max_terms = provider_limits.get("max_terms")
+    max_characters = provider_limits.get("max_characters")
+
     accepted, rejected, seen = [], [], set()
     for q in raw_queries:
         q = q.strip()
@@ -61,8 +76,10 @@ def _filter_queries(raw_queries: list[str], provider: str = "") -> GeneratedQuer
             rejected.append((q, "date_expression"))
         elif _SITE_OPERATOR.search(q):
             rejected.append((q, "site_operator"))
-        elif provider == "serpapi" and len(q.split()) > _SERPAPI_MAX_WORDS:
+        elif max_terms and _content_word_count(q) > max_terms:
             rejected.append((q, "too_many_words"))
+        elif max_characters and len(q) > max_characters:
+            rejected.append((q, "too_long"))
         else:
             seen.add(q)
             accepted.append(q)
@@ -79,9 +96,11 @@ def generate_queries(
     search_vocabulary: list[str] | None = None,
     include_criteria: list[str],
     exclude_criteria: list[str],
+    query_axes: list[str] | None = None,
     provider: str,
     query_count: int,
     model: str,
+    query_limits: dict | None = None,
 ) -> GeneratedQueries:
     """provider 하나(tavily 또는 serpapi)에 대한 검색어 묶음을 생성한다."""
     system_prompt, user_prompt = render_prompt(
@@ -92,6 +111,7 @@ def generate_queries(
         search_vocabulary=_format_criteria(search_vocabulary or []),
         include_criteria=_format_criteria(include_criteria),
         exclude_criteria=_format_criteria(exclude_criteria),
+        query_axes=_format_criteria(query_axes or []),
         provider=provider,
         query_count=str(query_count),
     )
@@ -110,7 +130,7 @@ def generate_queries(
     )
     elapsed_s = time.monotonic() - started
     payload = json.loads(response.choices[0].message.content)
-    result = _filter_queries(payload["queries"], provider=provider)
+    result = _filter_queries(payload["queries"], provider=provider, limits=query_limits)
     result.prompt_tokens = response.usage.prompt_tokens
     result.completion_tokens = response.usage.completion_tokens
     result.elapsed_s = elapsed_s
