@@ -37,12 +37,13 @@ EXTRACTION_CFG = {
 }
 RETRY_POLICY = {
     "reasons": {
-        "timeout": {"retryable": True},
-        "temporary_http_error": {"retryable": True},
-        "access_denied": {"retryable": False},
-        "not_found": {"retryable": False},
-        "extraction_failed": {"retryable": True},
-        "duplicate": {"retryable": False},
+        "timeout": {"retry_mode": "immediate"},
+        "temporary_http_error": {"retry_mode": "immediate"},
+        "access_denied": {"retry_mode": "never"},
+        "not_found": {"retry_mode": "never"},
+        "extraction_empty": {"retry_mode": "after_parser_update"},
+        "extraction_too_short": {"retry_mode": "immediate"},
+        "duplicate": {"retry_mode": "never"},
     }
 }
 TYPE_CFG = {
@@ -119,7 +120,7 @@ def test_process_candidate_accepts_clean_content(tmp_path, monkeypatch):
     monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML))
 
     from src.filtering.pipeline import build_filter_chain
-    checks = build_filter_chain(conn=conn, blacklist_domains=[], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini")
+    checks = build_filter_chain(blacklist_domains=[], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini")
 
     outcome = process_candidate(conn, _candidate(query_id), **_common_kwargs(conn, checks))
 
@@ -140,7 +141,7 @@ def test_process_candidate_excludes_blacklisted_domain(tmp_path, monkeypatch):
 
     from src.filtering.pipeline import build_filter_chain
     checks = build_filter_chain(
-        conn=conn, blacklist_domains=["example.com"], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini",
+        blacklist_domains=["example.com"], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini",
     )
 
     outcome = process_candidate(conn, _candidate(query_id), **_common_kwargs(conn, checks))
@@ -221,7 +222,7 @@ def test_process_candidate_discards_extraction_failure(tmp_path, monkeypatch):
         extraction_cfg=cfg, retry_policy=RETRY_POLICY, filter_checks=[],
     )
     assert outcome.status == "discarded"
-    assert outcome.reason == "extraction_failed"
+    assert outcome.reason == "extraction_too_short"
 
 
 def test_process_candidate_discards_unexpected_exception_instead_of_crashing(tmp_path, monkeypatch):

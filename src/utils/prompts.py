@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
@@ -46,6 +46,32 @@ def call_structured_output(client: OpenAI, prompt_cfg: dict, model: str, **input
     system_prompt, user_prompt = render_prompt(prompt_cfg, **inputs)
     started = time.monotonic()
     response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": prompt_cfg["name"], "schema": prompt_cfg["output_schema"], "strict": True},
+        },
+    )
+    elapsed_s = time.monotonic() - started
+    return StructuredOutputResult(
+        data=json.loads(response.choices[0].message.content),
+        prompt_tokens=response.usage.prompt_tokens,
+        completion_tokens=response.usage.completion_tokens,
+        elapsed_s=elapsed_s,
+    )
+
+
+async def call_structured_output_async(
+    client: AsyncOpenAI, prompt_cfg: dict, model: str, **inputs: str
+) -> StructuredOutputResult:
+    """call_structured_output()의 비동기 버전 — 다건을 동시 호출할 때(asyncio.gather 등) 쓴다."""
+    system_prompt, user_prompt = render_prompt(prompt_cfg, **inputs)
+    started = time.monotonic()
+    response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},

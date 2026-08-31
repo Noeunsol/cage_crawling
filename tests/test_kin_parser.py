@@ -32,7 +32,7 @@ def test_rejects_category_pages():
         parse(SAMPLE_HTML, "https://kin.naver.com/qna/list.naver?dirId=1", 1)
         assert False, "ExtractionError가 발생해야 한다"
     except ExtractionError as error:
-        assert error.reason == "extraction_failed"
+        assert error.reason == "extraction_empty"
 
 
 def test_registry_routes_kin_and_uses_qna_threshold():

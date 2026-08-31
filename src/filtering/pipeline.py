@@ -71,16 +71,21 @@ def run_filters(ctx: FilterContext, checks: list[NamedFilter]) -> FilterDecision
 
 
 def build_filter_chain(
-    *, conn, blacklist_domains, openai_client, model,
+    *, blacklist_domains, openai_client, model,
     min_korean_ratio: float | None = None, enable_taxonomy_filter: bool = True,
 ) -> list[NamedFilter]:
     """실제 실행에서 쓸 필터 순서를 조립한다. 규칙 기반(싸다) → LLM(비싸다) 순서를 고정한다.
 
     한국 관련성은 OpenAI 없이 한글 비율로 판단한다 (사용자 결정, 2026-08-25).
     taxonomy 적합성(OpenAI 호출)은 enable_taxonomy_filter=False로 끌 수 있다 — 끄면 규칙 기반
-    필터(블랙리스트/중복/기간/한국 관련성)만 통과해도 accepted가 된다 (사용자 결정, 2026-08-25).
+    필터(블랙리스트/기간/한국 관련성)만 통과해도 accepted가 된다 (사용자 결정, 2026-08-25).
+
+    중복(URL 완전일치·본문 해시·근사중복)은 여기 없다 — collector.py의 _finalize_candidate가
+    fetch 직후 먼저 걸러내고 discarded로 기록한다. 예전엔 여기서도 완전일치를 다시 체크했는데,
+    그 시점엔 이미 통과가 보장된 상태라 매 후보마다 SELECT 2번을 그냥 버리는 거였다
+    (2026-08-31 성능 개선으로 제거 — src/filtering/duplicate_filter.py도 같이 삭제).
     """
-    from src.filtering import blacklist_filter, date_filter, duplicate_filter, korea_relevance_filter, taxonomy_filter
+    from src.filtering import blacklist_filter, date_filter, korea_relevance_filter, taxonomy_filter
     from src.utils.prompts import load_prompt
 
     if min_korean_ratio is None:
@@ -88,7 +93,6 @@ def build_filter_chain(
 
     chain: list[NamedFilter] = [
         ("blacklist", lambda ctx: blacklist_filter.check(ctx, blacklist_domains)),
-        ("duplicate", lambda ctx: duplicate_filter.check(ctx, conn)),
         ("date", date_filter.check),
         ("korea_relevance", lambda ctx: korea_relevance_filter.check(ctx, min_korean_ratio)),
     ]

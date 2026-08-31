@@ -28,7 +28,7 @@ def test_rejects_list_page():
         parse(SAMPLE_HTML, "https://www.instiz.net/name", 1)
         assert False, "ExtractionError가 발생해야 한다"
     except ExtractionError as error:
-        assert error.reason == "extraction_failed"
+        assert error.reason == "extraction_empty"
 
 
 def test_registry_routes_instiz_and_uses_community_threshold():

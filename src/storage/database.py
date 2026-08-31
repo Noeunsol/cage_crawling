@@ -11,6 +11,23 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
+# CREATE TABLE IF NOT EXISTS는 이미 있는 테이블에 새 컬럼을 추가해주지 않는다 — 기존 테이블에
+# 컬럼이 새로 필요해지면 여기 추가한다 (2026-08-31: 근사 중복 탐지용 컬럼). 이미 있으면 조용히
+# 건너뛴다 — 매번 connect()할 때마다 안전하게 다시 돌 수 있다.
+_COLUMN_MIGRATIONS = [
+    ("contents", "title_normalized", "TEXT"),
+    ("contents", "content_fingerprint", "TEXT"),
+    ("content_duplicates", "title_similarity", "REAL"),
+    ("content_duplicates", "content_similarity", "REAL"),
+]
+
+
+def _apply_column_migrations(conn: sqlite3.Connection) -> None:
+    for table, column, col_type in _COLUMN_MIGRATIONS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     """DB에 연결하고 스키마를 보장한 뒤 Connection을 반환한다.
@@ -28,5 +45,6 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _apply_column_migrations(conn)
     conn.commit()
     return conn

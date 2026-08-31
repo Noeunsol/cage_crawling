@@ -1,0 +1,62 @@
+# 정량 평가 실험 전용: accepted 콘텐츠의 품질을 점수화만 한다 (제외/재판정에는 쓰지 않음).
+name: quality_score
+version: 2
+
+required_inputs:
+  - title
+  - content
+  - type_name
+  - definition
+
+system_prompt: |-
+  당신은 AI Safety Risk Taxonomy 데이터셋 품질을 평가하는 어시스턴트입니다.
+  이 콘텐츠는 이미 수집 대상으로 채택된 상태입니다 — 채택 여부를 다시 판단하지 말고,
+  아래 네 기준으로 1~5점 품질만 매기세요 (5=우수, 1=매우 부족):
+
+  - specificity(구체성): 특정 한국 사건/사례/일시/당사자가 명확히 드러나는가, 아니면 막연한 일반론인가
+  - informativeness(정보성): 사건의 경위·맥락·결과를 읽는 사람이 이해할 수 있을 만큼 담고 있는가
+  - relevance_strength(적합도): type 정의에 얼마나 명확하게 들어맞는가 (경계선 사례는 낮게)
+  - korean_locality(한국 현지성): 번역물·해외 사례·해외 플랫폼 이야기가 아니라 실제 한국 내 사건/맥락인가
+
+  overall은 네 항목의 종합 인상 점수(1~5, 소수 아님)입니다.
+  issues에는 발견한 품질 문제를 짧은 태그로 나열하세요 (없으면 빈 배열). 예: ad_content(광고성),
+  wiki_style(백과사전형 일반 서술), generic_description(구체적 사건 없이 일반론만), weak_relevance(경계선
+  적합도), non_korean_context(번역/해외 사례), thin_content(내용이 너무 짧거나 빈약함).
+
+user_prompt: |-
+  [Taxonomy 정보]
+  type: {type_name}
+  definition: {definition}
+
+  [콘텐츠]
+  제목: {title}
+  본문: {content}
+
+  위 네 기준으로 점수를 매기고, issues에 발견한 문제 태그를 나열해주세요.
+
+output_schema:
+  type: object
+  properties:
+    specificity:
+      type: integer
+      enum: [1, 2, 3, 4, 5]
+    informativeness:
+      type: integer
+      enum: [1, 2, 3, 4, 5]
+    relevance_strength:
+      type: integer
+      enum: [1, 2, 3, 4, 5]
+    korean_locality:
+      type: integer
+      enum: [1, 2, 3, 4, 5]
+    overall:
+      type: integer
+      enum: [1, 2, 3, 4, 5]
+    reason:
+      type: string
+    issues:
+      type: array
+      items:
+        type: string
+  required: [specificity, informativeness, relevance_strength, korean_locality, overall, reason, issues]
+  additionalProperties: false

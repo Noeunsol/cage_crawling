@@ -15,13 +15,13 @@ def parse(
 ) -> ExtractedContent:
     parts = urlsplit(url)
     if parts.path != "/qna/detail.naver" or not parse_qs(parts.query).get("docId"):
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
 
     soup = BeautifulSoup(html, "html.parser")
     title_el = soup.select_one(".endTitleSection")
     question_el = soup.select_one(".questionDetail")
     if title_el is None or question_el is None:
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
 
     sections = [question_el, *soup.select(".answerDetail")]
     for section in sections:

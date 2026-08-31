@@ -15,13 +15,13 @@ def parse(
     html: str, url: str, min_content_length: int, extraction_cfg: dict | None = None,
 ) -> ExtractedContent:
     if not re.search(r"/\d+/?$", urlsplit(url).path):
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
 
     soup = BeautifulSoup(html, "html.parser")
     title_meta = soup.select_one('meta[property="og:title"]')
     body_el = soup.select_one("article")
     if title_meta is None or body_el is None:
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
 
     strip_noise_tags(body_el)
     content = clean_article_text(

@@ -16,6 +16,45 @@ dates:
 
 candidate_multiplier_options: [1.0, 1.5, 2.0, 3.0]
 
+# provider별 자동 candidate_multiplier (7절 확장, 2026-08-31). use_adaptive_multiplier=True로 실행할
+# 때만 쓰인다 — 기본 UI/실행 경로는 defaults.candidate_multiplier(단일값)를 그대로 쓰고 이 블록은
+# 무시한다 (src/discovery/adaptive_multiplier.py).
+candidate_multiplier_by_provider:
+  tavily:
+    initial: 2.0
+  serpapi:
+    initial: 1.3
+
+# 검색어에 연도만 조건부로 허용한다 (7절 확장, 2026-08-31). "최근"/"올해"/"지난달" 같은 상대적
+# 표현은 여전히 금지 — src/query/generator.py의 _DATE_EXPRESSION이 계속 걸러낸다.
+# 이 블록은 별도 변형 쿼리("원래 검색어 + 연도")를 추가로 만들지 여부만 결정한다
+# (src/query/year_injection.py). date_out_of_range 비율이 threshold 이상인 (lv2,type,provider)만 대상.
+date_query_policy:
+  allow_year: true
+  allow_relative_date_terms: false
+  year_injection:
+    min_candidates: 20
+    date_out_of_range_threshold: 0.30
+
+adaptive_multiplier:
+  min_samples: 30              # (lv2,type,provider) 표본이 이보다 적으면 initial 고정값을 그대로 씀
+  safety_factor: 1.1
+  min_value: 1.1
+  max_value: 4.0
+  survival_rate_floor: 0.25    # 생존율이 이보다 낮아도 배수가 무한정 커지지 않도록 하한을 걺
+
+# 근사중복 탐지 모드 (10.3절 확장, 2026-08-31). shadow: near_duplicate_observations에 유사도만
+# 기록하고 discard하지 않음(기본값 — 임계값이 아직 100쌍 라벨링으로 검증 전이라 오탐 위험을
+# 피한다). enforce: 실제로 걸러냄 — 라벨링 끝나고 임계값 확정한 뒤에 전환할 것.
+near_duplicate_detection:
+  mode: shadow
+
+# 쿼리/도메인 선택의 탐색 비율 (7절 확장, 2026-08-31). scoring.py가 점수 내림차순으로 우선순위를
+# 매기는데, 100% 점수만 따르면 한 번 낮은 점수가 붙은 쿼리/도메인은 영영 다시 안 뽑혀서 표본을
+# 못 갱신한다(starvation) — epsilon 확률로 무작위 탐색을 섞어서 막는다.
+query_domain_exploration:
+  epsilon: 0.2
+
 # type당 provider별 검색어 생성 개수 기본값.
 # "3. 검색어 생성 및 검토" 화면은 target_count/candidate_multiplier/provider_ratio로 필요한
 # 후보 수를 역산해서 개수를 제안한다: 콜당 최대 결과 수(providers.yaml)로 나눈 최소 호출 수에

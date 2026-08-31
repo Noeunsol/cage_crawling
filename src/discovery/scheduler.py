@@ -12,6 +12,7 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import date
 
+from src.discovery import adaptive_multiplier, scoring
 from src.discovery.allocator import has_serpapi_domains, serpapi_allowed_domains, tavily_exclude_domains
 from src.discovery.base import build_fingerprint
 from src.query.repository import list_active_queries
@@ -68,12 +69,19 @@ class _Lane:
 
 def _build_lanes(
     conn, configs, targets, *, target_count, candidate_multiplier,
-    date_range_by_lv2, provider_ratio_by_lv2,
+    date_range_by_lv2, provider_ratio_by_lv2, use_adaptive_multiplier=False,
 ) -> tuple[list[_Lane], list[str]]:
     type_domains_cfg = configs["type_domains"]["types"]
     alias_groups = configs["domain_aliases"]["groups"]
     blacklist_domains = configs["blacklist"]["domains"]
     default_ratio = configs["collection"]["provider_ratio"]["default"]
+    exploration_epsilon = configs["collection"].get("query_domain_exploration", {}).get(
+        "epsilon", scoring.DEFAULT_EXPLORATION_EPSILON,
+    )
+    taxonomy_lookup = {
+        (g["lv2_id"], t["name"]): t
+        for g in configs["taxonomy"]["taxonomy"] for t in g["types"]
+    }
     partition_cfg = configs["collection"].get("domain_partition", {})
     # 기본 True — config 키가 실수로 빠져도 실측 근거로 채택된 "provider 분리" 동작을 유지한다
     # (src/discovery/allocator.py 모듈 docstring 참고).
@@ -88,7 +96,6 @@ def _build_lanes(
         date_from, date_to = date_range_by_lv2[lv2_id]
         ratio = provider_ratio_by_lv2.get(lv2_id, default_ratio)
         per_type_target_count = math.ceil(target_count / types_per_lv2[lv2_id])
-        total = math.ceil(per_type_target_count * candidate_multiplier)
 
         config_has_domains = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains, lv2_id)
         bundle_key = f"{lv2_id}::{type_name}"
@@ -100,21 +107,54 @@ def _build_lanes(
             )
         serpapi_available = config_has_domains and bundles_repo.has_enabled_bundle(conn, bundle_key)
 
-        if serpapi_available:
-            tavily_target = round(total * ratio["tavily"] / 100)
-            serpapi_target = total - tavily_target
+        if use_adaptive_multiplier:
+            # provider별로 실측 생존율 기반 multiplier를 따로 적용한다 (7절 확장, 2026-08-31).
+            # candidate_multiplier(단일 float) 인자는 이 모드에서는 쓰지 않는다.
+            if serpapi_available:
+                tavily_accepted_share = round(per_type_target_count * ratio["tavily"] / 100)
+                serpapi_accepted_share = per_type_target_count - tavily_accepted_share
+            else:
+                tavily_accepted_share, serpapi_accepted_share = per_type_target_count, 0
+                reason = "SerpAPI 허용 도메인이 없어" if not config_has_domains else "모든 도메인 번들이 비활성화돼 있어"
+                warnings.append(
+                    f"{lv2_id}::{type_name}: {reason} 목표 {per_type_target_count}건 전량을 Tavily로 진행합니다."
+                )
+            tavily_target = (
+                math.ceil(tavily_accepted_share * adaptive_multiplier.compute_multiplier(
+                    conn, configs, lv2_id, type_name, "tavily",
+                )) if tavily_accepted_share > 0 else 0
+            )
+            serpapi_target = (
+                math.ceil(serpapi_accepted_share * adaptive_multiplier.compute_multiplier(
+                    conn, configs, lv2_id, type_name, "serpapi",
+                )) if serpapi_accepted_share > 0 else 0
+            )
         else:
-            # 6.3절: 도메인이 없거나(config) 번들이 전부 비활성화된 type은 전량 Tavily로 이관한다.
-            tavily_target, serpapi_target = total, 0
-            reason = "SerpAPI 허용 도메인이 없어" if not config_has_domains else "모든 도메인 번들이 비활성화돼 있어"
-            warnings.append(f"{lv2_id}::{type_name}: {reason} 목표 {total}건 전량을 Tavily로 진행합니다.")
+            total = math.ceil(per_type_target_count * candidate_multiplier)
+            if serpapi_available:
+                tavily_target = round(total * ratio["tavily"] / 100)
+                serpapi_target = total - tavily_target
+            else:
+                # 6.3절: 도메인이 없거나(config) 번들이 전부 비활성화된 type은 전량 Tavily로 이관한다.
+                tavily_target, serpapi_target = total, 0
+                reason = "SerpAPI 허용 도메인이 없어" if not config_has_domains else "모든 도메인 번들이 비활성화돼 있어"
+                warnings.append(f"{lv2_id}::{type_name}: {reason} 목표 {total}건 전량을 Tavily로 진행합니다.")
+
+        type_cfg = taxonomy_lookup.get((lv2_id, type_name), {})
+        tavily_topic = type_cfg.get("tavily", {}).get("topic")
+        if tavily_topic is None:
+            tavily_topic = "general"
+            warnings.append(f"{lv2_id}::{type_name}: tavily.topic 설정이 없어 기본값 general을 씁니다 (topic_config_missing).")
 
         provider_targets = [
-            ("tavily", tavily_target, {"exclude_domains": tavily_exclude_domains(
-                type_domains_cfg, blacklist_domains, type_name,
-                exclude_serpapi_domains=exclude_serpapi_domains,
-                lv2_id=lv2_id,
-            )}),
+            ("tavily", tavily_target, {
+                "topic": tavily_topic,
+                "exclude_domains": tavily_exclude_domains(
+                    type_domains_cfg, blacklist_domains, type_name,
+                    exclude_serpapi_domains=exclude_serpapi_domains,
+                    lv2_id=lv2_id,
+                ),
+            }),
             # allowed_domains는 여기서 고정하지 않는다 — 매 검색 호출마다 LRU로 번들을 골라 채운다.
             ("serpapi", serpapi_target, {}),
         ]
@@ -132,7 +172,9 @@ def _build_lanes(
             lanes.append(_Lane(
                 lv2_id=lv2_id, type_name=type_name, provider=provider, target=provider_target,
                 date_from=date_from, date_to=date_to, search_kwargs=search_kwargs,
-                queries=list(active_queries),
+                # 실측 성과가 좋은 쿼리를 먼저 시도하고, 반복적으로 0건/실패만 낸 쿼리는 뒤로
+                # 미룬다(제외는 아님 — 7절 확장, 2026-08-31).
+                queries=scoring.sort_queries_by_score(conn, active_queries, epsilon=exploration_epsilon),
             ))
 
     return lanes, warnings
@@ -150,6 +192,7 @@ def run_scheduler(
     date_range_by_lv2: dict[str, tuple[date, date]],
     provider_ratio_by_lv2: dict[str, dict],
     max_calls_by_provider: dict[str, int] | None = None,
+    use_adaptive_multiplier: bool = False,
 ) -> SchedulerResult:
     """활성 type이 고르게 검색되도록 round-robin으로 provider를 호출한다 (7.4, 7.5절).
 
@@ -157,14 +200,21 @@ def run_scheduler(
     - 동일 조건(같은 fingerprint)으로 이미 검색한 적이 있으면 API를 다시 부르지 않는다 (10.1절).
     - max_calls_by_provider가 있으면 provider별 실제 API 호출 수(캐시 적중 제외)에 상한을 건다
       (실험용 — target_count 계산과 무관하게 이번 실행만 강제로 줄인다).
+    - use_adaptive_multiplier=True면 candidate_multiplier(단일 값) 대신 provider별 실측 생존율
+      기반 multiplier를 쓴다 (adaptive_multiplier.py, 2026-08-31). 기본은 False — 기존 UI/실행
+      경로는 지금까지와 완전히 동일하게 동작한다.
     """
     lanes, warnings = _build_lanes(
         conn, configs, targets, target_count=target_count, candidate_multiplier=candidate_multiplier,
         date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
+        use_adaptive_multiplier=use_adaptive_multiplier,
     )
     result = SchedulerResult(warnings=warnings)
     queue = deque(lane for lane in lanes if not lane.done)
     calls_used = Counter()
+    exploration_epsilon = configs["collection"].get("query_domain_exploration", {}).get(
+        "epsilon", scoring.DEFAULT_EXPLORATION_EPSILON,
+    )
     capped_providers: set[str] = set()
 
     def _is_capped(provider: str) -> bool:
@@ -190,10 +240,16 @@ def run_scheduler(
 
         search_kwargs = dict(lane.search_kwargs)
         fingerprint_extra = None
-        if lane.provider == "serpapi":
+        if lane.provider == "tavily" and search_kwargs.get("topic") != "general":
+            # "general"은 topic 파라미터가 생기기 전의 암묵적 기본값과 동일하므로 지문에서 뺀다 —
+            # 그래야 이 기능 이전에 쌓인 request_fingerprint 캐시가 계속 유효하다. "news"처럼
+            # 실제로 다른 걸 요청하는 topic만 지문에 반영해서 새로 호출하게 한다 (2026-08-31).
+            fingerprint_extra = {"topic": search_kwargs.get("topic")}
+        elif lane.provider == "serpapi":
             if lane.current_domains is None:
                 bundle_key = f"{lane.lv2_id}::{lane.type_name}"
-                bundle = bundles_repo.pick_bundle(conn, bundle_key)
+                # 순수 LRU 대신 도메인 점수(추출 성공 이력) 우선, 동점이면 LRU로 고른다.
+                bundle = scoring.pick_scored_bundle(conn, bundles_repo, bundle_key, epsilon=exploration_epsilon)
                 if bundle is None:
                     result.warnings.append(
                         f"{lane.lv2_id}::{lane.type_name} (serpapi): 사용 가능한 도메인 번들이 없어 중단합니다."

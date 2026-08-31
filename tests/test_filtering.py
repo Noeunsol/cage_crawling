@@ -4,10 +4,8 @@ import json
 from datetime import date
 from types import SimpleNamespace
 
-from src.filtering import blacklist_filter, date_filter, duplicate_filter, korea_relevance_filter, taxonomy_filter
+from src.filtering import blacklist_filter, date_filter, korea_relevance_filter, taxonomy_filter
 from src.filtering.pipeline import FilterContext, FilterOutcome, build_filter_chain, run_filters
-from src.storage import database
-from src.storage.repositories import contents as contents_repo
 from src.utils.text import compute_content_hash
 
 
@@ -58,28 +56,6 @@ def test_date_filter_passes_when_date_unknown_or_unparseable():
     assert date_filter.check(_ctx(published_date="이상한값")).passed is True
 
 
-# ---------------------------------------------------------------- duplicate_filter
-def test_duplicate_filter(tmp_path):
-    conn = database.connect(tmp_path / "test.db")
-    contents_repo.upsert_content(
-        conn, title="제목", content="본문", published_date=None,
-        canonical_url="https://example.com/existing", source_name=None,
-        source_domain="example.com", source_category=None,
-        status="accepted", content_hash=compute_content_hash("제목", "본문"),
-    )
-
-    dup_url = _ctx(canonical_url="https://example.com/existing")
-    assert duplicate_filter.check(dup_url, conn).passed is False
-
-    dup_content = _ctx(
-        canonical_url="https://example.com/new", title="제목", content="본문",
-        content_hash=compute_content_hash("제목", "본문"),
-    )
-    assert duplicate_filter.check(dup_content, conn).passed is False
-
-    fresh = _ctx(canonical_url="https://example.com/new2", content_hash="완전히-다른-해시")
-    assert duplicate_filter.check(fresh, conn).passed is True
-
 
 # ---------------------------------------------------------------- LLM 필터
 def test_korea_relevance_filter_rejects_when_korean_ratio_too_low():
@@ -128,13 +104,10 @@ def test_run_filters_short_circuits_on_first_failure():
     assert calls == ["failing"]
 
 
-def test_build_filter_chain_skips_llm_calls_when_blacklist_rejects_first(tmp_path):
-    conn = database.connect(tmp_path / "test.db")
+def test_build_filter_chain_skips_llm_calls_when_blacklist_rejects_first():
     fake = FakeOpenAI({"fits": True, "exclusion_type": "none", "reason": "ok"})
 
-    chain = build_filter_chain(
-        conn=conn, blacklist_domains=["bad.com"], openai_client=fake, model="gpt-4o-mini",
-    )
+    chain = build_filter_chain(blacklist_domains=["bad.com"], openai_client=fake, model="gpt-4o-mini")
     decision = run_filters(_ctx(source_domain="bad.com"), chain)
 
     assert decision.status == "excluded"
@@ -142,13 +115,10 @@ def test_build_filter_chain_skips_llm_calls_when_blacklist_rejects_first(tmp_pat
     assert fake.call_count == 0  # 블랙리스트에서 걸러졌으니 OpenAI는 한 번도 호출되지 않아야 한다
 
 
-def test_build_filter_chain_accepts_when_everything_passes(tmp_path):
-    conn = database.connect(tmp_path / "test.db")
+def test_build_filter_chain_accepts_when_everything_passes():
     fake = FakeOpenAI({"fits": True, "reason": "ok", "exclusion_type": "none"})
 
-    chain = build_filter_chain(
-        conn=conn, blacklist_domains=[], openai_client=fake, model="gpt-4o-mini",
-    )
+    chain = build_filter_chain(blacklist_domains=[], openai_client=fake, model="gpt-4o-mini")
     decision = run_filters(_ctx(), chain)
     assert "한글 비율" in decision.outcomes["korea_relevance"].detail  # accepted여도 판단 근거가 남는다
 
@@ -156,13 +126,11 @@ def test_build_filter_chain_accepts_when_everything_passes(tmp_path):
     assert fake.call_count == 1  # 이제 taxonomy만 OpenAI를 쓴다 (한국 관련성은 규칙 기반)
 
 
-def test_build_filter_chain_can_disable_taxonomy_filter(tmp_path):
-    conn = database.connect(tmp_path / "test.db")
+def test_build_filter_chain_can_disable_taxonomy_filter():
     fake = FakeOpenAI({"fits": False, "exclusion_type": "generic_no_case", "reason": "should not be called"})
 
     chain = build_filter_chain(
-        conn=conn, blacklist_domains=[], openai_client=fake, model="gpt-4o-mini",
-        enable_taxonomy_filter=False,
+        blacklist_domains=[], openai_client=fake, model="gpt-4o-mini", enable_taxonomy_filter=False,
     )
     decision = run_filters(_ctx(), chain)
 

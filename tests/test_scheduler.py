@@ -41,11 +41,19 @@ def _seed_query(conn, lv2, type_name, provider, text):
     )
 
 
+# _build_lanes가 type별 tavily.topic을 찾을 때 쓴다(topic 미설정이면 general + 경고로 폴백하지만,
+# taxonomy 자체가 없으면 KeyError) — 이 파일이 쓰는 type_a/type_b만 최소로 채운다.
+TAXONOMY_CFG = {"taxonomy": [
+    {"lv2_id": "LV2_A", "types": [{"name": "type_a"}]},
+    {"lv2_id": "LV2_B", "types": [{"name": "type_b"}]},
+]}
+
 BASE_CONFIGS = {
     "type_domains": {"types": {}},   # 기본은 SerpAPI 도메인 없음 -> 전부 Tavily로
     "domain_aliases": {"groups": {}},
     "blacklist": {"domains": []},
     "collection": {"provider_ratio": {"default": {"tavily": 100, "serpapi": 0}}},
+    "taxonomy": TAXONOMY_CFG,
 }
 
 
@@ -118,6 +126,7 @@ def test_provider_ratio_splits_target_between_tavily_and_serpapi(tmp_path):
     tavily = FakeProvider([[f"t{i}" for i in range(7)]])
     serpapi = FakeProvider([[f"s{i}" for i in range(3)]])
     configs = {
+        "taxonomy": TAXONOMY_CFG,
         "type_domains": {"types": {"type_a": {"serpapi_allowed_domains": ["example.com"]}}},
         "domain_aliases": {"groups": {}},
         "blacklist": {"domains": []},
@@ -145,6 +154,7 @@ def test_serpapi_rotates_domain_bundles_within_existing_budget_no_extra_requests
 
     serpapi = FakeProvider([["s1"], ["s2"]])
     configs = {
+        "taxonomy": TAXONOMY_CFG,
         "type_domains": {"types": {"type_a": {
             "serpapi_allowed_domains": ["d1.com", "d2.com", "d3.com", "d4.com"],
         }}},
@@ -185,6 +195,7 @@ def test_serpapi_fetches_next_pages_only_while_target_is_short(tmp_path):
         [f"p3-{i}" for i in range(5)],
     ])
     configs = {
+        "taxonomy": TAXONOMY_CFG,
         "type_domains": {"types": {"type_a": {"serpapi_allowed_domains": ["a.com"]}}},
         "domain_aliases": {"groups": {}}, "blacklist": {"domains": []},
         "collection": {"provider_ratio": {"default": {"tavily": 0, "serpapi": 100}}},
@@ -224,6 +235,7 @@ def test_serpapi_bundle_fingerprint_differs_per_bundle_so_stale_cache_doesnt_blo
 
     serpapi = FakeProvider([["s2"]])
     configs = {
+        "taxonomy": TAXONOMY_CFG,
         "type_domains": {"types": {"type_a": {
             "serpapi_allowed_domains": ["d1.com", "d2.com", "d3.com", "d4.com"],
         }}},

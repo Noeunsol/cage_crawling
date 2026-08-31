@@ -12,15 +12,19 @@ def record_duplicate(
     duplicate_reason: str,
     duplicate_content_id: int | None = None,
     duplicate_url: str | None = None,
+    title_similarity: float | None = None,
+    content_similarity: float | None = None,
 ) -> None:
     with conn:
         conn.execute(
             """
             INSERT INTO content_duplicates (
-                representative_content_id, duplicate_content_id, duplicate_url, duplicate_reason
-            ) VALUES (?, ?, ?, ?)
+                representative_content_id, duplicate_content_id, duplicate_url, duplicate_reason,
+                title_similarity, content_similarity
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (representative_content_id, duplicate_content_id, duplicate_url, duplicate_reason),
+            (representative_content_id, duplicate_content_id, duplicate_url, duplicate_reason,
+             title_similarity, content_similarity),
         )
 
 

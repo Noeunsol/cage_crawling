@@ -22,11 +22,17 @@ class TavilyProvider:
         date_to: date,
         exclude_domains: list[str],
         max_results: int | None = None,
+        topic: str = "general",
     ) -> DiscoveryResponse:
-        """설정에서 계산한 제외 도메인(기본값: 공통 블랙리스트)으로 검색한다."""
+        """설정에서 계산한 제외 도메인(기본값: 공통 블랙리스트)으로 검색한다.
+
+        topic="news"는 뉴스 소스만 인덱싱해서, 위키·학술·법무법인 블로그처럼 게시일이 불분명한
+        일반 웹페이지가 날짜 필터를 우회해 들어오는 걸 줄인다 (taxonomy.yaml의 type별 tavily.topic).
+        """
         request_params = {
             "query": query_text,
             "search_depth": self._config.get("search_depth", "basic"),
+            "topic": topic,
             "start_date": date_from.isoformat(),
             "end_date": date_to.isoformat(),
             "exclude_domains": sorted(exclude_domains),

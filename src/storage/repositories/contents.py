@@ -23,10 +23,13 @@ def upsert_content(
     source_category: str | None,
     status: str,
     content_hash: str,
+    title_normalized: str | None = None,
+    content_fingerprint: str | None = None,
 ) -> tuple[int, bool]:
     """canonical_url이 이미 있으면 본문은 다시 쓰지 않고 last_discovered_at만 갱신한다.
 
     (10.2절: "중복 URL은 본문을 다시 저장하지 않는다"). 반환값은 (content_id, created 여부).
+    title_normalized/content_fingerprint는 근사 중복 탐지용(10.3절 확장) — 없으면 NULL로 저장된다.
     """
     existing = get_by_canonical_url(conn, canonical_url)
     if existing is not None:
@@ -44,13 +47,21 @@ def upsert_content(
             INSERT INTO contents (
                 title, content, published_date, canonical_url,
                 source_name, source_domain, source_category, status,
-                collected_at, content_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?)
+                collected_at, content_hash, title_normalized, content_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?)
             """,
             (title, content, published_date, canonical_url,
-             source_name, source_domain, source_category, status, content_hash),
+             source_name, source_domain, source_category, status, content_hash,
+             title_normalized, content_fingerprint),
         )
     return cursor.lastrowid, True
+
+
+def list_fingerprints(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """근사 중복 탐지용 — id/title_normalized/content_fingerprint만 가볍게 가져온다."""
+    return conn.execute(
+        "SELECT id, title_normalized, content_fingerprint FROM contents WHERE content_fingerprint IS NOT NULL"
+    ).fetchall()
 
 
 def list_by_status(conn: sqlite3.Connection, status: str) -> list[sqlite3.Row]:

@@ -36,7 +36,7 @@ def test_raises_extraction_error_when_write_div_missing():
         parse("<html><body>본문 없음</body></html>", url="https://gall.dcinside.com/x", min_content_length=1)
         assert False, "ExtractionError가 발생해야 한다"
     except ExtractionError as e:
-        assert e.reason == "extraction_failed"
+        assert e.reason == "extraction_empty"
 
 
 def test_get_parser_routes_dcinside_to_dedicated_parser():

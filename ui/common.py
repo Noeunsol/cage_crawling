@@ -168,7 +168,8 @@ EXCLUSION_REASON_LABELS = {
     "temporary_http_error": "일시적 HTTP 오류",
     "access_denied": "접근 거부",
     "not_found": "존재하지 않는 페이지",
-    "extraction_failed": "본문 추출 실패",
+    "extraction_empty": "본문 추출 실패 (구조적/파서 개선 필요)",
+    "extraction_too_short": "본문 추출 실패 (내용 너무 짧음)",
     "unexpected_error": "예상 못 한 오류",
 }
 

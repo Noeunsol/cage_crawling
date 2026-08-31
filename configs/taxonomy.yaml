@@ -26,6 +26,8 @@ taxonomy:
     - 괴롭힘 예방 캠페인, 상담센터 소개, 교육자료 등 일반 계도성 콘텐츠
     - 괴롭힘과 무관한 온라인 갈등·논쟁 일반론
     enabled: true
+    tavily:
+      topic: news
   - name: cyberstalking
     definition: 특정인의 온라인 활동, 계정, 위치, 관계 등을 지속적으로 추적하거나 차단 이후에도 반복적으로 접근·연락하는 행위
     description: 특정인의 온라인 활동, 계정, 위치, 관계 등을 지속적으로 추적하거나 차단 이후에도 반복적으로 접근·연락하는 행위
@@ -36,6 +38,8 @@ taxonomy:
     - 스토킹 예방수칙이나 안전 앱 등을 소개하는 일반 안내 콘텐츠
     - 위치추적 기술 자체를 설명하는 일반 기술 정보
     enabled: true
+    tavily:
+      topic: news
   - name: defamation
     definition: 허위 또는 확인되지 않은 사실을 퍼뜨려 특정 개인이나 단체의 명예와 사회적 평판을 훼손하는 행위
     description: 허위 또는 확인되지 않은 사실을 퍼뜨려 특정 개인이나 단체의 명예와 사회적 평판을 훼손하는 행위
@@ -46,6 +50,8 @@ taxonomy:
     - 명예훼손죄 요건을 설명하는 일반 법률 지식 콘텐츠
     - 사실로 확인된 정당한 비판·보도 (허위성이 없는 경우)
     enabled: true
+    tavily:
+      topic: news
   - name: profanity_and_insults
     definition: 특정인을 대상으로 욕설, 비속어, 모욕, 외모 비하, 인신공격, 패드립 등 공격적 표현을 사용하는 행위
     description: 특정인을 대상으로 욕설, 비속어, 모욕, 외모 비하, 인신공격, 패드립 등 공격적 표현을 사용하는 행위
@@ -56,6 +62,8 @@ taxonomy:
     - 비속어·욕설 사용에 대한 일반적인 언어 문화 논의나 통계
     - 특정 대상 없이 감탄사로 쓰이는 비속어 사용
     enabled: true
+    tavily:
+      topic: general
   - name: threats_and_intimidation
     definition: 신체적 위해, 정보 유포, 보복 등을 암시하거나 경고하여 상대방에게 공포를 주고 행동을 강요하는 행위
     description: 신체적 위해, 정보 유포, 보복 등을 암시하거나 경고하여 상대방에게 공포를 주고 행동을 강요하는 행위
@@ -66,6 +74,8 @@ taxonomy:
     - 협박 대응 요령이나 신고 절차를 안내하는 일반 계도 콘텐츠
     - 위협 의도 없이 관용적으로 쓰이는 표현 (스포츠·게임 응원 문구 등)
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Toxicity Harms
   lv2_id: 1_B_Sexual_Content
   lv2_name: Sexual_Content
@@ -82,6 +92,8 @@ taxonomy:
     - 성교육이나 의학적 설명 등 노골적 묘사 없는 일반 정보
     - 성인용품·콘텐츠 플랫폼 광고
     enabled: true
+    tavily:
+      topic: general
   - name: non_consensual_intimate_imagery
     definition: 당사자의 동의 없이 나체, 성적 이미지, 불법촬영물, 성적 딥페이크 등을 생성·촬영·유포하는 행위
     description: 당사자의 동의 없이 나체, 성적 이미지, 불법촬영물, 성적 딥페이크 등을 생성·촬영·유포하는 행위
@@ -92,6 +104,8 @@ taxonomy:
     - 디지털 성범죄 예방 교육이나 신고센터 안내 등 일반 계도 콘텐츠
     - 피해 지원 서비스 자체를 소개하는 홍보성 글
     enabled: true
+    tavily:
+      topic: news
   - name: sexual_coercion_and_manipulation
     definition: 협박, 권력관계, 심리적 압박, 기만 등을 이용해 상대방에게 성적 행위나 성적 이미지 제공을 강요하는 행위
     description: 협박, 권력관계, 심리적 압박, 기만 등을 이용해 상대방에게 성적 행위나 성적 이미지 제공을 강요하는 행위
@@ -102,6 +116,8 @@ taxonomy:
     - 강요 정황이 없는 일반적인 연애·관계 상담
     - 그루밍·강요 개념을 설명하는 학술 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: sexual_solicitation_and_prostitution
     definition: 성매매, 대가성 성행위, 성적 만남을 제안·알선·중개하거나 참여자를 모집하는 행위
     description: 성매매, 대가성 성행위, 성적 만남을 제안·알선·중개하거나 참여자를 모집하는 행위
@@ -112,6 +128,8 @@ taxonomy:
     - 성매매 처벌법 자체를 설명하는 일반 법률 정보
     - 성매매와 무관한 일반 데이트·만남 주선 서비스
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Toxicity Harms
   lv2_id: 1_C_Self_Harm
   lv2_name: Self_Harm
@@ -171,6 +189,8 @@ taxonomy:
     - 플랫폼 규제·삭제
     - 피해·회복 경험에서 언급된 유해 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: self_injury
     definition: 자해의 구체적인 방법, 도구, 부위, 은폐법 등을 안내하거나 자해를 미화·독려하는 행위
     description: 자해의 구체적인 방법, 도구, 부위, 은폐법 등을 안내하거나 자해를 미화·독려하는 행위
@@ -205,6 +225,8 @@ taxonomy:
     - 청소년·학교 관련 논란
     - 플랫폼 신고·규제
     enabled: true
+    tavily:
+      topic: general
   - name: suicide
     definition: 자살 방법, 치명성 향상, 계획 수립 등을 안내하거나 자살을 정당화·미화·권유하는 행위
     description: 자살 방법, 치명성 향상, 계획 수립 등을 안내하거나 자살을 정당화·미화·권유하는 행위
@@ -234,6 +256,8 @@ taxonomy:
     - 플랫폼 규제·삭제
     - 수사·처벌·정책 보도
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Toxicity Harms
   lv2_id: 1_D_Child_Exploitation
   lv2_name: Child_Exploitation
@@ -250,6 +274,8 @@ taxonomy:
     - 아동안전 교육이나 보호기관 안내 등 일반 계도 콘텐츠
     - 위험 노출 사건이 아닌 일반 육아·양육 정보
     enabled: true
+    tavily:
+      topic: news
   - name: child_trafficking
     definition: 아동을 성착취, 노동착취, 불법 입양 등의 목적으로 모집·이동·거래·알선하는 행위
     description: 아동을 성착취, 노동착취, 불법 입양 등의 목적으로 모집·이동·거래·알선하는 행위
@@ -260,6 +286,8 @@ taxonomy:
     - 아동인신매매 방지 캠페인이나 국제기구 활동을 다루는 일반 계도 콘텐츠
     - 정식 입양 절차를 설명하는 일반 정보
     enabled: true
+    tavily:
+      topic: news
   - name: csam_distribution
     definition: 아동 성착취물의 생성, 공유, 유통, 저장, 검색 또는 접근 방법을 제공하는 행위
     description: 아동 성착취물의 생성, 공유, 유통, 저장, 검색 또는 접근 방법을 제공하는 행위
@@ -270,6 +298,8 @@ taxonomy:
     - 아동성착취물 근절 캠페인이나 신고센터 안내 등 계도 콘텐츠
     - 구체적 사건 없이 관련 법률·형량만 설명하는 일반 정보
     enabled: true
+    tavily:
+      topic: news
   - name: online_grooming
     definition: 미성년자의 신뢰를 얻은 뒤 성적 대화, 만남, 이미지 제공 또는 착취로 유도하는 관계 형성 기법
     description: 미성년자의 신뢰를 얻은 뒤 성적 대화, 만남, 이미지 제공 또는 착취로 유도하는 관계 형성 기법
@@ -280,6 +310,8 @@ taxonomy:
     - 그루밍 예방 교육이나 자녀 온라인 안전 가이드 등 계도 콘텐츠
     - 그루밍 개념을 설명하는 일반 학술 콘텐츠
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Unfair Representation
   lv2_id: 2_E_Discrimination
   lv2_name: Discrimination
@@ -297,6 +329,8 @@ taxonomy:
     - 성평등 정책이나 캠페인을 설명하는 일반 정보
     - 성별에 대한 단순 의견이나 혐오 표현만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: age
     definition: 나이나 세대를 이유로 고용, 교육, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 연령을 근거로 한 차별적 대우와 기회 제한
@@ -307,6 +341,8 @@ taxonomy:
     - 고령화 정책이나 세대 간 소통을 다루는 일반 정보
     - 특정 세대에 대한 비하만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: disability
     definition: 신체적·정신적 장애를 이유로 고용, 교육, 의료, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 장애를 근거로 한 차별적 대우와 정당한 편의 제공의 거부
@@ -317,6 +353,8 @@ taxonomy:
     - 장애인 복지정책이나 재활 정보를 안내하는 콘텐츠
     - 장애인에 대한 비하만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: regional_origin
     definition: 출신 지역이나 거주 지역을 이유로 고용, 교육, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 지역적 출신을 근거로 한 차별적 대우와 기회 제한
@@ -327,6 +365,8 @@ taxonomy:
     - 지역 정책이나 지역경제를 다루는 일반 뉴스
     - 지역 비하 표현만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: nationality_and_ethnicity
     definition: 국적이나 민족을 이유로 고용, 주거, 교육, 의료, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 국적과 민족을 근거로 한 차별적 대우와 기회 제한
@@ -337,6 +377,8 @@ taxonomy:
     - 이민정책이나 국제관계를 다루는 일반 뉴스
     - 국적·민족에 대한 혐오 표현만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: religion
     definition: 종교나 신앙의 유무를 이유로 고용, 교육, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 종교 또는 비종교를 근거로 한 차별적 대우와 기회 제한
@@ -347,6 +389,8 @@ taxonomy:
     - 종교 교리나 종교 간 갈등을 설명하는 일반 콘텐츠
     - 종교에 대한 비판이나 혐오 표현만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: sexual_orientation
     definition: 성적 지향을 이유로 고용, 교육, 의료, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 성적 지향을 근거로 한 차별적 대우와 기회 제한
@@ -357,6 +401,8 @@ taxonomy:
     - 성소수자 인권 정책이나 캠페인을 설명하는 일반 정보
     - 성적 지향에 대한 혐오 표현만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: occupation
     definition: 직업이나 직군을 이유로 주거, 금융, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 직업을 근거로 한 차별적 대우와 기회 제한
@@ -367,6 +413,8 @@ taxonomy:
     - 직업 정보나 취업 동향을 다루는 일반 콘텐츠
     - 특정 직업에 대한 비하만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: political_belief
     definition: 정치적 신념이나 성향을 이유로 고용, 교육, 서비스 등의 기회에서 배제하거나 불리하게 대우하는 행위
     description: 정치적 신념을 근거로 한 차별적 대우와 기회 제한
@@ -377,6 +425,8 @@ taxonomy:
     - 정당·정책에 대한 일반적인 토론이나 비평
     - 정치 성향에 대한 비하만 있고 차별 행위가 없는 콘텐츠
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Unfair Representation
   lv2_id: 2_F_Bias_and_Hate
   lv2_name: Bias_and_Hate
@@ -393,6 +443,8 @@ taxonomy:
     - 세대 간 소통이나 고령화 정책을 다루는 일반 뉴스
     - 연령차별 예방 교육 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: beliefs
     definition: 개인이나 집단의 신념, 가치관, 사상 등을 이유로 편견을 강화하거나 비하·배제하는 표현
     description: 개인이나 집단의 신념, 가치관, 사상 등을 이유로 편견을 강화하거나 비하·배제하는 표현
@@ -403,6 +455,8 @@ taxonomy:
     - 사상·신념에 대한 정상적인 토론이나 비평
     - 다양성·관용을 다루는 일반 교육 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: color
     definition: 피부색을 근거로 특정 개인이나 집단을 열등하게 묘사하거나 혐오·차별하는 표현
     description: 피부색을 근거로 특정 개인이나 집단을 열등하게 묘사하거나 혐오·차별하는 표현
@@ -413,6 +467,8 @@ taxonomy:
     - 인종차별 반대 캠페인이나 다양성 교육 콘텐츠
     - 피부색과 무관한 미용·화장품 정보
     enabled: true
+    tavily:
+      topic: general
   - name: disability
     definition: 신체적·정신적 장애를 이유로 무능력, 부담, 열등함 등의 고정관념을 강화하거나 비하하는 표현
     description: 신체적·정신적 장애를 이유로 무능력, 부담, 열등함 등의 고정관념을 강화하거나 비하하는 표현
@@ -423,6 +479,8 @@ taxonomy:
     - 장애인 인식개선 캠페인이나 복지정책 안내
     - 장애 관련 의료·재활 정보
     enabled: true
+    tavily:
+      topic: general
   - name: gender
     definition: 성별이나 성 정체성을 근거로 능력, 역할, 성격 등을 고정적으로 판단하거나 비하·배제하는 표현
     description: 성별이나 성 정체성을 근거로 능력, 역할, 성격 등을 고정적으로 판단하거나 비하·배제하는 표현
@@ -433,6 +491,8 @@ taxonomy:
     - 양성평등 정책이나 캠페인을 다루는 일반 콘텐츠
     - 성별과 무관한 일반 커뮤니티 게시물
     enabled: true
+    tavily:
+      topic: general
   - name: geographic_region
     definition: 특정 지역 출신이나 거주자를 부정적으로 일반화하고 조롱·혐오·배제하는 표현
     description: 특정 지역 출신이나 거주자를 부정적으로 일반화하고 조롱·혐오·배제하는 표현
@@ -443,6 +503,8 @@ taxonomy:
     - 지역 소개나 지역경제·정책을 다루는 일반 뉴스
     - 지역감정 해소 캠페인 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: nationality
     definition: 특정 국적의 사람들을 열등하거나 위험한 집단으로 일반화하고 혐오·배제하는 표현
     description: 특정 국적의 사람들을 열등하거나 위험한 집단으로 일반화하고 혐오·배제하는 표현
@@ -453,6 +515,8 @@ taxonomy:
     - 이민정책이나 국제관계를 다루는 일반 뉴스
     - 다문화 포용 캠페인 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: occupation
     definition: 특정 직업군을 무능력, 부도덕, 열등한 집단으로 일반화하거나 비하하는 표현
     description: 특정 직업군을 무능력, 부도덕, 열등한 집단으로 일반화하거나 비하하는 표현
@@ -463,6 +527,8 @@ taxonomy:
     - 직업 정보나 취업 관련 일반 콘텐츠
     - 직업윤리 교육 자료
     enabled: true
+    tavily:
+      topic: general
   - name: race_and_ethnicity
     definition: 인종·민족을 근거로 집단의 지능, 범죄성, 성향 등을 일반화하고 혐오·차별하는 표현
     description: 인종·민족을 근거로 집단의 지능, 범죄성, 성향 등을 일반화하고 혐오·차별하는 표현
@@ -473,6 +539,8 @@ taxonomy:
     - 인종차별 반대 캠페인이나 다문화 교육 콘텐츠
     - 인종·민족 문화를 소개하는 일반 정보
     enabled: true
+    tavily:
+      topic: general
   - name: religion
     definition: 특정 종교 또는 종교인을 위험하거나 열등한 집단으로 묘사하고 혐오·배제하는 표현
     description: 특정 종교 또는 종교인을 위험하거나 열등한 집단으로 묘사하고 혐오·배제하는 표현
@@ -483,6 +551,8 @@ taxonomy:
     - 종교 간 화합이나 관용을 다루는 일반 콘텐츠
     - 특정 종교의 교리를 소개하는 일반 정보
     enabled: true
+    tavily:
+      topic: general
   - name: sexual_orientation
     definition: 성적 지향을 이유로 개인이나 집단을 비정상적·열등하다고 묘사하거나 혐오·배제하는 표현
     description: 성적 지향을 이유로 개인이나 집단을 비정상적·열등하다고 묘사하거나 혐오·배제하는 표현
@@ -493,6 +563,8 @@ taxonomy:
     - 성소수자 인권 캠페인이나 다양성 교육 콘텐츠
     - 성적지향과 무관한 일반 커뮤니티 게시물
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Misinformation Harms
   lv2_id: 3_G_Misinformation_and_Disinformation
   lv2_name: Misinformation_and_Disinformation
@@ -509,6 +581,8 @@ taxonomy:
     - 가짜뉴스의 위험성을 다루는 일반 계도성 칼럼이나 미디어 리터러시 교육 콘텐츠
     - 허위정보 탐지 기술·서비스 홍보
     enabled: true
+    tavily:
+      topic: news
   - name: misinterpretation_or_wrong_context
     definition: 사실 일부를 왜곡하거나 원래 맥락에서 분리해 잘못된 의미로 해석·전달하는 행위
     description: 사실 일부를 왜곡하거나 원래 맥락에서 분리해 잘못된 의미로 해석·전달하는 행위
@@ -519,6 +593,8 @@ taxonomy:
     - 맥락 왜곡과 무관한 일반 뉴스 해설이나 의견 기사
     - 미디어 리터러시 교육 자료
     enabled: true
+    tavily:
+      topic: general
   - name: propaganda
     definition: 정치적·이념적 목적을 위해 편향되거나 조작된 메시지를 반복적으로 생산하여 여론을 유도하는 행위
     description: 정치적·이념적 목적을 위해 편향되거나 조작된 메시지를 반복적으로 생산하여 여론을 유도하는 행위
@@ -529,6 +605,8 @@ taxonomy:
     - 정당·정책에 대한 정상적인 비평이나 논평 기사
     - 프로파간다 개념을 설명하는 일반 학술·교육 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: rumors
     definition: 확인되지 않은 주장이나 소문을 사실처럼 생성·확산하여 혼란이나 평판 피해를 유발하는 행위
     description: 확인되지 않은 주장이나 소문을 사실처럼 생성·확산하여 혼란이나 평판 피해를 유발하는 행위
@@ -550,6 +628,8 @@ taxonomy:
     - 이미 사실로 확인된 뉴스나 공식 발표
     - 유언비어와 무관한 일반 커뮤니티 잡담
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Misinformation Harms
   lv2_id: 3_H_Prohibited_Advisory
   lv2_name: Prohibited_Advisory
@@ -566,6 +646,8 @@ taxonomy:
     - 금융감독기관이나 전문가가 위험고지를 포함해 제공하는 정상적인 금융 정보
     - 단정적 지침이 아닌 일반 금융상품 설명
     enabled: true
+    tavily:
+      topic: general
   - name: legal_advice
     definition: 법률 자격이나 충분한 사실관계 검토 없이 소송, 처벌 회피, 계약, 권리 행사 등에 대해 단정적인 전문 지침을 제공하는 행위
     description: 법률 자격이나 충분한 사실관계 검토 없이 소송, 처벌 회피, 계약, 권리 행사 등에 대해 단정적인 전문 지침을 제공하는 행위
@@ -576,6 +658,8 @@ taxonomy:
     - 변호사 등 자격을 갖춘 전문가의 정상적인 법률 상담(위험고지 포함)
     - 법률 제도를 설명하는 일반 정보
     enabled: true
+    tavily:
+      topic: general
   - name: medical_advice
     definition: 의료 전문가의 진단 없이 질병, 약물, 치료, 처방 등에 대해 단정적이고 실행 가능한 전문 지침을 제공하는 행위
     description: 의료 전문가의 진단 없이 질병, 약물, 치료, 처방 등에 대해 단정적이고 실행 가능한 전문 지침을 제공하는 행위
@@ -586,6 +670,8 @@ taxonomy:
     - 의료진이 제공하는 정상적인 건강 정보나 공식 의료기관 안내
     - 단정적 처방이 아닌 일반 건강 상식 콘텐츠
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Information and Safety Harms
   lv2_id: 4_I_Privacy_Infringement
   lv2_name: Privacy_Infringement
@@ -602,6 +688,8 @@ taxonomy:
     - 개인정보보호 제도·서비스(마이데이터 등) 자체에 대한 일반적인 설명이나 이용 안내
     - 개인정보보호 솔루션·서비스 홍보
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Information and Safety Harms
   lv2_id: 4_J_Public_Sensitive_Info_Leakage
   lv2_name: Public_Sensitive_Info_Leakage
@@ -621,6 +709,8 @@ taxonomy:
     - 통계 요약이나 트렌드 리포트처럼 개별 사건이 아닌 산업 동향을 다루는 글
     - 유출 대상이 고객 개인정보인 사건 (개인정보 유출은 privacy_violation에서 다룸)
     enabled: true
+    tavily:
+      topic: news
   - name: cybersecurity_vulnerabilities
     definition: 공개되지 않았거나 악용 위험이 큰 시스템 취약점, 인증 정보, 보안 설정 등을 무단으로 노출하는 행위
     description: 공개되지 않았거나 악용 위험이 큰 시스템 취약점, 인증 정보, 보안 설정 등을 무단으로 노출하는 행위
@@ -633,6 +723,8 @@ taxonomy:
     - 특정 취약점 없이 보안 트렌드·통계·정책을 다루는 일반 리포트
     - 취약점 관리 체계나 거버넌스에 대한 개념적 설명
     enabled: true
+    tavily:
+      topic: general
   - name: financial_and_budgetary_information
     definition: 기업·기관의 비공개 예산, 비용 구조, 재무 계획, 자금 흐름 등의 민감한 재무 정보를 노출하는 행위
     description: 기업·기관의 비공개 예산, 비용 구조, 재무 계획, 자금 흐름 등의 민감한 재무 정보를 노출하는 행위
@@ -644,6 +736,8 @@ taxonomy:
     - 다른 유형의 유출 사고(개인정보 유출 등)로 인한 과징금·영업정지·주가 하락 등 재무적 여파만 다루는 기사
     - 재무·회계 관련 일반 지식, 세무 상담, 컨설팅 광고
     enabled: true
+    tavily:
+      topic: news
   - name: internal_communications
     definition: 내부 이메일, 회의록, 메신저, 보고 내용 등 외부 공개가 허용되지 않은 의사소통 내용을 유출하는 행위
     description: 내부 이메일, 회의록, 메신저, 보고 내용 등 외부 공개가 허용되지 않은 의사소통 내용을 유출하는 행위
@@ -654,6 +748,8 @@ taxonomy:
     - 직장 내 괴롭힘·갈등 상담이나 조직문화 일반론 (내부 문서 유출 사건이 아닌 경우)
     - 커뮤니케이션 도구·협업 솔루션 홍보
     enabled: true
+    tavily:
+      topic: news
   - name: internal_policies_and_classified_documents
     definition: 비공개 내부 규정, 보안 문서, 정부·기관의 기밀 문서 또는 분류 정보를 노출하는 행위
     description: 비공개 내부 규정, 보안 문서, 정부·기관의 기밀 문서 또는 분류 정보를 노출하는 행위
@@ -664,6 +760,8 @@ taxonomy:
     - 이미 공개된 법령·제도·가이드라인을 해설하는 일반 기사
     - 내부 규정 위반이 아닌 일반적인 조직 운영·정책 소개
     enabled: true
+    tavily:
+      topic: news
   - name: legal_information
     definition: 미공개 소송 전략, 법무 검토 의견, 조사 자료, 합의 조건 등 법적 민감 정보를 유출하는 행위
     description: 미공개 소송 전략, 법무 검토 의견, 조사 자료, 합의 조건 등 법적 민감 정보를 유출하는 행위
@@ -674,6 +772,8 @@ taxonomy:
     - 이미 선고된 판결 내용이나 공개된 법률 상담 Q&A 등 법률 지식 소개 글
     - 법무법인·변호사 서비스 홍보
     enabled: true
+    tavily:
+      topic: general
   - name: sensitive_technological_details
     definition: 내부 소스 코드, 시스템 아키텍처, 알고리즘, 제조 공정 등 공개되지 않은 핵심 기술 정보를 노출하는 행위
     description: 내부 소스 코드, 시스템 아키텍처, 알고리즘, 제조 공정 등 공개되지 않은 핵심 기술 정보를 노출하는 행위
@@ -684,6 +784,8 @@ taxonomy:
     - 기술 트렌드·아키텍처 설계에 대한 일반적인 개발자 지식 공유(Q&A, 튜토리얼)
     - 특허·기술 컨설팅 서비스 홍보
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Information and Safety Harms
   lv2_id: 4_K_Intellectual_Property_Infringement
   lv2_name: Intellectual_Property_Infringement
@@ -701,6 +803,8 @@ taxonomy:
     - 저작권법이나 정당한 인용·공정이용을 설명하는 일반 법률 정보
     - 저작권 보호 서비스·기술을 소개하는 홍보성 글
     enabled: true
+    tavily:
+      topic: news
   - name: counterfeit_trademark
     definition: 타인의 상표, 브랜드, 로고를 모방해 정품처럼 보이게 하거나 위조 상품 제작·판매를 돕는 행위
     description: 타인의 상표, 브랜드, 로고를 모방해 정품처럼 보이게 하거나 위조 상품 제작·판매를 돕는 행위
@@ -711,6 +815,8 @@ taxonomy:
     - 상표법이나 지식재산권 제도를 설명하는 일반 정보
     - 정품 인증 방법을 안내하는 일반 소비자 정보
     enabled: true
+    tavily:
+      topic: news
   - name: patent_infringement
     definition: 특허로 보호되는 기술이나 공정을 허가 없이 구현·복제하도록 구체적으로 지원하는 행위
     description: 특허로 보호되는 기술이나 공정을 허가 없이 구현·복제하도록 구체적으로 지원하는 행위
@@ -721,6 +827,8 @@ taxonomy:
     - 특허 제도나 출원 절차를 설명하는 일반 정보
     - 특허 컨설팅 서비스 홍보
     enabled: true
+    tavily:
+      topic: news
   - name: trade_secret_theft
     definition: 기업의 영업 비밀, 비공개 기술, 고객 정보, 전략 자료 등을 절취·유출·악용하도록 돕는 행위
     description: 기업의 영업 비밀, 비공개 기술, 고객 정보, 전략 자료 등을 절취·유출·악용하도록 돕는 행위
@@ -731,6 +839,8 @@ taxonomy:
     - 영업비밀보호법을 설명하는 일반 법률 정보
     - 기업 보안 컨설팅 서비스 홍보
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Malicious Use
   lv2_id: 5_L_Illegal_Activity
   lv2_name: Illegal_Activity
@@ -747,6 +857,8 @@ taxonomy:
     - 범죄예방 캠페인이나 안전 수칙을 안내하는 계도 콘텐츠
     - 범죄 통계나 치안정책을 다루는 일반 뉴스
     enabled: true
+    tavily:
+      topic: news
   - name: fraudulent_schemes_and_deception
     definition: 피싱, 보이스피싱, 신분 사칭, 투자 사기 등 기만을 통해 금전이나 정보를 편취하는 방법을 제공하는 행위
     description: 피싱, 보이스피싱, 신분 사칭, 투자 사기 등 기만을 통해 금전이나 정보를 편취하는 방법을 제공하는 행위
@@ -757,6 +869,8 @@ taxonomy:
     - 사기 예방 캠페인이나 소비자 보호 안내 콘텐츠
     - 사기성이 없는 정상적인 투자 정보
     enabled: true
+    tavily:
+      topic: news
   - name: illegal_services_exploitation
     definition: 불법 도박, 범죄 대행, 다크웹 거래, 불법 계정 거래 등 불법 서비스를 찾고 이용·악용하도록 돕는 행위
     description: 불법 도박, 범죄 대행, 다크웹 거래, 불법 계정 거래 등 불법 서비스를 찾고 이용·악용하도록 돕는 행위
@@ -767,6 +881,8 @@ taxonomy:
     - 불법 서비스 근절 캠페인이나 신고 안내 콘텐츠
     - 합법적인 온라인 서비스에 대한 일반 정보
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Malicious Use
   lv2_id: 5_M_Violence_and_Extremism
   lv2_name: Violence_and_Extremism
@@ -783,6 +899,8 @@ taxonomy:
     - 폭력 예방 캠페인이나 피해자 지원 안내 콘텐츠
     - 구체적 묘사 인용이 없는 영화·게임 등의 폭력성 심의·등급 리뷰
     enabled: true
+    tavily:
+      topic: news
   - name: supporting_malicious_organized_groups
     definition: 테러단체, 폭력적 극단주의 조직, 조직범죄 집단의 이념·활동을 옹호하거나 모집·선전·지원하는 행위
     description: 테러단체, 폭력적 극단주의 조직, 조직범죄 집단의 이념·활동을 옹호하거나 모집·선전·지원하는 행위
@@ -793,6 +911,8 @@ taxonomy:
     - 극단주의 예방 교육이나 대테러 정책을 다루는 일반 콘텐츠
     - 옹호가 아닌 학술적 역사 서술 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: violent_crimes_and_acts
     definition: 살인, 폭행, 감금, 납치, 고문 등 실제 물리적 폭력을 계획·실행·조장하도록 돕는 행위
     description: 살인, 폭행, 감금, 납치, 고문 등 실제 물리적 폭력을 계획·실행·조장하도록 돕는 행위
@@ -803,6 +923,8 @@ taxonomy:
     - 폭력예방 캠페인이나 피해자 지원 안내 콘텐츠
     - 구체적 사건이 아닌 범죄 통계·치안정책 일반 뉴스
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Malicious Use
   lv2_id: 5_N_Encouraging_Unethical_Actions
   lv2_name: Encouraging_Unethical_Actions
@@ -819,6 +941,8 @@ taxonomy:
     - 학업윤리 교육이나 부정행위 예방 안내 콘텐츠
     - 정당한 학습법이나 과외 서비스를 소개하는 일반 정보
     enabled: true
+    tavily:
+      topic: general
   - name: deception_and_fraud
     definition: 상대방을 속이거나 사실을 은폐·왜곡하여 부당한 이익을 얻는 비윤리적 기만 행위를 조장하는 행위
     description: 상대방을 속이거나 사실을 은폐·왜곡하여 부당한 이익을 얻는 비윤리적 기만 행위를 조장하는 행위
@@ -829,6 +953,8 @@ taxonomy:
     - 기만행위 예방 안내나 소비자 보호 캠페인
     - 정상적인 협상·마케팅 기법을 설명하는 일반 정보
     enabled: true
+    tavily:
+      topic: news
   - name: manipulative_persuasion
     definition: 공포, 죄책감, 의존성, 허위 친밀감, 심리적 약점 등을 이용해 상대방의 판단과 동의를 부당하게 조작하는 행위
     description: 공포, 죄책감, 의존성, 허위 친밀감, 심리적 약점 등을 이용해 상대방의 판단과 동의를 부당하게 조작하는 행위
@@ -839,6 +965,8 @@ taxonomy:
     - 심리학이나 설득 기법을 학술적으로 설명하는 일반 콘텐츠
     - 정상적인 마케팅·영업 기법 소개
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Security and System Integrity Threats
   lv2_id: 6_O_CBRNE
   lv2_name: CBRNE
@@ -855,6 +983,8 @@ taxonomy:
     - 감염병 예방이나 방역 정책을 다루는 일반 보건 뉴스
     - 생물학 연구나 백신 개발을 다루는 정상적인 과학 뉴스
     enabled: true
+    tavily:
+      topic: news
   - name: chemical
     definition: 독성 화학물질, 화학작용제 등의 합성, 농축, 살포 또는 위해 활용 방법을 제공하는 행위
     description: 독성 화학물질, 화학작용제 등의 합성, 농축, 살포 또는 위해 활용 방법을 제공하는 행위
@@ -865,6 +995,8 @@ taxonomy:
     - 화학안전이나 산업안전 정책을 다루는 일반 뉴스
     - 화학 연구나 산업공정을 다루는 정상적인 과학·산업 뉴스
     enabled: true
+    tavily:
+      topic: news
   - name: explosive
     definition: 고폭발물, 폭발 장치, 기폭 시스템 등의 제조·조립·활용 방법을 제공하는 행위
     description: 고폭발물, 폭발 장치, 기폭 시스템 등의 제조·조립·활용 방법을 제공하는 행위
@@ -875,6 +1007,8 @@ taxonomy:
     - 폭발물 안전관리나 예방 정책을 다루는 일반 뉴스
     - 불꽃놀이 등 합법적 화약류를 다루는 일반 정보
     enabled: true
+    tavily:
+      topic: news
   - name: nuclear
     definition: 핵무기, 핵물질 농축, 핵분열 장치 등의 개발·제조·활용에 필요한 실질적 지침을 제공하는 행위
     description: 핵무기, 핵물질 농축, 핵분열 장치 등의 개발·제조·활용에 필요한 실질적 지침을 제공하는 행위
@@ -885,6 +1019,8 @@ taxonomy:
     - 원자력 발전이나 에너지 정책을 다루는 일반 뉴스
     - 핵과학 연구를 다루는 정상적인 학술 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: radiological
     definition: 방사성 물질의 취득, 농축, 살포 또는 방사능 공격에 활용하는 방법을 제공하는 행위
     description: 방사성 물질의 취득, 농축, 살포 또는 방사능 공격에 활용하는 방법을 제공하는 행위
@@ -895,6 +1031,8 @@ taxonomy:
     - 방사선 의료기기나 검사를 다루는 일반 의료 정보
     - 방사능 안전관리 정책을 다루는 일반 뉴스
     enabled: true
+    tavily:
+      topic: news
 - lv1_name: Security and System Integrity Threats
   lv2_id: 6_P_Cybersecurity
   lv2_name: Cybersecurity
@@ -912,6 +1050,8 @@ taxonomy:
     - 사이버 보안 솔루션·서비스 홍보
     - 보안 정책이나 예방 수칙을 다루는 일반 계도 콘텐츠
     enabled: true
+    tavily:
+      topic: news
   - name: malware_generation
     definition: 악성코드, 랜섬웨어, 스파이웨어, 키로거, 백도어 등의 제작·변형·은폐하는 행위
     description: 악성코드, 랜섬웨어, 스파이웨어, 키로거, 백도어 등의 제작·변형·은폐하는 행위
@@ -922,6 +1062,8 @@ taxonomy:
     - 백신·보안 소프트웨어 홍보
     - 악성코드 개념을 설명하는 일반 보안 지식 콘텐츠
     enabled: true
+    tavily:
+      topic: general
   - name: weapon_usage_development
     definition: 총기·폭발물·도검류 등 무기를 사용·제작·개조·성능 향상하거나, 실제 위해에 활용할 수 있도록 구체적인 운용 절차·방법을 제공하는 행위
     description: 총기·폭발물·도검류 등 무기를 사용·제작·개조·성능 향상하거나, 실제 위해에 활용할 수 있도록 구체적인 운용 절차·방법을 제공하는 행위
@@ -932,6 +1074,8 @@ taxonomy:
     - 합법적 수렵·사격 스포츠나 군사·무기 정책을 다루는 일반 뉴스
     - 무기 안전관리를 다루는 일반 계도 콘텐츠
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Security and System Integrity Threats
   lv2_id: 6_Q_Prompt_Attack
   lv2_name: Prompt_Attack
@@ -948,6 +1092,8 @@ taxonomy:
     - AI 안전성 연구나 레드티밍을 학술적으로 다루는 일반 콘텐츠
     - 정상적인 프롬프트 엔지니어링 활용 가이드
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Security and System Integrity Threats
   lv2_id: 6_R_System_Leakage
   lv2_name: System_Leakage
@@ -964,6 +1110,8 @@ taxonomy:
     - AI 시스템 설계나 아키텍처를 설명하는 일반 개발 콘텐츠
     - 유출 사고가 아닌 일반 프롬프트 엔지니어링 팁 공유
     enabled: true
+    tavily:
+      topic: general
 - lv1_name: Security and System Integrity Threats
   lv2_id: 6_S_Unbounded_Consumption
   lv2_name: Unbounded_Consumption
@@ -981,3 +1129,5 @@ taxonomy:
     - 클라우드 비용 최적화나 API 사용량 관리에 대한 일반 가이드
     - 이 문제와 무관한 서비스 장애·트래픽 폭주 일반 뉴스
     enabled: true
+    tavily:
+      topic: general

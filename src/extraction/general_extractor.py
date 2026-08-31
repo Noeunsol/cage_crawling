@@ -14,7 +14,13 @@ from src.extraction.cleaner import clean_article_text
 
 
 class ExtractionError(Exception):
-    def __init__(self, reason: str = "extraction_failed"):
+    """reason은 extraction_empty(본문 자체를 못 찾음) / extraction_too_short(짧아서 탈락) 둘 중 하나.
+
+    2026-08-31: 예전엔 "extraction_failed" 하나였는데, 원인 성격이 달라 retry_policy.yaml에서
+    다른 재시도 정책을 쓴다(after_parser_update vs immediate) — src/utils/retry_policy_helpers.py.
+    """
+
+    def __init__(self, reason: str = "extraction_too_short"):
         self.reason = reason
         super().__init__(reason)
 
@@ -33,7 +39,7 @@ def build_or_raise(title: str, content: str, min_content_length: int, published_
     성공/실패를 판단해서, 기준 자체가 바뀌면 여기 한 곳만 고치면 되게 모아뒀다.
     """
     if not title or len(content) < min_content_length:
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_too_short")
     return ExtractedContent(title=title, content=content, published_date=published_date)
 
 
@@ -59,7 +65,7 @@ def extract(
         date_extraction_params={"original_date": True},
     )
     if document is None:
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
 
     data = document.as_dict()
     title = (data.get("title") or "").strip()

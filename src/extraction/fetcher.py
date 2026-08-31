@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import requests
 
 from src.utils.rate_limit import throttle
+from src.utils.retry_policy_helpers import is_immediately_retryable
 
 
 class FetchError(Exception):
@@ -26,26 +28,30 @@ def fetch(url: str, extraction_cfg: dict, retry_policy: dict) -> FetchResult:
     headers = {"User-Agent": extraction_cfg["fetch"]["user_agent"]}
     timeout = extraction_cfg["fetch"]["timeout_seconds"]
 
+    # 도메인별로 스로틀링한다 — 전부 "fetch" 하나의 버킷으로 묶으면 서로 무관한 도메인끼리도
+    # 불필요하게 직렬화된다 (동시 fetch를 도입한 이후엔 같은 도메인끼리만 예의를 지키면 된다).
     fetch_rate = retry_policy.get("rate_limit", {}).get("fetch", {})
-    throttle("fetch", fetch_rate.get("min_interval_seconds", 0))
+    throttle(f"fetch:{urlsplit(url).netloc}", fetch_rate.get("min_interval_seconds", 0))
+
+    reasons_cfg = retry_policy["reasons"]
 
     try:
         response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
     except requests.exceptions.Timeout as e:
-        raise FetchError("timeout", retry_policy["reasons"]["timeout"]["retryable"]) from e
+        raise FetchError("timeout", is_immediately_retryable(reasons_cfg, "timeout")) from e
     except requests.exceptions.RequestException as e:
         raise FetchError(
-            "temporary_http_error", retry_policy["reasons"]["temporary_http_error"]["retryable"]
+            "temporary_http_error", is_immediately_retryable(reasons_cfg, "temporary_http_error")
         ) from e
 
     status = response.status_code
     if status in (401, 403):
-        raise FetchError("access_denied", retry_policy["reasons"]["access_denied"]["retryable"])
+        raise FetchError("access_denied", is_immediately_retryable(reasons_cfg, "access_denied"))
     if status == 404:
-        raise FetchError("not_found", retry_policy["reasons"]["not_found"]["retryable"])
+        raise FetchError("not_found", is_immediately_retryable(reasons_cfg, "not_found"))
     if status >= 500:
         raise FetchError(
-            "temporary_http_error", retry_policy["reasons"]["temporary_http_error"]["retryable"]
+            "temporary_http_error", is_immediately_retryable(reasons_cfg, "temporary_http_error")
         )
     if status >= 400:
         raise FetchError("temporary_http_error", False)

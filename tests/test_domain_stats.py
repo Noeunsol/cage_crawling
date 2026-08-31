@@ -30,7 +30,7 @@ def test_domain_stats_combines_contents_and_extraction_failures(tmp_path):
         discarded_repo.record_discarded(
             conn, original_url=f"https://kin.naver.com/fail{i}", normalized_url=f"https://kin.naver.com/fail{i}",
             run_id=None, query_id=None, source_domain="kin.naver.com",
-            reason="extraction_failed", retryable=True,
+            reason="extraction_too_short", retryable=True,
         )
 
     stats = domain_stats.get_domain_stats(conn, "kin.naver.com")
@@ -61,7 +61,7 @@ def test_list_all_domain_stats_covers_every_domain_seen(tmp_path):
     )
     discarded_repo.record_discarded(
         conn, original_url="https://bad.com/1", normalized_url="https://bad.com/1",
-        run_id=None, query_id=None, source_domain="bad.com", reason="extraction_failed", retryable=True,
+        run_id=None, query_id=None, source_domain="bad.com", reason="extraction_too_short", retryable=True,
     )
 
     stats_by_domain = {s.domain: s for s in domain_stats.list_all_domain_stats(conn)}

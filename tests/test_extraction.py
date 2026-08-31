@@ -29,10 +29,10 @@ SAMPLE_HTML = """
 EXTRACTION_CFG = {"fetch": {"user_agent": "test-agent", "timeout_seconds": 5}}
 RETRY_POLICY = {
     "reasons": {
-        "timeout": {"retryable": True},
-        "temporary_http_error": {"retryable": True},
-        "access_denied": {"retryable": False},
-        "not_found": {"retryable": False},
+        "timeout": {"retry_mode": "immediate"},
+        "temporary_http_error": {"retry_mode": "immediate"},
+        "access_denied": {"retry_mode": "never"},
+        "not_found": {"retry_mode": "never"},
     }
 }
 
@@ -268,7 +268,7 @@ def test_extract_fails_when_body_too_short():
         extract(tiny_html, url="https://example.com/a", min_content_length=1000)
         assert False, "ExtractionError가 발생해야 합니다"
     except ExtractionError as e:
-        assert e.reason == "extraction_failed"
+        assert e.reason == "extraction_too_short"
 
 
 # ---------------------------------------------------------------- parser_registry

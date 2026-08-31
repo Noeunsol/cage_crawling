@@ -25,7 +25,7 @@ def parse(
 
     body_el = soup.select_one("div#articleBody, div.articleBody")
     if body_el is None:
-        raise ExtractionError("extraction_failed")
+        raise ExtractionError("extraction_empty")
     strip_noise_tags(body_el)
     content = clean_article_text(
         body_el.get_text("\n", strip=True), (extraction_cfg or {}).get("cleaning", {}),
