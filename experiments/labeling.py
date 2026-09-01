@@ -1,6 +1,6 @@
-"""Taxonomy 정밀도 평가용 사람 라벨링 워크플로 (LV2당 accepted 15건 랜덤 표본).
+"""Taxonomy 정밀도 평가용 사람 라벨링 워크플로 (LV2당 accepted 30건 랜덤 표본).
 
-1) sample: test_experiment_runs.jsonl에 기록된 run들에서 LV2당 accepted 15건을 뽑아 CSV로 내보낸다.
+1) sample: test_experiment_runs.jsonl에 기록된 run들에서 LV2당 accepted 30건을 뽑아 CSV로 내보낸다.
    사람이 그 CSV의 human_label 칸(accepted/excluded)을 채운다.
 2) import: 사람이 채운 CSV를 읽어 eval_labels 테이블에 저장한다.
 

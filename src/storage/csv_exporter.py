@@ -1,6 +1,6 @@
-"""DB의 accepted 콘텐츠를 LV2/type별 CSV로 다시 만든다 (13절).
+"""DB의 accepted 콘텐츠를 LV2/type별 CSV로 다시 만든다.
 
-CSV에 직접 append하지 않는다 — export할 때마다 DB 기준으로 파일 전체를 새로 쓴다 (13.2절).
+CSV에 직접 append하지 않는다 — export할 때마다 DB 기준으로 파일 전체를 새로 쓴다.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def export_type(conn: sqlite3.Connection, lv2_id: str, type_name: str, final_dir: Path) -> ExportResult:
-    """이 type CSV 하나를 통째로 다시 쓴다. 같은 content_hash는 한 번만 넣는다 (13.2절)."""
+    """이 type CSV 하나를 통째로 다시 쓴다. 같은 content_hash는 한 번만 넣는다."""
     seen_hashes: set[str] = set()
     unique_rows = []
     for row in _accepted_rows(conn, lv2_id, type_name):
@@ -113,7 +113,7 @@ def export_all(
 def export_run(conn: sqlite3.Connection, run_id: str, final_dir: Path) -> list[ExportResult]:
     """기존 CSV는 유지하고 선택한 run의 accepted 콘텐츠만 중복 없이 누적한다.
 
-    ponytail: export_type()처럼 DB의 content_hash 컬럼을 바로 쓰지 못하고 CSV를 다시 읽어
+    export_type()처럼 DB의 content_hash 컬럼을 바로 쓰지 못하고 CSV를 다시 읽어
     title+content로 재계산한다 — "이미 CSV에 실린 것"을 DB가 아니라 CSV 파일 자체로만 알 수
     있기 때문이다(다른 run이 먼저 accepted시킨 같은 type의 콘텐츠를 이 run 시점엔 아직 CSV에
     넣으면 안 되므로, export_type()처럼 "그 type의 전체 accepted"를 그냥 다시 쓸 수는 없다 —

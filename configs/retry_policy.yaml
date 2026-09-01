@@ -1,4 +1,4 @@
-# 실패/제외 사유별 재시도 정책 (11.5절). reason code는 discarded_candidates.reason에 그대로 저장된다.
+# 실패/제외 사유별 재시도 정책. reason code는 discarded_candidates.reason에 그대로 저장된다.
 #
 # retry_mode 3단계 (2026-08-31, retryable bool을 대체):
 #   immediate            — find_retryable_candidates가 다음 run에서 max_attempts까지 자동 재시도
@@ -18,7 +18,7 @@ reasons:
     retry_mode: immediate
     max_attempts: 3
     backoff_seconds: 5
-  access_denied:            # 로그인/권한이 필요해 본문에 접근할 수 없음 (9.5절)
+  access_denied:            # 로그인/권한이 필요해 본문에 접근할 수 없음
     retry_mode: never
   not_found:                 # 삭제되었거나 존재하지 않는 글
     retry_mode: never
@@ -29,7 +29,7 @@ reasons:
     retry_mode: never
   blacklisted_domain:
     retry_mode: never
-  target_reached:            # save_over_target_results=false일 때 lv2 목표 수집량 도달 후 건너뜀 (7.4절)
+  target_reached:            # save_over_target_results=false일 때 lv2 목표 수집량 도달 후 건너뜀
     retry_mode: never
   low_korea_relevance:
     retry_mode: never
@@ -49,7 +49,7 @@ reasons:
     max_attempts: 2
     backoff_seconds: 5
 
-# provider별 요청 간 최소 간격(초)과 동시 요청 수 (16.3절).
+# provider별 요청 간 최소 간격(초)과 동시 요청 수.
 rate_limit:
   # 검색(tavily/serpapi)은 scheduler.py가 round-robin으로 순차 호출한다 — max_concurrency는
   # 실제로 쓰이지 않으므로 실상태 그대로 1로 명시해둔다 (2026-08-31: 예전엔 4였는데 코드가

@@ -1,4 +1,4 @@
-"""1단계: 수집 설정 (14.1절) — LV2/type 선택, LV2별 예외 설정, 목표량/배수.
+"""1단계: 수집 설정 — LV2/type 선택, LV2별 예외 설정, 목표량/배수.
 
 기간·provider 비율은 configs/collection.yaml에 LV2별 확정값(또는 코드 기본값)이 있고,
 필요한 LV2만 아래 ②카드에서 개별로 덮어쓴다. 전역으로 따로 조정하는 화면은 두지 않는다 —
@@ -160,7 +160,7 @@ with col1:
         "LV2당 신규 목표 수집량 (target_count)",
         min_value=1, value=setup["target_count"],
         help=(
-            "이미 DB에 쌓인 accepted 건수와 별개로, 이번 실행에서 새로 채우려는 목표치입니다 (7.2절). "
+            "이미 DB에 쌓인 accepted 건수와 별개로, 이번 실행에서 새로 채우려는 목표치입니다. "
             "같은 LV2에 활성 type이 여럿이면 이 값을 type 수만큼 나눠 가집니다(나머지는 올림)."
         ),
     )
@@ -196,7 +196,7 @@ st.dataframe(
     hide_index=True, width="stretch",
 )
 
-st.markdown("**API 크레딧 사용량** (7.7절)")
+st.markdown("**API 크레딧 사용량**")
 serpapi_key = os.environ.get(configs["providers"]["serpapi"]["api_key_env"])
 if serpapi_key:
     usage = get_serpapi_usage(serpapi_key)

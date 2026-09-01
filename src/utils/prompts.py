@@ -1,4 +1,4 @@
-"""prompts/*.yaml 로더. 모든 OpenAI system/user prompt는 코드에 하드코딩하지 않고 여기서 읽는다 (2.2절)."""
+"""prompts/*.yaml 로더. 모든 OpenAI system/user prompt는 코드에 하드코딩하지 않고 여기서 읽는다."""
 
 from __future__ import annotations
 

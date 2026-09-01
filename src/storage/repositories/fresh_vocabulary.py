@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-_TTL_HOURS = 48  # ponytail: 고정값. type별 차등 TTL이 필요해지면 그때 컬럼/설정 추가
+_TTL_HOURS = 48  # 고정값. type별 차등 TTL이 필요해지면 그때 컬럼/설정 추가
 
 
 def get_cached(conn: sqlite3.Connection, taxonomy_lv2: str, type_name: str) -> list[str] | None:

@@ -1,4 +1,4 @@
-"""Phase 6 확장: SerpAPI 도메인 번들 상태(SQLite) 검증 — sync/LRU pick/mark_used/enabled 토글."""
+"""SerpAPI 도메인 번들 상태(SQLite) 검증 — sync/LRU pick/mark_used/enabled 토글."""
 
 from src.storage import database
 from src.storage.repositories import domain_bundles as bundles_repo

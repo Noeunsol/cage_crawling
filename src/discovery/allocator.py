@@ -1,4 +1,4 @@
-"""provider별 검색 도메인을 계산한다 (6.1~6.3절).
+"""provider별 검색 도메인을 계산한다.
 
 기본적으로 Tavily는 SerpAPI가 전담하는 도메인도 함께 제외한다 — provider를 도메인 기준으로
 분리한다(2026-08-26 실측: SerpAPI 전담 도메인에서 Tavily가 찾은 accepted 콘텐츠가 0건이라,

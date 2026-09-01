@@ -1,4 +1,4 @@
-# 표준 logging.config.dictConfig 형식 (16.2절: 요청/응답 원문에 API key 등 개인정보를 남기지 않는다).
+# 표준 logging.config.dictConfig 형식.
 version: 1
 disable_existing_loggers: false
 

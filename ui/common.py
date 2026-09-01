@@ -229,7 +229,7 @@ def find_type(configs: dict, lv2_id: str, type_name: str) -> dict | None:
 
 
 def accepted_counts(conn: sqlite3.Connection) -> dict[tuple[str, str], int]:
-    """LV2/type별 이미 DB에 쌓여 있는 accepted 콘텐츠 수 (7.2절: 기존 보유량 표시용)."""
+    """LV2/type별 이미 DB에 쌓여 있는 accepted 콘텐츠 수."""
     rows = conn.execute(
         """
         SELECT m.taxonomy_lv2, m.type_name, COUNT(*) AS cnt
@@ -295,7 +295,7 @@ def init_setup_state(configs: dict) -> None:
 
 
 def effective_date_range(setup: dict, configs: dict, lv2_id: str) -> tuple[date, date]:
-    """우선순위: 사용자가 화면에서 직접 override한 기간 > collection.yaml의 LV2별 확정 기간 > 전역 기본값 (8.1절)."""
+    """우선순위: 사용자가 화면에서 직접 override한 기간 > collection.yaml의 LV2별 확정 기간 > 전역 기본값."""
     manual_override = setup.get("date_overrides", {}).get(lv2_id)
     if manual_override:
         return manual_override["date_from"], manual_override["date_to"]
@@ -306,7 +306,7 @@ def effective_date_range(setup: dict, configs: dict, lv2_id: str) -> tuple[date,
 
 
 def effective_provider_ratio(setup: dict, configs: dict, lv2_id: str) -> dict:
-    """우선순위: 사용자가 화면에서 직접 override한 값 > collection.yaml의 LV2별 확정 비율 > 전역 기본값 (7.6절)."""
+    """우선순위: 사용자가 화면에서 직접 override한 값 > collection.yaml의 LV2별 확정 비율 > 전역 기본값."""
     manual_override = setup.get("provider_ratio_overrides", {}).get(lv2_id)
     if manual_override:
         return manual_override

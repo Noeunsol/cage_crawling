@@ -1,5 +1,5 @@
-# 목표량/후보 배수/스케줄링/도메인 분리 설정 (7절).
-# 이 파일의 숫자는 전부 조정 가능한 기본값이며 Python 코드에 하드코딩하지 않는다 (2.1절).
+# 목표량/후보 배수/스케줄링/도메인 분리 설정.
+# 이 파일의 숫자는 전부 조정 가능한 기본값이며 Python 코드에 하드코딩하지 않는다.
 
 defaults:
   target_count: 50          # LV2별 이번 실행 신규 목표 수집량 (같은 LV2의 type들이 나눠 가짐, 나머지는 올림)
@@ -7,7 +7,7 @@ defaults:
   date_range_years: 1       # 기본 수집 기간(최근 N년)
 
 dates:
-  allow_future_end_date: false  # 미래 종료일 허용 여부 (8.1절, 기본은 차단)
+  allow_future_end_date: false  # 미래 종료일 허용 여부
 
   # LV2별 기본 수집 기간(개월 단위). 여기 없는 LV2는 defaults.date_range_years(연 단위)를 그대로 쓴다.
   # Streamlit "1. 수집 설정" 화면에서 LV2 카드별로 실행 시점에 더 조정할 수도 있다.
@@ -16,7 +16,7 @@ dates:
 
 candidate_multiplier_options: [1.0, 1.5, 2.0, 3.0]
 
-# provider별 자동 candidate_multiplier (7절 확장, 2026-08-31). 기본 UI/실험 경로에서
+# provider별 자동 candidate_multiplier. 기본 UI/실험 경로에서
 # 실제 accepted 전환율로 자동 계산하며, 표본이 부족할 때는 아래 initial 값을 쓴다.
 candidate_multiplier_by_provider:
   tavily:
@@ -24,7 +24,7 @@ candidate_multiplier_by_provider:
   serpapi:
     initial: 1.3
 
-# 검색어에 연도만 조건부로 허용한다 (7절 확장, 2026-08-31). "최근"/"올해"/"지난달" 같은 상대적
+# 검색어에 연도만 조건부로 허용한다. "최근"/"올해"/"지난달" 같은 상대적
 # 표현은 여전히 금지 — src/query/generator.py의 _DATE_EXPRESSION이 계속 걸러낸다.
 # 이 블록은 별도 변형 쿼리("원래 검색어 + 연도")를 추가로 만들지 여부만 결정한다
 # (src/query/year_injection.py). date_out_of_range 비율이 threshold 이상인 (lv2,type,provider)만 대상.
@@ -42,13 +42,13 @@ adaptive_multiplier:
   max_value: 4.0
   survival_rate_floor: 0.25    # 생존율이 이보다 낮아도 배수가 무한정 커지지 않도록 하한을 걺
 
-# 근사중복 탐지 모드 (10.3절 확장, 2026-08-31). shadow: near_duplicate_observations에 유사도만
+# 근사중복 탐지 모드. shadow: near_duplicate_observations에 유사도만
 # 기록하고 discard하지 않음(기본값 — 임계값이 아직 100쌍 라벨링으로 검증 전이라 오탐 위험을
 # 피한다). enforce: 실제로 걸러냄 — 라벨링 끝나고 임계값 확정한 뒤에 전환할 것.
 near_duplicate_detection:
   mode: shadow
 
-# 쿼리/도메인 선택의 탐색 비율 (7절 확장, 2026-08-31). scoring.py가 점수 내림차순으로 우선순위를
+# 쿼리/도메인 선택의 탐색 비율. scoring.py가 점수 내림차순으로 우선순위를
 # 매기는데, 100% 점수만 따르면 한 번 낮은 점수가 붙은 쿼리/도메인은 영영 다시 안 뽑혀서 표본을
 # 못 갱신한다(starvation) — epsilon 확률로 무작위 탐색을 섞어서 막는다.
 query_domain_exploration:
@@ -86,7 +86,7 @@ domain_partition:
   tavily_excludes_serpapi_domains: true
   tavily_excludes_global_blacklist: true
 
-# provider 비율 (7.6절). LV2 성격(뉴스형/커뮤니티형/혼합형)에 따라 사용자가 확정한 표.
+# provider 비율. LV2 성격(뉴스형/커뮤니티형/혼합형)에 따라 사용자가 확정한 표.
 # by_lv2에 없는 LV2는 default(5:5)를 쓴다. Streamlit "1. 수집 설정" 화면에서 실행 시점에 개별 조정도 가능.
 # 이 비율은 "실제 API 호출 수" 기준이다 — scheduler._call_weighted_ratio가 provider별 콜당 결과 수
 # (max_results_per_request: tavily 20 vs serpapi 10)로 보정하므로, 예를 들어 50:50이면 콘텐츠 목표는

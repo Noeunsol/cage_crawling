@@ -1,4 +1,4 @@
-"""블랙리스트 도메인 제외 (11.2절 7번)."""
+"""블랙리스트 도메인 제외."""
 
 from __future__ import annotations
 

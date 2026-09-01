@@ -1,7 +1,7 @@
-"""검색 요청을 언제·얼마나 보낼지 결정하는 스케줄러 (7절).
+"""검색 요청을 언제·얼마나 보낼지 결정하는 스케줄러.
 
 이 모듈은 discovery(검색 API 호출)까지만 담당한다. 찾은 URL을 실제로 가져와 저장하는 일은
-fetcher/filter 단계(Phase 7~9)의 몫이라, 여기서는 후보 URL을 메모리 상에서 모아 돌려준다.
+fetcher/filter 단계의 몫이라, 여기서는 후보 URL을 메모리 상에서 모아 돌려준다.
 UI(session_state)에는 의존하지 않는다 — 날짜/비율은 이미 계산된 값으로 받는다.
 """
 
@@ -83,7 +83,7 @@ def _call_weighted_ratio(conn, ratio: dict, providers_cfg: dict) -> dict:
 
 @dataclass
 class _Lane:
-    """(type, provider) 하나의 진행 상태. round-robin이 도는 최소 단위 (7.5절)."""
+    """(type, provider) 하나의 진행 상태. round-robin이 도는 최소 단위."""
 
     lv2_id: str
     type_name: str
@@ -150,7 +150,7 @@ def _build_lanes(
         serpapi_available = config_has_domains and bundles_repo.has_enabled_bundle(conn, bundle_key)
 
         if use_adaptive_multiplier:
-            # provider별로 실측 생존율 기반 multiplier를 따로 적용한다 (7절 확장, 2026-08-31).
+            # provider별로 실측 생존율 기반 multiplier를 따로 적용한다.
             # candidate_multiplier(단일 float) 인자는 이 모드에서는 쓰지 않는다.
             if serpapi_available:
                 tavily_accepted_share = round(per_type_target_count * ratio["tavily"] / 100)
@@ -179,7 +179,7 @@ def _build_lanes(
                 tavily_target = round(total * ratio["tavily"] / 100)
                 serpapi_target = total - tavily_target
             else:
-                # 6.3절: 도메인이 없거나(config) 번들이 전부 비활성화된 type은 전량 Tavily로 이관한다.
+                # 도메인이 없거나(config) 번들이 전부 비활성화된 type은 전량 Tavily로 이관한다.
                 tavily_target, serpapi_target = total, 0
                 reason = "SerpAPI 허용 도메인이 없어" if not config_has_domains else "모든 도메인 번들이 비활성화돼 있어"
                 warnings.append(f"{lv2_id}::{type_name}: {reason} 목표 {total}건 전량을 Tavily로 진행합니다.")
@@ -217,7 +217,7 @@ def _build_lanes(
                 lv2_id=lv2_id, type_name=type_name, provider=provider, target=provider_target,
                 date_from=date_from, date_to=date_to, search_kwargs=search_kwargs,
                 # 실측 성과가 좋은 쿼리를 먼저 시도하고, 반복적으로 0건/실패만 낸 쿼리는 뒤로
-                # 미룬다(제외는 아님 — 7절 확장, 2026-08-31).
+                # 미룬다.
                 queries=scoring.sort_queries_by_score(conn, active_queries, epsilon=exploration_epsilon),
             ))
 
@@ -263,10 +263,10 @@ def run_scheduler(
     use_adaptive_multiplier: bool = False,
     adaptive_multiplier_snapshot: dict[str, float] | None = None,
 ) -> SchedulerResult:
-    """활성 type이 고르게 검색되도록 round-robin으로 provider를 호출한다 (7.4, 7.5절).
+    """활성 type이 고르게 검색되도록 round-robin으로 provider를 호출한다.
 
     - 새 요청을 시작하기 직전에만 목표 달성 여부를 확인한다. 이미 시작한 요청은 끝까지 처리한다.
-    - 동일 조건(같은 fingerprint)으로 이미 검색한 적이 있으면 API를 다시 부르지 않는다 (10.1절).
+    - 동일 조건(같은 fingerprint)으로 이미 검색한 적이 있으면 API를 다시 부르지 않는다.
     - max_calls_by_provider가 있으면 provider별 실제 API 호출 수(캐시 적중 제외)에 상한을 건다
       (실험용 — target_count 계산과 무관하게 이번 실행만 강제로 줄인다).
     - use_adaptive_multiplier=True면 candidate_multiplier(단일 값) 대신 provider별 실측 생존율

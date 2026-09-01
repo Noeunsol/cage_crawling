@@ -1,8 +1,8 @@
 # AI Safety Risk Taxonomy 원본 데이터 (사용자 제공, 2026-08-24)
 # - lv2_definition/lv2_description: 사용자 표 2 (LV2 그룹 단위 정의/설명)
 # - types[].definition/description: 사용자 표 1 (type 단위 상세 설명), 현재는 두 필드가 동일한 원문
-# - include_criteria/exclude_criteria: 원본 자료에 없어 빈 배열로 시작. Phase 4 Streamlit UI에서 채워야
-#   Phase 8 taxonomy 적합성 필터가 의미 있게 동작한다 (CLAUDE_CRAWLER_IMPLEMENTATION_PLAN.md 11.2 참고).
+# - include_criteria/exclude_criteria: 원본 자료에 없어 빈 배열로 시작. Streamlit UI(검색어 검토 화면)에서
+#   채워야 taxonomy 적합성 LLM 필터가 의미 있게 동작한다.
 # - search_vocabulary/collection_exclude_criteria/harm_positive_exclude_criteria/query_axes(type 단위),
 #   lv2_fallback_vocabulary(lv2 단위): 전부 선택 필드. 없는 type/lv2는 기존 동작(exclude_criteria만 사용,
 #   축 없이 생성 등)으로 폴백한다 (src/query/vocabulary.py). 있을 땐 config/validator.py가 문자열 리스트인지만

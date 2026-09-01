@@ -1,4 +1,4 @@
-# 앱 전역 경로/기본값 (3, 12.1, 13.1절).
+# 앱 전역 경로/기본값.
 database:
   path: database/content.db
 

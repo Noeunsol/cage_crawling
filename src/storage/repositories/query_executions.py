@@ -1,6 +1,6 @@
 """query_executions 테이블: 검색어가 실제로 API에 호출된 기록.
 
-request_fingerprint UNIQUE 제약으로 동일 조건(검색어·provider·기간 등) 재호출을 막는다 (10.1절).
+request_fingerprint UNIQUE 제약으로 동일 조건(검색어·provider·기간 등) 재호출을 막는다.
 """
 
 from __future__ import annotations

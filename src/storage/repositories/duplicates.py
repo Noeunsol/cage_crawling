@@ -1,4 +1,4 @@
-"""content_duplicates 테이블: URL은 다르지만 같은 본문/사건으로 판단된 콘텐츠 (10.3절)."""
+"""content_duplicates 테이블: URL은 다르지만 같은 본문/사건으로 판단된 콘텐츠."""
 
 from __future__ import annotations
 

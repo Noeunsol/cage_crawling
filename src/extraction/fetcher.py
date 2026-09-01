@@ -1,4 +1,4 @@
-"""원문 HTML을 가져온다. 실패 사유를 retry_policy.yaml의 reason code로 분류한다 (9.5, 11.5절)."""
+"""원문 HTML을 가져온다. 실패 사유를 retry_policy.yaml의 reason code로 분류한다."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""GPT-4o-mini로 provider별 검색어를 생성한다 (5.1~5.3절).
+"""GPT-4o-mini로 provider별 검색어를 생성한다.
 
 - Tavily/SerpAPI 요청을 절대 섞지 않는다: provider를 prompt 입력으로 넘기고, 결과도 provider별로 분리해서 돌려준다.
 - 기간 표현("2026년", "최근 1년" 등)과 site: 연산자가 섞인 결과는 여기서 걸러낸다.
@@ -14,11 +14,10 @@ from openai import AsyncOpenAI, OpenAI
 
 from src.utils.prompts import call_structured_output, call_structured_output_async
 
-# 기간을 가리키는 표현 (5.1절: 검색어에 절대 넣지 않는다. 기간 제한은 API 날짜 필터가 담당)
 _DATE_EXPRESSION = re.compile(
     r"\d{4}\s*년|\d{1,2}\s*월|최근\s*\d*\s*(년|개월|달)|올해|작년|재작년|지난\s*(달|주|해|년)|이번\s*(년|해|달)"
 )
-# 도메인 결합(site:)은 discovery 단계 코드가 담당한다 (5.1, 5.3절) — 모델이 만들면 버린다.
+# 도메인 결합(site:)은 discovery 단계 코드가 담당한다 — 모델이 만들면 버린다.
 _SITE_OPERATOR = re.compile(r"site\s*:", re.IGNORECASE)
 
 

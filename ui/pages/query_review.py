@@ -1,4 +1,4 @@
-"""3단계: 검색어 생성 및 검토 (14.3절).
+"""3단계: 검색어 생성 및 검토.
 
 ① 대상 type을 LV2별로 묶어 접이식으로 보여주고 (이미 검색어가 있으면 기본 체크 해제 — 재사용),
    필요한 type만 골라 provider별 개수를 정해 한 번에 생성한다.
@@ -341,7 +341,7 @@ st.divider()
 # ---------------------------------------------------------------- 검색어 0개 type 경고
 st.subheader("검색어 미확보 type")
 if empty_types:
-    st.warning("아래 type은 사용할 검색어가 하나도 없어 이번 실행에서 자동으로 제외됩니다 (5.5절).")
+    st.warning("아래 type은 사용할 검색어가 하나도 없어 이번 실행에서 자동으로 제외됩니다.")
     st.dataframe([{"LV2": lv2, "type": name} for lv2, name in empty_types], hide_index=True, width="stretch")
 else:
     st.success("모든 대상 type에 검색어가 최소 1개 이상 있습니다.")

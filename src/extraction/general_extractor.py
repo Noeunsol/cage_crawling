@@ -1,4 +1,4 @@
-"""범용 본문 추출기 (9.2~9.4절). 사이트 전용 파서가 없는 곳은 전부 이걸로 처리한다.
+"""범용 본문 추출기. 사이트 전용 파서가 없는 곳은 전부 이걸로 처리한다.
 
 HTML 태그·광고·메뉴·네비게이션 제거는 trafilatura가 담당한다 (이미 설치돼 있는 검증된 라이브러리 —
 직접 BeautifulSoup 휴리스틱을 새로 짤 필요가 없다).
@@ -29,7 +29,7 @@ class ExtractionError(Exception):
 class ExtractedContent:
     title: str
     content: str
-    published_date: str | None   # YYYY-MM-DD 또는 None (8.3절: 못 찾으면 저장하지 않는다)
+    published_date: str | None   # YYYY-MM-DD 또는 None
 
 
 def build_or_raise(title: str, content: str, min_content_length: int, published_date: str | None) -> ExtractedContent:
@@ -46,7 +46,7 @@ def build_or_raise(title: str, content: str, min_content_length: int, published_
 def extract(
     html: str, url: str, min_content_length: int, extraction_cfg: dict | None = None,
 ) -> ExtractedContent:
-    """제목이 없거나 본문이 min_content_length보다 짧으면 실패로 처리한다 (9.4, 9.5절).
+    """제목이 없거나 본문이 min_content_length보다 짧으면 실패로 처리한다.
 
     extraction_cfg(configs/extraction.yaml)의 trafilatura 옵션으로 댓글·관련기사 등 본문이
     아닌 부분을 뺄지 조정할 수 있다. 안 넘기면 "본문만" 기본값을 그대로 쓴다.

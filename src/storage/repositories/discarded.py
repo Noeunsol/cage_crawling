@@ -1,4 +1,4 @@
-"""discarded_candidates 테이블: 제외/실패 후보. 본문은 저장하지 않는다 (11.4절)."""
+"""discarded_candidates 테이블: 제외/실패 후보. 본문은 저장하지 않는다."""
 
 from __future__ import annotations
 

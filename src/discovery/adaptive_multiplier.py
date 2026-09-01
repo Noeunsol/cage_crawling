@@ -1,4 +1,4 @@
-"""provider별 실측 생존율 기반 candidate_multiplier (7절 확장, 2026-08-31).
+"""provider별 실측 생존율 기반 candidate_multiplier.
 
 tavily/serpapi는 필터 통과율이 구조적으로 다르다(예: tavily는 topic=general일 때 date_out_of_range로
 많이 걸러짐). 하나의 candidate_multiplier를 두 provider에 똑같이 적용하면 생존율 낮은 쪽은

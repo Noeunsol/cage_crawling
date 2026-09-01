@@ -1,4 +1,4 @@
-"""Phase 3 완료 조건 검증: provider가 안 섞이고, 기간 표현/site: 연산자는 모델이 만들어도 걸러진다."""
+"""검색어 생성: provider가 안 섞이고, 기간 표현/site: 연산자는 모델이 만들어도 걸러진다."""
 
 import asyncio
 import json
@@ -145,7 +145,7 @@ def test_tavily_and_serpapi_queries_are_saved_separately(tmp_path):
         conn, taxonomy_lv2="1_C_Self_Harm", type_name="suicide", provider="serpapi"
     )
 
-    # 같은 텍스트라도 provider가 다르면 서로 다른 행으로 저장된다 (5.4절: provider별 완전 분리).
+    # 같은 텍스트라도 provider가 다르면 서로 다른 행으로 저장된다.
     assert len(tavily_rows) == 1
     assert len(serpapi_rows) == 1
     assert tavily_rows[0]["id"] != serpapi_rows[0]["id"]

@@ -1,4 +1,4 @@
-"""이전 run에서 retryable=1로 discard된 후보를 새 검색 없이 다시 fetch 큐에 올린다 (7절 확장, 2026-08-31).
+"""이전 run에서 retryable=1로 discard된 후보를 새 검색 없이 다시 fetch 큐에 올린다.
 
 discarded_candidates.retryable는 이미 retry_policy.yaml 기준으로 정확히 채워지고 있었지만, 실제로
 재시도하는 코드가 없었다(discarded_repo.list_retryable()이 테스트에서만 호출되는 죽은 함수였다).

@@ -1,6 +1,6 @@
 """configs/*.yaml 을 읽어 하나의 딕셔너리로 모아주는 로더.
 
-설계 원칙 (CLAUDE_CRAWLER_IMPLEMENTATION_PLAN.md 2.1절):
+설계 원칙:
   - 기본값/타임아웃/경로/비율 등 바뀔 수 있는 값은 전부 YAML에만 있고 코드에는 없다.
   - API key/비밀값은 YAML에 두지 않고 환경변수 이름만 참조한다 (.env는 dotenv로 읽는다).
 """
@@ -31,7 +31,7 @@ REQUIRED_CONFIG_FILES = [
 
 
 def load_yaml(path: Path) -> dict:
-    """YAML 파일 하나를 읽어 dict로 반환한다. 빈 파일은 빈 dict로 취급한다."""
+    """빈 파일은 빈 dict로 취급한다."""
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 

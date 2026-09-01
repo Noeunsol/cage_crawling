@@ -1,4 +1,4 @@
-"""사이트별 전용 파서·source_category를 등록할 수 있는 레지스트리 (9.3절).
+"""사이트별 전용 파서·source_category를 등록할 수 있는 레지스트리.
 
 v1은 general_extractor만 쓴다. pilot 결과 특정 도메인의 실패율·노이즈가 높다고 확인되면
 그때 그 도메인 전용 파서를 register()로 추가한다 — 미리 만들어두지 않는다 (YAGNI).

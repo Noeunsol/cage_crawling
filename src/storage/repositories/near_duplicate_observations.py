@@ -1,4 +1,4 @@
-"""near_duplicate_observations 테이블: 근사중복 shadow mode 관측 기록 (10.3절 확장)."""
+"""near_duplicate_observations 테이블: 근사중복 shadow mode 관측 기록."""
 
 from __future__ import annotations
 

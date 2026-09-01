@@ -78,7 +78,7 @@ def add_manual_query(
 
 
 def edit_query(conn: sqlite3.Connection, original_query_id: int, new_text: str) -> int:
-    """원본은 rejected로 남기고(이력 보존, 5.4절), 수정본을 새 행으로 만든다."""
+    """원본은 rejected로 남기고, 수정본을 새 행으로 만든다."""
     original = queries_repo.get_query(conn, original_query_id)
     new_id = queries_repo.create_query(
         conn, taxonomy_lv2=original["taxonomy_lv2"], type_name=original["type_name"],

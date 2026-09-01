@@ -1,4 +1,4 @@
-"""Tavily discovery provider (5.2절): 자연어 검색어로 뉴스·사례·커뮤니티 글을 폭넓게 찾는다."""
+"""Tavily discovery provider: 자연어 검색어로 뉴스·사례·커뮤니티 글을 폭넓게 찾는다."""
 
 from __future__ import annotations
 

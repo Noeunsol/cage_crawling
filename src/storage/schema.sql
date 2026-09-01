@@ -1,4 +1,4 @@
--- SQLite 스키마 (12.2절). 타임스탬프는 SQLite의 strftime으로 기본값을 채워
+-- SQLite 스키마. 타임스탬프는 SQLite의 strftime으로 기본값을 채워
 -- Python 쪽에서 매번 datetime을 넘길 필요가 없게 했다.
 -- CREATE TABLE/INDEX 모두 IF NOT EXISTS라 여러 번 실행해도 안전하다 (idempotent).
 
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS collection_runs (
     warning_summary        TEXT             -- JSON: 도메인 누락, 목표 초과 등 경고 목록
 );
 
--- 최종 저장되는 콘텐츠. accepted/excluded/failed 상태를 모두 포함한다 (11.3절).
+-- 최종 저장되는 콘텐츠. accepted/excluded/failed 상태를 모두 포함한다.
 CREATE TABLE IF NOT EXISTS contents (
     id                  INTEGER PRIMARY KEY,
     title               TEXT NOT NULL,
@@ -32,13 +32,13 @@ CREATE TABLE IF NOT EXISTS contents (
     collected_at        TEXT,
     content_hash        TEXT NOT NULL,
     title_normalized    TEXT,               -- 근사 중복 탐지용: 태그/언론사명/반복특수문자 제거한 제목
-    content_fingerprint TEXT                -- 근사 중복 탐지용: 본문 고유 단어 집합(공백 구분 문자열) — 10.3절 확장
+    content_fingerprint TEXT                -- 근사 중복 탐지용: 본문 고유 단어 집합(공백 구분 문자열)
 );
 CREATE INDEX IF NOT EXISTS idx_contents_status ON contents(status);
 CREATE INDEX IF NOT EXISTS idx_contents_content_hash ON contents(content_hash);
 CREATE INDEX IF NOT EXISTS idx_contents_source_domain ON contents(source_domain);
 
--- 하나의 콘텐츠가 여러 LV2/type과 연결될 수 있다 (12.1절).
+-- 하나의 콘텐츠가 여러 LV2/type과 연결될 수 있다.
 CREATE TABLE IF NOT EXISTS content_taxonomy_mappings (
     id              INTEGER PRIMARY KEY,
     content_id      INTEGER NOT NULL REFERENCES contents(id),
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS content_taxonomy_mappings (
 CREATE INDEX IF NOT EXISTS idx_taxonomy_mappings_lv2_type
     ON content_taxonomy_mappings(taxonomy_lv2, type_name);
 
--- OpenAI가 만들거나 사용자가 추가/수정한 검색어 (5.4절: provider별로 완전히 분리된 이력).
+-- OpenAI가 만들거나 사용자가 추가/수정한 검색어 (provider별로 완전히 분리된 이력).
 CREATE TABLE IF NOT EXISTS search_queries (
     id              INTEGER PRIMARY KEY,
     taxonomy_lv2    TEXT NOT NULL,
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS search_queries (
 CREATE INDEX IF NOT EXISTS idx_search_queries_lookup
     ON search_queries(taxonomy_lv2, type_name, provider, status);
 
--- 검색어가 실제로 API에 호출된 기록. request_fingerprint로 동일 조건 재실행을 막는다 (10.1절).
+-- 검색어가 실제로 API에 호출된 기록. request_fingerprint로 동일 조건 재실행을 막는다.
 CREATE TABLE IF NOT EXISTS query_executions (
     id                  INTEGER PRIMARY KEY,
     run_id              TEXT NOT NULL REFERENCES collection_runs(run_id),
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_query_executions_run ON query_executions(run_id);
 -- idx_query_executions_run을 못 써서 이게 없으면 전체 스캔이 된다.
 CREATE INDEX IF NOT EXISTS idx_query_executions_query ON query_executions(query_id);
 
--- 검색어 생성(OpenAI) 호출 1건당 1행. DB 전체 OpenAI 비용 집계용 (14.3절 검색어 생성 화면).
+-- 검색어 생성(OpenAI) 호출 1건당 1행. DB 전체 OpenAI 비용 집계용(검색어 생성 화면).
 CREATE TABLE IF NOT EXISTS query_generation_calls (
     id                 INTEGER PRIMARY KEY,
     run_id             TEXT REFERENCES collection_runs(run_id),
@@ -135,7 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_content_discoveries_run_query
 -- run_id가 선행 컬럼이라 run_id 없이 query_id만 필터링할 땐 못 쓴다.
 CREATE INDEX IF NOT EXISTS idx_content_discoveries_query ON content_discoveries(query_id);
 
--- 저장하지 않기로 한(제외/실패) 후보. 본문은 담지 않는다 (11.4절).
+-- 저장하지 않기로 한(제외/실패) 후보. 본문은 담지 않는다.
 CREATE TABLE IF NOT EXISTS discarded_candidates (
     id                 INTEGER PRIMARY KEY,
     original_url       TEXT NOT NULL,
@@ -156,19 +156,19 @@ CREATE INDEX IF NOT EXISTS idx_discarded_run ON discarded_candidates(run_id);
 CREATE INDEX IF NOT EXISTS idx_discarded_query ON discarded_candidates(query_id);
 CREATE INDEX IF NOT EXISTS idx_discarded_source_domain ON discarded_candidates(source_domain);
 
--- URL은 다르지만 같은 본문/사건으로 판단된 콘텐츠 (10.3절).
+-- URL은 다르지만 같은 본문/사건으로 판단된 콘텐츠.
 CREATE TABLE IF NOT EXISTS content_duplicates (
     id                       INTEGER PRIMARY KEY,
     representative_content_id INTEGER NOT NULL REFERENCES contents(id),
     duplicate_content_id     INTEGER REFERENCES contents(id),
     duplicate_url            TEXT,
     duplicate_reason         TEXT NOT NULL,  -- same_url / same_content_hash / same_event / near_duplicate
-    title_similarity         REAL,           -- near_duplicate일 때만 채움 (10.3절 확장)
+    title_similarity         REAL,           -- near_duplicate일 때만 채움
     content_similarity       REAL,           -- near_duplicate일 때만 채움
     detected_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
--- 근사중복 shadow mode 관측 기록 (10.3절 확장, 2026-08-31). 임계값이 아직 검증 전이라 이걸로
+-- 근사중복 shadow mode 관측 기록 (2026-08-31). 임계값이 아직 검증 전이라 이걸로
 -- 걸러내지(discard) 않고, 판단 근거(유사도 점수)만 쌓아서 나중에 사람이 라벨링해 임계값을
 -- 확정하는 데 쓴다. would_exclude는 "지금 enforce 임계값이었다면 걸렀을지" 참고용.
 CREATE TABLE IF NOT EXISTS near_duplicate_observations (
@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS near_duplicate_observations (
     title_similarity    REAL NOT NULL,
     content_similarity  REAL NOT NULL,
     would_exclude       INTEGER NOT NULL,
-    human_label         TEXT,    -- duplicate / not_duplicate — 라벨링 전엔 NULL (11.4절 eval_labels와 같은 패턴)
+    human_label         TEXT,    -- duplicate / not_duplicate — 라벨링 전엔 NULL (eval_labels와 같은 패턴)
     observed_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS idx_near_dup_obs_unlabeled ON near_duplicate_observations(human_label);
@@ -196,7 +196,6 @@ CREATE TABLE IF NOT EXISTS serpapi_domain_bundles (
 );
 CREATE INDEX IF NOT EXISTS idx_domain_bundles_type ON serpapi_domain_bundles(type_name);
 
--- 정량 평가 실험용: accepted 콘텐츠에 대한 사람 라벨(Taxonomy 정밀도 산출용).
 -- 정량 평가 실험용: accepted 콘텐츠의 OpenAI 품질 점수 (제외/재판정에는 쓰지 않는다 — 성능 수치화 전용).
 CREATE TABLE IF NOT EXISTS content_quality_scores (
     run_id              TEXT NOT NULL REFERENCES collection_runs(run_id),
@@ -218,6 +217,7 @@ CREATE TABLE IF NOT EXISTS content_quality_scores (
     PRIMARY KEY (run_id, content_id, taxonomy_lv2, type_name)
 );
 
+-- 정량 평가 실험용: accepted 콘텐츠에 대한 사람 라벨(Taxonomy 정밀도 산출용).
 CREATE TABLE IF NOT EXISTS eval_labels (
     run_id       TEXT NOT NULL REFERENCES collection_runs(run_id),
     content_id   INTEGER NOT NULL REFERENCES contents(id),

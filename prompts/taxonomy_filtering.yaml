@@ -1,4 +1,4 @@
-# taxonomy 적합성 판단 프롬프트 (11.2절 8, 9, 10, 11번 조건을 한 번에 판단한다).
+# taxonomy 적합성 판단 프롬프트.
 # include_criteria/exclude_criteria가 비어 있는 type도 있으므로, 그럴 땐 definition만으로 판단한다.
 name: taxonomy_filtering
 version: 1

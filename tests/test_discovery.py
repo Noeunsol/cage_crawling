@@ -1,4 +1,4 @@
-"""Phase 5 완료 조건 검증: provider별 역할과 도메인 분리가 코드로 강제되는지 (mock, 실제 API 호출 없음)."""
+"""Discovery: provider별 역할과 도메인 분리가 코드로 강제되는지 (mock, 실제 API 호출 없음)."""
 
 from datetime import date
 

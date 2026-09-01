@@ -1,8 +1,4 @@
-"""configs/*.yaml 내용을 검증해서, 잘못되거나 빠진 설정을 사람이 읽을 수 있는 에러로 알려준다.
-
-Phase 1 완료 조건(문서 18절 Phase 1):
-  "모든 기본값이 YAML에서 로드됨" / "누락·잘못된 설정을 이해 가능한 오류로 제공"
-"""
+"""configs/*.yaml 내용을 검증해서, 잘못되거나 빠진 설정을 사람이 읽을 수 있는 에러로 알려준다."""
 
 from __future__ import annotations
 
@@ -187,8 +183,7 @@ def _validate_retry_policy(cfg: dict, issues: list[str]) -> None:
 def check_provider_api_keys(providers_cfg: dict) -> list[str]:
     """provider별 API key 환경변수가 실제로 설정돼 있는지 확인한다.
 
-    반환값은 "키가 없는 provider" 설명 목록 (16.1절: "key 누락은 실행 전 검사에서
-    provider별로 명확히 표시"). Streamlit preflight 화면에서 그대로 보여주면 된다.
+    반환값은 "키가 없는 provider" 설명 목록. Streamlit preflight 화면에서 그대로 보여주면 된다.
     """
     missing = []
     for provider in ("openai", "tavily", "serpapi"):

@@ -1,4 +1,4 @@
-"""Phase 6 완료 조건 검증: round-robin, 목표 달성 시 중단, provider 비율 분배, fingerprint 재사용."""
+"""스케줄러: round-robin, 목표 달성 시 중단, provider 비율 분배, fingerprint 재사용."""
 
 from datetime import date
 

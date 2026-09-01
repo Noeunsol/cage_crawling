@@ -1,6 +1,6 @@
 """검색으로 찾은 URL 하나를 실제로 가져와 저장할지 결정하는 파이프라인.
 
-Phase 7(fetch/extract)~9(export 대상 데이터)를 하나의 흐름으로 묶는다:
+fetch/extract부터 저장까지 하나의 흐름으로 묶는다:
 URL 중복 체크 → fetch → extract → 본문 중복 체크 → 제외 필터 → 저장.
 
 fetch~extract(네트워크 I/O + 순수 파싱, DB 접근 없음)만 asyncio.to_thread로 동시 실행한다
@@ -386,7 +386,7 @@ def run_collection(
 ) -> RunSummary:
     """검색(scheduler) → 후보별 처리(fetch~extract는 동시, 나머지는 순차) 순서로 실행한다.
 
-    검색 단계가 먼저 전부 끝난 뒤 추출·필터링 단계가 진행된다 (두 단계로 분리 — 7.4절).
+    검색 단계가 먼저 전부 끝난 뒤 추출·필터링 단계가 진행된다.
     on_progress를 넘기면 후보를 하나 마무리할 때마다 즉시 호출된다 (Streamlit 진행률 표시용).
     max_calls_by_provider는 이번 실행만의 provider별 실제 API 호출 상한이다 (실험용).
     """
@@ -414,8 +414,7 @@ def run_collection(
     # (2026-08-31 성능 개선: 예전엔 candidate마다 전체 지문 테이블을 다시 읽고 다시 파싱했다).
     fingerprint_cache = duplicates.load_fingerprint_cache(conn)
 
-    # 이전 run에서 retryable=1로 discard된 후보를 새 검색 없이 다시 큐에 올린다 (7절 확장,
-    # 2026-08-31). max_attempts를 넘겼거나 이미 저장된 건 find_retryable_candidates가 알아서 뺀다.
+    # 이전 run에서 retryable=1로 discard된 후보를 새 검색 없이 다시 큐에 올린다. max_attempts를 넘겼거나 이미 저장된 건 find_retryable_candidates가 알아서 뺀다.
     retry_candidates = find_retryable_candidates(conn, configs, targets)
     if retry_candidates:
         scheduler_result.warnings.append(f"이전 실패 중 재시도 대상 {len(retry_candidates)}건을 다시 큐에 올렸습니다.")

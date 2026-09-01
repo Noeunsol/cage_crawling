@@ -1,4 +1,4 @@
-"""search_queries 테이블: provider별로 분리된 검색어와 그 상태 이력 (5.4절)."""
+"""search_queries 테이블: provider별로 분리된 검색어와 그 상태 이력."""
 
 from __future__ import annotations
 

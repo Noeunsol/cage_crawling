@@ -1,6 +1,6 @@
-"""URL 정규화 (10.2절): 추적 파라미터·fragment 제거, query parameter 정렬.
+"""URL 정규화: 추적 파라미터·fragment 제거, query parameter 정렬.
 
-모바일/데스크톱 URL 통합처럼 사이트마다 다른 규칙은 여기서 다루지 않는다 (사이트별 TBD, 9.3절과 같은 원칙).
+모바일/데스크톱 URL 통합처럼 사이트마다 다른 규칙은 여기서 다루지 않는다.
 """
 
 from __future__ import annotations

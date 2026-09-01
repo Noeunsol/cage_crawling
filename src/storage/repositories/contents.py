@@ -26,10 +26,8 @@ def upsert_content(
     title_normalized: str | None = None,
     content_fingerprint: str | None = None,
 ) -> tuple[int, bool]:
-    """canonical_url이 이미 있으면 본문은 다시 쓰지 않고 last_discovered_at만 갱신한다.
-
-    (10.2절: "중복 URL은 본문을 다시 저장하지 않는다"). 반환값은 (content_id, created 여부).
-    title_normalized/content_fingerprint는 근사 중복 탐지용(10.3절 확장) — 없으면 NULL로 저장된다.
+    """canonical_url이 이미 있으면 본문은 다시 쓰지 않고 last_discovered_at만 갱신한다. 반환값은 (content_id, created 여부).
+    title_normalized/content_fingerprint는 근사 중복 탐지용 — 없으면 NULL로 저장된다.
     """
     existing = get_by_canonical_url(conn, canonical_url)
     if existing is not None:

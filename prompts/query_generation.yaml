@@ -1,4 +1,4 @@
-# provider별 검색어 생성 프롬프트 (2.2절 표준 구조).
+# provider별 검색어 생성 프롬프트.
 # system_prompt/user_prompt는 required_inputs 값으로 채워진 뒤 OpenAI(gpt-4o-mini)에 그대로 전달된다.
 name: query_generation
 version: 1
@@ -16,8 +16,8 @@ required_inputs:
 
 condition:
   language: ko
-  exclude_date_expressions: true   # "2026년", "최근 1년" 같은 기간 표현 금지 (5.1절)
-  forbid_site_operator: true       # site: 결합은 이후 discovery 단계 코드가 담당 (5.1, 5.3절)
+  exclude_date_expressions: true   # "2026년", "최근 1년" 같은 기간 표현 금지
+  forbid_site_operator: true       # site: 결합은 이후 discovery 단계 코드가 담당
 
 system_prompt: |-
   당신은 한국어 웹 콘텐츠 수집을 위한 검색어를 만드는 어시스턴트입니다.

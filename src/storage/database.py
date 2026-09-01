@@ -1,6 +1,6 @@
 """SQLite 연결과 스키마 초기화.
 
-기존 DB 파일이 있으면 절대 지우지 않는다 (12.1절: "기존 콘텐츠를 실행마다 삭제하지 않는다").
+기존 DB 파일이 있으면 절대 지우지 않는다.
 schema.sql은 전부 CREATE ... IF NOT EXISTS라서 몇 번을 불러도 데이터가 유지된다.
 """
 
@@ -45,8 +45,7 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
 def connect(db_path: Path) -> sqlite3.Connection:
     """DB에 연결하고 스키마를 보장한 뒤 Connection을 반환한다.
 
-    row_factory=sqlite3.Row로 컬럼명으로 접근 가능하게 하고, FK 제약을 켠다
-    (12.3절: "foreign key 활성화").
+    row_factory=sqlite3.Row로 컬럼명으로 접근 가능하게 하고, FK 제약을 켠다.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     # check_same_thread=False: 이 커넥션을 만든 스레드가 아닌 곳에서 써도 되게 한다

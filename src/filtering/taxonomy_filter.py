@@ -1,4 +1,4 @@
-"""taxonomy 적합성 + 광고/위키/일반정의 제외 필터 (11.2절 8, 9, 10, 11번을 한 번에 판단)."""
+"""taxonomy 적합성 + 광고/위키/일반정의 제외 필터."""
 
 from __future__ import annotations
 

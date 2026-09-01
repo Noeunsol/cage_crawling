@@ -1,4 +1,4 @@
-"""2단계: 도메인 설정 (14.2절) — type별 SerpAPI 허용 도메인 + 공통 블랙리스트."""
+"""2단계: 도메인 설정 — type별 SerpAPI 허용 도메인 + 공통 블랙리스트."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ missing = [
 if missing:
     st.warning(
         "아래 type은 SerpAPI 허용 도메인이 없어 SerpAPI 검색을 건너뛰고, "
-        "해당 몫까지 전부 Tavily로 이관해 진행됩니다 (6.3절). 실행 전에 확인해주세요."
+        "해당 몫까지 전부 Tavily로 이관해 진행됩니다. 실행 전에 확인해주세요."
     )
     st.dataframe(
         [{"LV2": lv2, "type": name} for lv2, name in missing],

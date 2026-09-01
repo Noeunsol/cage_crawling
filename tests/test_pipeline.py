@@ -1,4 +1,4 @@
-"""Phase 10 완료 조건 검증: 검색→추출→필터→저장 전체 흐름과 preflight 요약이 올바르게 동작한다."""
+"""파이프라인: 검색→추출→필터→저장 전체 흐름과 preflight 요약이 올바르게 동작한다."""
 
 import json
 from datetime import date
@@ -149,7 +149,7 @@ def test_process_candidate_excludes_blacklisted_domain(tmp_path, monkeypatch):
     assert outcome.status == "excluded"
     assert outcome.reason == "blacklisted_domain"
     row = conn.execute("SELECT * FROM contents").fetchone()
-    assert row["status"] == "excluded"   # 본문은 그대로 저장된다 (11.3절)
+    assert row["status"] == "excluded"   # 본문은 그대로 저장된다
 
 
 def test_process_candidate_skips_fetch_entirely_for_blacklisted_domain(tmp_path, monkeypatch):

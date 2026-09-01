@@ -1,4 +1,4 @@
-"""Phase 8 완료 조건 검증: 제거 조건 미해당 콘텐츠만 accepted가 되고, 싼 필터가 먼저 돈다."""
+"""필터링: 제거 조건 미해당 콘텐츠만 accepted가 되고, 싼 필터가 먼저 돈다."""
 
 import json
 from datetime import date

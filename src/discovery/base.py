@@ -1,6 +1,6 @@
-"""discovery provider(Tavily/SerpAPI) 공통 결과 모델과 재요청 방지용 fingerprint (9.1, 10.1절).
+"""discovery provider(Tavily/SerpAPI) 공통 결과 모델과 재요청 방지용 fingerprint.
 
-검색 API는 URL을 찾는 용도일 뿐이다 (9.1절: "검색 결과 snippet을 최종 content로 저장하지 않는다").
+검색 API는 URL을 찾는 용도일 뿐이다.
 그래서 DiscoveredResult에는 url/rank/relevance_score만 있고 본문·snippet 필드는 없다.
 """
 
@@ -29,7 +29,7 @@ class DiscoveryResponse:
 def build_fingerprint(
     provider: str, query_text: str, date_from: date, date_to: date, extra: dict | None = None
 ) -> str:
-    """동일 provider·검색어·기간(·추가 조건)의 재요청을 막기 위한 지문 (10.1절).
+    """동일 provider·검색어·기간(·추가 조건)의 재요청을 막기 위한 지문.
 
     query_executions.request_fingerprint에 UNIQUE 제약이 걸려 있어, 이 값이 같으면
     storage 계층에서 자동으로 재호출을 막는다 (src/storage/repositories/query_executions.py).

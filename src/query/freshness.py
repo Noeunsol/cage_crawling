@@ -21,7 +21,7 @@ from src.utils.prompts import render_prompt
 # $10/1000으로 4.1-mini의 $25/1000보다 낮아 reasoning 토큰 비용을 상쇄함) 실제 커뮤니티 은어를
 # 훨씬 잘 찾아냈다 — 4.1-mini는 사전적 동의어 반복에 그쳤다. 속도는 3배가량 느리지만 type당
 # 48시간에 1번만 호출되므로 지장 없다.
-_MODEL = "gpt-5.6-luna"  # ponytail: 지원 모델이 바뀌면 여기만 갱신
+_MODEL = "gpt-5.6-luna"  # 지원 모델이 바뀌면 여기만 갱신
 
 # gpt-5.6-luna는 가끔 출력 표현에 웹 인용 각주를 붙인다 (예: "사이버렉카 ([a.com](url))") — 검색어로
 # 못 쓰므로 제거한다.

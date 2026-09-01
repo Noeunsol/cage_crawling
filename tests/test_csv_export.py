@@ -1,4 +1,4 @@
-"""Phase 9 완료 조건 검증: data/final/[LV2]/[type].csv가 정확히 생성되고, URL/콘텐츠 중복이 없다."""
+"""CSV export: data/final/[LV2]/[type].csv가 정확히 생성되고, URL/콘텐츠 중복이 없다."""
 
 import csv
 

@@ -1,4 +1,4 @@
-"""4단계: 사전 검사 → 실행 → 결과 (14.4~14.6절). 실제 API를 호출하는 유일한 화면이다."""
+"""4단계: 사전 검사 → 실행 → 결과. 실제 API를 호출하는 유일한 화면이다."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from ui.common import (
 
 
 def _korea_relevance_note(decision_reason: str | None) -> str:
-    """decision_reason 문자열에서 '한국 관련성: ...' 부분만 뽑아 보여준다."""
     if not decision_reason or "한국 관련성:" not in decision_reason:
         return ""
     return decision_reason.split("한국 관련성:", 1)[1].strip()
@@ -46,7 +45,7 @@ def _format_started_at(started_at: str) -> str:
 def _auto_export_accepted(conn, configs: dict, run_id: str) -> None:
     """이 run에서 새로 accepted된 콘텐츠를 CSV에 자동 반영한다 (기존 CSV 유지, 중복 없이 누적).
 
-    export_run() 자체가 멱등이라(13.2절, csv_exporter.py) 실행 완료 시점에 매번 불러도 안전하다.
+    export_run() 자체가 멱등이라 실행 완료 시점에 매번 불러도 안전하다.
     실패해도 실행 결과 자체는 이미 DB에 저장돼 있으니, 여기 오류는 경고만 남기고 삼킨다 — 사용자는
     결과 화면의 "이 run을 CSV에 추가" 버튼으로 언제든 다시 시도할 수 있다.
     """
@@ -224,7 +223,7 @@ st.dataframe(
     ],
     hide_index=True, width="stretch",
 )
-st.caption(f"최악의 경우 이번 실행에서 최대 {report.max_requests_estimate}건의 검색 요청이 발생할 수 있습니다 (7.7절).")
+st.caption(f"최악의 경우 이번 실행에서 최대 {report.max_requests_estimate}건의 검색 요청이 발생할 수 있습니다.")
 
 for w in report.domain_missing_warnings + report.no_query_warnings:
     st.warning(w)

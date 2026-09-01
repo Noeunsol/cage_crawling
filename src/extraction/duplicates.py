@@ -1,4 +1,4 @@
-"""URL/본문 중복 체크 (10.2, 10.3절). 실제로 저장할지 말지는 호출부(파이프라인, Phase 9~10)가 정한다."""
+"""URL/본문 중복 체크. 실제로 저장할지 말지는 호출부(파이프라인)가 정한다."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ def load_fingerprint_cache(conn: sqlite3.Connection) -> list[dict]:
 def check_near_duplicate(
     fingerprint_cache: list[dict], normalized_title: str, fingerprint: frozenset[str]
 ) -> NearDuplicateCheck:
-    """제목 유사도 + 본문 단어 집합 Jaccard로 재게시·경미 수정 재업로드를 잡는다 (10.3절 확장).
+    """제목 유사도 + 본문 단어 집합 Jaccard로 재게시·경미 수정 재업로드를 잡는다.
 
     check_url_duplicate/check_content_duplicate(완전일치)를 통과한 뒤에만 부른다. 정규화 제목이
     완전히 같으면 그 자체로 중복으로 본다(=title_similarity 1.0). fingerprint_cache는

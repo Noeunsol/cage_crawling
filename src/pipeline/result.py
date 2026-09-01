@@ -1,4 +1,4 @@
-"""한 번의 수집 실행 결과를 담는 자료구조 (14.6절 결과 화면이 그대로 보여줄 값들)."""
+"""한 번의 수집 실행 결과를 담는 자료구조."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class ProcessOutcome:
 
 @dataclass
 class ProgressEvent:
-    """후보 하나를 처리할 때마다 UI에 보고하는 진행 상황 (14.5절)."""
+    """후보 하나를 처리할 때마다 UI에 보고하는 진행 상황."""
 
     lv2_id: str
     type_name: str
