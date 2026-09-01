@@ -1,4 +1,4 @@
-"""experiment_runs.jsonl에 기록된 run들을 모아 정량 평가 표(LV2별 12개 지표)를 만든다.
+"""test_experiment_runs.jsonl에 기록된 run들을 모아 정량 평가 표를 만든다.
 
 python -m experiments.build_report
 -> experiments/report.md, experiments/report.csv, experiments/report_failure_reasons.csv 생성.
@@ -16,27 +16,51 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.loader import PROJECT_ROOT, load_all_configs
+from experiments.common import EXPERIMENT_DB_PATH, EXPERIMENT_LOG_PATH
+from src.config.loader import load_all_configs
 from src.storage.database import connect
 from src.storage.repositories import runs as runs_repo
 
-LOG_PATH = Path(__file__).with_name("experiment_runs.jsonl")
+LOG_PATH = EXPERIMENT_LOG_PATH
 HUMAN_BASELINE_PATH = Path(__file__).with_name("human_baseline.csv")
 REPORT_MD_PATH = Path(__file__).with_name("report.md")
 REPORT_CSV_PATH = Path(__file__).with_name("report.csv")
 FAILURE_CSV_PATH = Path(__file__).with_name("report_failure_reasons.csv")
 
 COLUMNS = [
-    "LV2", "목표수집량", "배수", "accepted량", "목표달성률", "수집실패량", "검색후보량",
-    "tavily API 사용수", "serpapi API 사용수", "콘텐츠퀄리티(평균/5)", "Taxonomy정밀도(라벨수)",
-    "사용된openai비용(USD)", "수집소요시간(초)",
+    "LV2", "목표수집량", "배수", "accepted량", "목표달성률", "최종채택률", "수집실패량", "검색후보량",
+    "tavily API 사용수", "serpapi API 사용수", "tavily후보기여율", "serpapi후보기여율",
+    "tavily accepted기여율", "serpapi accepted기여율", "본문추출성공률", "중복률",
+    "콘텐츠퀄리티(평균/5)", "고품질비율(4점이상)", "Taxonomy정밀도(라벨수)",
+    "수집openai비용(USD)", "품질채점openai비용(USD)", "accepted당비용(USD)",
+    "수집소요시간(초)", "accepted당소요시간(초)",
+    "고유도메인수", "최다도메인비율",
 ]
+
+# 성능(수집량)/비용/시간만 뽑은 요약표 — 나머지 상세 컬럼은 COLUMNS 전체 리포트에서 확인한다.
+FOCUS_COLUMNS = [
+    "LV2", "목표수집량", "accepted량", "목표달성률",
+    "tavily API 사용수", "serpapi API 사용수", "수집openai비용(USD)", "품질채점openai비용(USD)",
+    "수집소요시간(초)",
+]
+
+# discarded_candidates.reason 중 "본문을 실제로 fetch/extract 시도한 뒤" 결정되는 사유만.
+# blacklisted_domain/duplicate(URL 완전일치)/timeout/access_denied/not_found/temporary_http_error는
+# fetch 이전(또는 fetch 실패)에 걸러지므로 "추출 시도" 분모에서 제외한다 (retry_policy.yaml 참고).
+_POST_EXTRACTION_REASONS = {
+    "extraction_empty", "extraction_too_short", "date_out_of_range",
+    "low_korea_relevance", "taxonomy_mismatch", "same_content_hash", "near_duplicate", "unexpected_error",
+}
+_EXTRACTION_FAILURE_REASONS = {"extraction_empty", "extraction_too_short"}
+_DUPLICATE_REASONS = {"duplicate", "near_duplicate", "same_content_hash"}
 
 
 def _latest_run_per_lv2() -> list[tuple[str, str, int]]:
     latest: dict[str, tuple[str, int]] = {}
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
+        if row.get("status", "completed") != "completed":
+            continue
         latest[row["lv2_id"]] = (row["run_id"], row["target_count"])
     return [(lv2, run_id, tc) for lv2, (run_id, tc) in latest.items()]
 
@@ -49,6 +73,14 @@ def _openai_cost_usd(configs: dict, prompt_tokens: int, completion_tokens: int) 
     openai_cfg = configs["providers"]["openai"]
     return (
         prompt_tokens * openai_cfg["input_price_per_1m_usd"] + completion_tokens * openai_cfg["output_price_per_1m_usd"]
+    ) / 1_000_000
+
+
+def _query_generation_cost_usd(configs: dict, prompt_tokens: int, completion_tokens: int) -> float:
+    cfg = configs["providers"]["openai"]
+    return (
+        prompt_tokens * cfg["query_generation_input_price_per_1m_usd"]
+        + completion_tokens * cfg["query_generation_output_price_per_1m_usd"]
     ) / 1_000_000
 
 
@@ -65,9 +97,13 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     ).fetchone()["c"]
     accepted_count = conn.execute(
         """
-        SELECT COUNT(DISTINCT c.id) n FROM content_discoveries d
-        JOIN contents c ON c.id = d.content_id
-        WHERE d.run_id = ? AND c.status = 'accepted'
+        SELECT COUNT(DISTINCT d.content_id) n
+        FROM content_discoveries d
+        JOIN search_queries sq ON sq.id = d.query_id
+        JOIN content_taxonomy_mappings m
+          ON m.content_id = d.content_id
+         AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
+        WHERE d.run_id = ? AND m.decision = 'accepted'
         """,
         (run_id,),
     ).fetchone()["n"]
@@ -77,34 +113,109 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     tavily_calls = len(usage.get("tavily", []))
     serpapi_calls = len(usage.get("serpapi", []))
 
+    discarded_reasons = conn.execute(
+        "SELECT reason, COUNT(*) c FROM discarded_candidates WHERE run_id = ? GROUP BY reason", (run_id,)
+    ).fetchall()
+    reason_counts = {r["reason"]: r["c"] for r in discarded_reasons}
+    post_extraction_discarded = sum(c for reason, c in reason_counts.items() if reason in _POST_EXTRACTION_REASONS)
+    extraction_attempted = accepted_count + post_extraction_discarded
+    extraction_failed = sum(reason_counts.get(r, 0) for r in _EXTRACTION_FAILURE_REASONS)
+    extraction_success_rate = _rate(extraction_attempted - extraction_failed, extraction_attempted)
+    duplicate_count = sum(reason_counts.get(r, 0) for r in _DUPLICATE_REASONS)
+    duplicate_rate = _rate(duplicate_count, search_candidates)
+
+    # provider별 후보/accepted 기여율. 후보는 content_discoveries(추출까지 간 건)+discarded_candidates
+    # (query_id로 provider 역추적) 합산, discarded 쪽에서 query_id가 없는 행(드묾)은 집계에서 빠진다.
+    candidate_by_provider = dict(conn.execute(
+        """
+        SELECT provider, COUNT(*) c FROM (
+            SELECT provider FROM content_discoveries WHERE run_id = ?
+            UNION ALL
+            SELECT sq.provider FROM discarded_candidates dc
+            JOIN search_queries sq ON sq.id = dc.query_id
+            WHERE dc.run_id = ?
+        )
+        GROUP BY provider
+        """,
+        (run_id, run_id),
+    ).fetchall())
+    accepted_by_provider = dict(conn.execute(
+        """
+        SELECT d.provider, COUNT(DISTINCT d.content_id) n
+        FROM content_discoveries d
+        JOIN search_queries sq ON sq.id = d.query_id
+        JOIN content_taxonomy_mappings m
+          ON m.content_id = d.content_id
+         AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
+        WHERE d.run_id = ? AND m.decision = 'accepted'
+        GROUP BY d.provider
+        """,
+        (run_id,),
+    ).fetchall())
+    total_candidates_by_provider = sum(candidate_by_provider.values())
+    tavily_candidate_share = _rate(candidate_by_provider.get("tavily", 0), total_candidates_by_provider)
+    serpapi_candidate_share = _rate(candidate_by_provider.get("serpapi", 0), total_candidates_by_provider)
+    tavily_accepted_share = _rate(accepted_by_provider.get("tavily", 0), accepted_count)
+    serpapi_accepted_share = _rate(accepted_by_provider.get("serpapi", 0), accepted_count)
+
+    domain_counts = conn.execute(
+        """
+        SELECT c.source_domain, COUNT(DISTINCT c.id) n
+        FROM content_discoveries d
+        JOIN contents c ON c.id = d.content_id
+        JOIN search_queries sq ON sq.id = d.query_id
+        JOIN content_taxonomy_mappings m
+          ON m.content_id = c.id
+         AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
+        WHERE d.run_id = ? AND m.decision = 'accepted'
+        GROUP BY c.source_domain
+        """,
+        (run_id,),
+    ).fetchall()
+    unique_domain_count = len(domain_counts)
+    top_domain_share = _rate(max((r["n"] for r in domain_counts), default=0), accepted_count)
+
     taxonomy_prompt_tokens = sum(c["prompt_tokens"] for c in usage.get("openai", []))
     taxonomy_completion_tokens = sum(c["completion_tokens"] for c in usage.get("openai", []))
+    query_usage = conn.execute(
+        """
+        SELECT COALESCE(SUM(prompt_tokens), 0) prompt_tokens,
+               COALESCE(SUM(completion_tokens), 0) completion_tokens,
+               COALESCE(SUM(web_search_calls), 0) web_search_calls
+        FROM query_generation_calls WHERE run_id = ?
+        """,
+        (run_id,),
+    ).fetchone()
 
     quality_rows = conn.execute(
         """
-        SELECT q.overall, q.prompt_tokens, q.completion_tokens FROM content_quality_scores q
-        JOIN content_discoveries d ON d.content_id = q.content_id
-        WHERE d.run_id = ? AND q.taxonomy_lv2 = ?
+        SELECT overall, prompt_tokens, completion_tokens FROM content_quality_scores
+        WHERE run_id = ? AND taxonomy_lv2 = ?
         """,
         (run_id, lv2_id),
     ).fetchall()
     quality_avg = round(sum(r["overall"] for r in quality_rows) / len(quality_rows), 2) if quality_rows else None
+    high_quality_ratio = _rate(sum(1 for r in quality_rows if r["overall"] >= 4), len(quality_rows))
     quality_prompt_tokens = sum(r["prompt_tokens"] for r in quality_rows)
     quality_completion_tokens = sum(r["completion_tokens"] for r in quality_rows)
 
     labels = conn.execute(
-        "SELECT human_label FROM eval_labels WHERE taxonomy_lv2 = ?", (lv2_id,)
+        "SELECT human_label FROM eval_labels WHERE run_id = ? AND taxonomy_lv2 = ?", (run_id, lv2_id)
     ).fetchall()
     labeled_total = len(labels)
     # eval_labels는 accepted 표본만 뽑으므로, 사람이 accepted로 동의한 비율 = precision.
     precision_match = sum(1 for r in labels if r["human_label"] == "accepted")
     precision_str = f"{_rate(precision_match, labeled_total)} ({labeled_total}건)" if labeled_total else "미라벨링"
 
-    total_openai_cost = _openai_cost_usd(
-        configs,
-        taxonomy_prompt_tokens + quality_prompt_tokens,
-        taxonomy_completion_tokens + quality_completion_tokens,
+    # 수집 비용(taxonomy 필터 + 검색어 생성 + fresh_vocabulary 웹서치)과 품질채점 비용(score_quality.py)은
+    # 서로 다른 실험 단계이므로 분리해서 계산한다 — 합치면 "수집 자체가 얼마나 드는가"를 알 수 없다.
+    collection_openai_cost = round(
+        _openai_cost_usd(configs, taxonomy_prompt_tokens, taxonomy_completion_tokens)
+        + _query_generation_cost_usd(configs, query_usage["prompt_tokens"], query_usage["completion_tokens"])
+        + query_usage["web_search_calls"] * configs["providers"]["openai"]["web_search_price_per_1k_calls_usd"] / 1000,
+        5,
     )
+    quality_openai_cost = round(_openai_cost_usd(configs, quality_prompt_tokens, quality_completion_tokens), 5)
     elapsed = runs_repo.elapsed_seconds(run_row)
 
     return {
@@ -113,17 +224,29 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
         "배수": settings.get("candidate_multiplier"),
         "accepted량": accepted_count,
         "목표달성률": _rate(accepted_count, target_count),
+        "최종채택률": _rate(accepted_count, search_candidates),
         "수집실패량": collection_failures,
         "검색후보량": search_candidates,
         "tavily API 사용수": tavily_calls,
         "serpapi API 사용수": serpapi_calls,
+        "tavily후보기여율": tavily_candidate_share,
+        "serpapi후보기여율": serpapi_candidate_share,
+        "tavily accepted기여율": tavily_accepted_share,
+        "serpapi accepted기여율": serpapi_accepted_share,
+        "본문추출성공률": extraction_success_rate,
+        "중복률": duplicate_rate,
         "콘텐츠퀄리티(평균/5)": quality_avg if quality_avg is not None else "미채점",
+        "고품질비율(4점이상)": high_quality_ratio if high_quality_ratio is not None else "미채점",
         "Taxonomy정밀도(라벨수)": precision_str,
-        "사용된openai비용(USD)": round(total_openai_cost, 5),
+        "수집openai비용(USD)": collection_openai_cost,
+        "품질채점openai비용(USD)": quality_openai_cost,
+        "accepted당비용(USD)": _rate(collection_openai_cost, accepted_count),
         "수집소요시간(초)": round(elapsed, 1),
-        "_discarded_reasons": conn.execute(
-            "SELECT reason, COUNT(*) c FROM discarded_candidates WHERE run_id = ? GROUP BY reason", (run_id,)
-        ).fetchall(),
+        "accepted당소요시간(초)": _rate(round(elapsed, 1), accepted_count),
+        "고유도메인수": unique_domain_count,
+        "최다도메인비율": top_domain_share,
+        "_discarded_reasons": discarded_reasons,
+        "_search_candidates": search_candidates,
     }
 
 
@@ -140,8 +263,7 @@ def main() -> None:
         return
 
     configs = load_all_configs()
-    db_path = PROJECT_ROOT / configs["app"]["database"]["path"]
-    conn = connect(db_path)
+    conn = connect(EXPERIMENT_DB_PATH)
 
     rows = [build_row(conn, configs, lv2, run_id, tc) for lv2, run_id, tc in _latest_run_per_lv2()]
     rows.sort(key=lambda r: r["LV2"])
@@ -154,13 +276,23 @@ def main() -> None:
 
     with FAILURE_CSV_PATH.open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["LV2", "reason", "count"])
+        writer.writerow(["LV2", "reason", "count", "비율"])
         for r in rows:
             for reason_row in r["_discarded_reasons"]:
-                writer.writerow([r["LV2"], reason_row["reason"], reason_row["c"]])
+                writer.writerow([
+                    r["LV2"], reason_row["reason"], reason_row["c"],
+                    _rate(reason_row["c"], r["_search_candidates"]),
+                ])
 
     human_rows = _load_human_baseline()
-    md_lines = ["# 정량 평가 결과", "", "| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
+    md_lines = [
+        "# 정량 평가 결과", "",
+        "## 요약 (성능/비용/시간)", "",
+        "| " + " | ".join(FOCUS_COLUMNS) + " |", "|" + "---|" * len(FOCUS_COLUMNS),
+    ]
+    for r in rows:
+        md_lines.append("| " + " | ".join(str(r[c]) for c in FOCUS_COLUMNS) + " |")
+    md_lines += ["", "## 전체 상세", "", "| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
     for r in rows:
         md_lines.append("| " + " | ".join(str(r[c]) for c in COLUMNS) + " |")
     if human_rows:

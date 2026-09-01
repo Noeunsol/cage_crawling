@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -52,6 +53,48 @@ def _discard(conn, *, candidate: ScheduledCandidate, run_id: str, normalized_url
         reason=reason, retryable=retryable,
     )
     return ProcessOutcome(status="discarded", reason=reason, detail=detail)
+
+
+def _reuse_for_new_taxonomy(
+    conn, candidate: ScheduledCandidate, *, run_id: str, type_cfg: dict,
+    date_from: date, date_to: date, filter_checks: list,
+) -> ProcessOutcome | None:
+    """기존 URL을 다른 taxonomy/type에서 재평가해 같은 콘텐츠 행을 재사용한다."""
+    normalized_url = normalize_url(candidate.url)
+    content = contents_repo.get_by_canonical_url(conn, normalized_url)
+    if content is None:
+        return None
+    already_mapped = conn.execute(
+        """SELECT 1 FROM content_taxonomy_mappings
+           WHERE content_id = ? AND taxonomy_lv2 = ? AND type_name = ?""",
+        (content["id"], candidate.lv2_id, candidate.type_name),
+    ).fetchone()
+    if already_mapped:
+        return _discard(
+            conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
+            reason="duplicate", retryable=False, detail="같은 taxonomy/type에 이미 저장된 URL입니다.",
+        )
+
+    ctx = FilterContext(
+        canonical_url=normalized_url, source_domain=content["source_domain"], title=content["title"],
+        content=content["content"], content_hash=content["content_hash"],
+        published_date=content["published_date"], date_from=date_from, date_to=date_to,
+        type_name=candidate.type_name, definition=type_cfg["definition"],
+        include_criteria=type_cfg["include_criteria"], exclude_criteria=effective_exclude_criteria(type_cfg),
+    )
+    decision = run_filters(ctx, filter_checks)
+    decision_reason = f"{decision.reason}: {decision.detail}" if decision.reason else (decision.detail or "accepted")
+    mappings_repo.add_mapping(
+        conn, content_id=content["id"], taxonomy_lv2=candidate.lv2_id, type_name=candidate.type_name,
+        decision=decision.status, decision_reason=decision_reason,
+        prompt_name=None, prompt_version=None, model=None,
+    )
+    discoveries_repo.record_discovery(
+        conn, content_id=content["id"], run_id=run_id, query_id=candidate.query_id,
+        provider=candidate.provider, returned_url=candidate.url, rank=candidate.rank,
+        relevance_score=candidate.relevance_score,
+    )
+    return ProcessOutcome(status=decision.status, reason=decision.reason, detail=decision.detail)
 
 
 @dataclass
@@ -291,11 +334,12 @@ def process_candidate(
             conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
             reason="blacklisted_domain", retryable=False, detail="블랙리스트 도메인이라 요청을 보내지 않았습니다.",
         )
-    if duplicates.check_url_duplicate(conn, normalized_url).is_duplicate:
-        return _discard(
-            conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
-            reason="duplicate", retryable=False, detail="이미 저장된 URL입니다.",
-        )
+    reused = _reuse_for_new_taxonomy(
+        conn, candidate, run_id=run_id, type_cfg=type_cfg, date_from=date_from,
+        date_to=date_to, filter_checks=filter_checks,
+    )
+    if reused is not None:
+        return reused
 
     try:
         fr = _fetch_and_extract(normalized_url, extraction_cfg, retry_policy)
@@ -338,6 +382,7 @@ def run_collection(
     on_progress: Callable[[ProgressEvent], None] | None = None,
     max_calls_by_provider: dict[str, int] | None = None,
     use_adaptive_multiplier: bool = False,
+    adaptive_multiplier_snapshot: dict[str, float] | None = None,
 ) -> RunSummary:
     """검색(scheduler) → 후보별 처리(fetch~extract는 동시, 나머지는 순차) 순서로 실행한다.
 
@@ -352,6 +397,7 @@ def run_collection(
         target_count=target_count, candidate_multiplier=candidate_multiplier,
         date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
         max_calls_by_provider=max_calls_by_provider, use_adaptive_multiplier=use_adaptive_multiplier,
+        adaptive_multiplier_snapshot=adaptive_multiplier_snapshot,
     )
 
     filter_checks = build_filter_chain(
@@ -391,6 +437,13 @@ def run_collection(
     UNEXPECTED_ERROR_BREAKER = 5
     stopped = False
 
+    # scheduler는 검색 결과를 페이지 단위(최대 20/10건)로만 받아올 수 있어 target_count보다
+    # 훨씬 많은 원시 후보가 넘어올 수 있다 — save_over_target_results=false면 (lv2,target_count가
+    # 이미 채워진) 남는 후보는 fetch/추출/OpenAI 없이 바로 건너뛴다(configs/collection.yaml
+    # scheduling.save_over_target_results, 2026-09-01 이전엔 설정만 있고 코드가 안 읽던 죽은 값).
+    save_over_target = configs.get("collection", {}).get("scheduling", {}).get("save_over_target_results", True)
+    accepted_by_lv2: Counter = Counter()
+
     for chunk_start in range(0, total, CHUNK_SIZE):
         if stopped:
             break
@@ -398,17 +451,26 @@ def run_collection(
 
         # 이미 저장된 URL로 확인되는 후보는 fetch 없이 바로 discarded 처리한다 (동시 fetch를
         # 시작하기 전, 순차적으로 conn을 읽는 유일한 지점 — 예전부터 있던 최적화를 그대로 유지).
-        pre_discarded: dict[int, ProcessOutcome] = {}
+        pre_resolved: dict[int, ProcessOutcome] = {}
         to_fetch: list[tuple[int, ScheduledCandidate]] = []
         for i, candidate in chunk:
-            normalized_url = normalize_url(candidate.url)
-            if duplicates.check_url_duplicate(conn, normalized_url).is_duplicate:
-                pre_discarded[i] = _discard(
-                    conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
-                    reason="duplicate", retryable=False, detail="이미 저장된 URL입니다.",
+            if not save_over_target and accepted_by_lv2[candidate.lv2_id] >= target_count:
+                pre_resolved[i] = _discard(
+                    conn, candidate=candidate, run_id=run_id, normalized_url=normalize_url(candidate.url),
+                    reason="target_reached", retryable=False, detail="lv2 목표 수집량에 이미 도달했습니다.",
                 )
-            else:
+                continue
+            normalized_url = normalize_url(candidate.url)
+            type_cfg = taxonomy_lookup[(candidate.lv2_id, candidate.type_name)]
+            date_from, date_to = date_range_by_lv2[candidate.lv2_id]
+            reused = _reuse_for_new_taxonomy(
+                conn, candidate, run_id=run_id, type_cfg=type_cfg,
+                date_from=date_from, date_to=date_to, filter_checks=filter_checks,
+            )
+            if reused is None:
                 to_fetch.append((i, candidate))
+            else:
+                pre_resolved[i] = reused
 
         fetch_results = asyncio.run(_fetch_all(
             to_fetch,
@@ -419,8 +481,8 @@ def run_collection(
         fetch_results_by_index = {i: fr for i, _, fr in fetch_results}
 
         for i, candidate in chunk:
-            if i in pre_discarded:
-                outcome = pre_discarded[i]
+            if i in pre_resolved:
+                outcome = pre_resolved[i]
             else:
                 fr = fetch_results_by_index[i]
                 type_cfg = taxonomy_lookup[(candidate.lv2_id, candidate.type_name)]
@@ -451,6 +513,9 @@ def run_collection(
                         conn, candidate=candidate, run_id=run_id, normalized_url=normalize_url(candidate.url),
                         reason="unexpected_error", retryable=True, detail=f"{type(e).__name__}: {e}",
                     )
+
+            if outcome.status == "accepted":
+                accepted_by_lv2[candidate.lv2_id] += 1
 
             event = ProgressEvent(
                 lv2_id=candidate.lv2_id, type_name=candidate.type_name, url=candidate.url,

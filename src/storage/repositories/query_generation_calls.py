@@ -17,6 +17,7 @@ class GenerationUsageTotal:
 def record_call(
     conn: sqlite3.Connection,
     *,
+    run_id: str | None = None,
     taxonomy_lv2: str,
     type_name: str,
     provider: str,
@@ -24,15 +25,18 @@ def record_call(
     prompt_tokens: int,
     completion_tokens: int,
     elapsed_s: float,
+    web_search_calls: int = 0,
 ) -> None:
     with conn:
         conn.execute(
             """
             INSERT INTO query_generation_calls (
-                taxonomy_lv2, type_name, provider, model, prompt_tokens, completion_tokens, elapsed_s
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                run_id, taxonomy_lv2, type_name, provider, model, prompt_tokens, completion_tokens, elapsed_s,
+                web_search_calls
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (taxonomy_lv2, type_name, provider, model, prompt_tokens, completion_tokens, elapsed_s),
+            (run_id, taxonomy_lv2, type_name, provider, model, prompt_tokens, completion_tokens, elapsed_s,
+             web_search_calls),
         )
 
 

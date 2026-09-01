@@ -8,6 +8,7 @@ UI(session_state)에는 의존하지 않는다 — 날짜/비율은 이미 계�
 from __future__ import annotations
 
 import math
+import random
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from datetime import date
@@ -42,6 +43,44 @@ class SchedulerResult:
     provider_usage: dict = field(default_factory=dict)  # provider -> [usage dict, ...]
 
 
+_MIN_YIELD_SAMPLES = 10  # 이보다 적으면 실측 대신 max_results_per_request(설정 최대치)를 그대로 씀
+
+
+def _avg_result_count(conn, provider: str, providers_cfg: dict) -> float:
+    """provider가 콜 한 번에 실제로 몇 건을 돌려주는지 실측 평균 (콜당 설정 최대치가 아니라 실제 수확량).
+
+    tavily는 max_results_per_request가 20이지만 topic/date 필터링 탓에 실제로는 훨씬 적게 돌아오는 경우가
+    많다 — 설정 최대치로 provider 간 효율을 가정하면 틀리기 쉬워서 query_executions 실측치를 우선 쓴다.
+    """
+    fallback = providers_cfg.get(provider, {}).get("max_results_per_request", 20 if provider == "tavily" else 10)
+    row = conn.execute(
+        """
+        SELECT AVG(qe.result_count) avg_n, COUNT(*) n FROM query_executions qe
+        JOIN search_queries sq ON sq.id = qe.query_id
+        WHERE sq.provider = ? AND qe.status = 'success'
+        """,
+        (provider,),
+    ).fetchone()
+    if row["n"] and row["n"] >= _MIN_YIELD_SAMPLES and row["avg_n"]:
+        return row["avg_n"]
+    return fallback
+
+
+def _call_weighted_ratio(conn, ratio: dict, providers_cfg: dict) -> dict:
+    """provider_ratio(%)는 accepted 콘텐츠 배분 비율인데, provider마다 콜당 실제 수확량이 다르면 같은
+    ratio%라도 실제 API 호출 수는 다르게 나온다. "ratio가 50:50이면 실제 호출 수도 50:50에 가깝게" 되도록
+    콜당 실측 평균 수확량으로 가중해 보정한다."""
+    tavily_weight = ratio["tavily"] * _avg_result_count(conn, "tavily", providers_cfg)
+    serpapi_weight = ratio["serpapi"] * _avg_result_count(conn, "serpapi", providers_cfg)
+    total_weight = tavily_weight + serpapi_weight
+    if total_weight == 0:
+        return {"tavily": 0, "serpapi": 0}
+    return {
+        "tavily": tavily_weight / total_weight * 100,
+        "serpapi": serpapi_weight / total_weight * 100,
+    }
+
+
 @dataclass
 class _Lane:
     """(type, provider) 하나의 진행 상태. round-robin이 도는 최소 단위 (7.5절)."""
@@ -70,6 +109,7 @@ class _Lane:
 def _build_lanes(
     conn, configs, targets, *, target_count, candidate_multiplier,
     date_range_by_lv2, provider_ratio_by_lv2, use_adaptive_multiplier=False,
+    adaptive_multiplier_snapshot=None,
 ) -> tuple[list[_Lane], list[str]]:
     type_domains_cfg = configs["type_domains"]["types"]
     alias_groups = configs["domain_aliases"]["groups"]
@@ -94,7 +134,9 @@ def _build_lanes(
 
     for lv2_id, type_name in targets:
         date_from, date_to = date_range_by_lv2[lv2_id]
-        ratio = provider_ratio_by_lv2.get(lv2_id, default_ratio)
+        ratio = _call_weighted_ratio(
+            conn, provider_ratio_by_lv2.get(lv2_id, default_ratio), configs.get("providers", {}),
+        )
         per_type_target_count = math.ceil(target_count / types_per_lv2[lv2_id])
 
         config_has_domains = has_serpapi_domains(type_domains_cfg, type_name, blacklist_domains, lv2_id)
@@ -120,13 +162,15 @@ def _build_lanes(
                     f"{lv2_id}::{type_name}: {reason} 목표 {per_type_target_count}건 전량을 Tavily로 진행합니다."
                 )
             tavily_target = (
-                math.ceil(tavily_accepted_share * adaptive_multiplier.compute_multiplier(
-                    conn, configs, lv2_id, type_name, "tavily",
+                math.ceil(tavily_accepted_share * (adaptive_multiplier_snapshot or {}).get(
+                    f"{lv2_id}::{type_name}::tavily",
+                    adaptive_multiplier.compute_multiplier(conn, configs, lv2_id, type_name, "tavily"),
                 )) if tavily_accepted_share > 0 else 0
             )
             serpapi_target = (
-                math.ceil(serpapi_accepted_share * adaptive_multiplier.compute_multiplier(
-                    conn, configs, lv2_id, type_name, "serpapi",
+                math.ceil(serpapi_accepted_share * (adaptive_multiplier_snapshot or {}).get(
+                    f"{lv2_id}::{type_name}::serpapi",
+                    adaptive_multiplier.compute_multiplier(conn, configs, lv2_id, type_name, "serpapi"),
                 )) if serpapi_accepted_share > 0 else 0
             )
         else:
@@ -177,7 +221,31 @@ def _build_lanes(
                 queries=scoring.sort_queries_by_score(conn, active_queries, epsilon=exploration_epsilon),
             ))
 
-    return lanes, warnings
+    # target을 못 채워도 lane들이 무한정 검색어·페이지를 소진하지 않도록, (lv2, provider) 하나가
+    # 함께 쓸 수 있는 콜 예산을 정해둔다 — lane(=type) 단위로 각자 예산을 주면 type 수만큼 곱해져서
+    # 배수가 의도보다 훨씬 커진다(2026-08-31 리뷰에서 발견: type 5개 x lane당 3콜 = 15콜로 총
+    # 기대치의 7배가 나왔다). "콜당 최대치를 다 채운다는 이상적인 가정으로 (lv2,provider) 전체가
+    # 필요한 콜 수" x lane_call_budget_multiplier를 그 (lv2,provider)의 모든 type이 나눠 쓴다.
+    budget_multiplier = configs.get("collection", {}).get("scheduling", {}).get("lane_call_budget_multiplier", 3)
+    group_targets: dict[tuple[str, str], int] = {}
+    for lane in lanes:
+        group_targets[(lane.lv2_id, lane.provider)] = group_targets.get((lane.lv2_id, lane.provider), 0) + lane.target
+    group_budgets = {}
+    for (group_lv2, provider), total_target in group_targets.items():
+        page_size = configs.get("providers", {}).get(provider, {}).get(
+            "max_results_per_request", 20 if provider == "tavily" else 10,
+        )
+        group_budgets[(group_lv2, provider)] = max(1, math.ceil(total_target / page_size)) * budget_multiplier
+
+    # 예산이 type 수보다 작으면 누군가는 이번 실행에서 콜을 못 받는다 — 그 자체는 어쩔 수 없지만
+    # (콜 늘리면 비용 증가), round-robin이 매번 taxonomy.yaml 순서(cyberbullying -> ... ->
+    # threats_and_intimidation)대로 시작하면 예산이 부족할 때 항상 같은 type(맨 뒤)만 열외된다.
+    # lane 순서를 실행마다 섞어서 "열외되는 type"이 매번 랜덤하게 바뀌게 한다 (2026-09-01).
+    # 전용 Random 인스턴스를 쓴다 — 전역 random을 쓰면 scoring.py의 epsilon-greedy 탐색이
+    # 소비하는 난수 시퀀스가 밀려서 그쪽 테스트가 이 셔플 유무에 따라 흔들린다.
+    random.Random().shuffle(lanes)
+
+    return lanes, warnings, group_budgets
 
 
 def run_scheduler(
@@ -193,6 +261,7 @@ def run_scheduler(
     provider_ratio_by_lv2: dict[str, dict],
     max_calls_by_provider: dict[str, int] | None = None,
     use_adaptive_multiplier: bool = False,
+    adaptive_multiplier_snapshot: dict[str, float] | None = None,
 ) -> SchedulerResult:
     """활성 type이 고르게 검색되도록 round-robin으로 provider를 호출한다 (7.4, 7.5절).
 
@@ -204,18 +273,21 @@ def run_scheduler(
       기반 multiplier를 쓴다 (adaptive_multiplier.py, 2026-08-31). 기본은 False — 기존 UI/실행
       경로는 지금까지와 완전히 동일하게 동작한다.
     """
-    lanes, warnings = _build_lanes(
+    lanes, warnings, group_budgets = _build_lanes(
         conn, configs, targets, target_count=target_count, candidate_multiplier=candidate_multiplier,
         date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
         use_adaptive_multiplier=use_adaptive_multiplier,
+        adaptive_multiplier_snapshot=adaptive_multiplier_snapshot,
     )
     result = SchedulerResult(warnings=warnings)
     queue = deque(lane for lane in lanes if not lane.done)
     calls_used = Counter()
+    group_calls_used: Counter = Counter()  # (lv2_id, provider) -> 실제 호출 수 (그 lv2의 모든 type이 공유)
     exploration_epsilon = configs["collection"].get("query_domain_exploration", {}).get(
         "epsilon", scoring.DEFAULT_EXPLORATION_EPSILON,
     )
     capped_providers: set[str] = set()
+    capped_groups: set[tuple[str, str]] = set()
 
     def _is_capped(provider: str) -> bool:
         if provider in capped_providers:
@@ -223,6 +295,12 @@ def run_scheduler(
         if not max_calls_by_provider or provider not in max_calls_by_provider:
             return False
         return calls_used[provider] >= max_calls_by_provider[provider]
+
+    def _is_group_capped(lv2_id: str, provider: str) -> bool:
+        group = (lv2_id, provider)
+        if group in capped_groups:
+            return True
+        return group_calls_used[group] >= group_budgets.get(group, math.inf)
 
     while queue:
         lane = queue.popleft()
@@ -234,17 +312,27 @@ def run_scheduler(
                     "도달해 남은 검색을 건너뜁니다."
                 )
             continue  # 이 lane은 더 진행할 수 없다 — 큐에 다시 넣지 않는다.
+        if _is_group_capped(lane.lv2_id, lane.provider):
+            group = (lane.lv2_id, lane.provider)
+            if group not in capped_groups:
+                capped_groups.add(group)
+                result.warnings.append(
+                    f"{lane.lv2_id} ({lane.provider}): 콜 예산({group_budgets[group]}건)을 다 써서 "
+                    "목표 미달 상태로 포기합니다 — API 낭비를 막기 위한 안전장치입니다."
+                )
+            continue  # 이 (lv2, provider) 예산이 바닥났다 — 큐에 다시 넣지 않는다.
         if lane.current_query is None:
             lane.current_query = lane.queries.pop(0)
         query_row = lane.current_query
 
         search_kwargs = dict(lane.search_kwargs)
-        fingerprint_extra = None
+        # 같은 검색어라도 taxonomy/type이 다르면 별도 실험으로 취급한다.
+        fingerprint_extra = {"taxonomy_lv2": lane.lv2_id, "type_name": lane.type_name}
         if lane.provider == "tavily" and search_kwargs.get("topic") != "general":
             # "general"은 topic 파라미터가 생기기 전의 암묵적 기본값과 동일하므로 지문에서 뺀다 —
             # 그래야 이 기능 이전에 쌓인 request_fingerprint 캐시가 계속 유효하다. "news"처럼
             # 실제로 다른 걸 요청하는 topic만 지문에 반영해서 새로 호출하게 한다 (2026-08-31).
-            fingerprint_extra = {"topic": search_kwargs.get("topic")}
+            fingerprint_extra["topic"] = search_kwargs.get("topic")
         elif lane.provider == "serpapi":
             if lane.current_domains is None:
                 bundle_key = f"{lane.lv2_id}::{lane.type_name}"
@@ -258,7 +346,7 @@ def run_scheduler(
                 lane.current_domains = bundle.domains
                 bundles_repo.mark_used(conn, bundle_key, bundle.bundle_index)
             search_kwargs.update(allowed_domains=lane.current_domains, start=lane.page_start)
-            fingerprint_extra = {"domains": lane.current_domains, "start": lane.page_start}
+            fingerprint_extra.update(domains=lane.current_domains, start=lane.page_start)
 
         fingerprint = build_fingerprint(
             provider=lane.provider, query_text=query_row["query_text"],
@@ -281,13 +369,24 @@ def run_scheduler(
                 )
             except Exception as exc:
                 quota_error = classify_quota_error(lane.provider, exc)
-                if quota_error is None:
-                    raise
                 capped_providers.add(lane.provider)
-                result.warnings.append(
-                    f"{lane.provider}: API 사용량 한도를 초과해 더 이상 호출할 수 없습니다 — "
-                    "이 provider는 건너뛰고 지금까지 모은 결과로 계속 진행합니다."
-                )
+                if quota_error is not None:
+                    result.warnings.append(
+                        f"{lane.provider}: API 사용량 한도를 초과해 더 이상 호출할 수 없습니다 — "
+                        "이 provider는 건너뛰고 지금까지 모은 결과로 계속 진행합니다."
+                    )
+                else:
+                    # 사용량 문제가 아닌 예상 못 한 오류(라이브러리 버그·응답 형식 변경 등)는 같은
+                    # 원인으로 계속 실패할 가능성이 높아, 여기서 raise해서 전체를 죽이는 대신 이
+                    # provider만 멈추고 지금까지 모은 result.candidates는 그대로 반환한다 — 이미
+                    # 성공한 검색은 fingerprint가 기록돼 재실행 시 API를 다시 안 부르고, 지금 실패한
+                    # 검색어는 fingerprint가 안 남아 status=generated 그대로라 다음 실행에서 정상
+                    # 재시도된다.
+                    result.warnings.append(
+                        f"{lane.provider}: 검색 중 예상하지 못한 오류가 발생해 이 provider 검색을 "
+                        f"중단합니다 ({type(exc).__name__}: {exc}). 지금까지 찾은 "
+                        f"{len(result.candidates)}건으로 계속 진행합니다."
+                    )
                 continue
             exec_id, _ = exec_repo.start_execution(
                 conn, run_id=run_id, query_id=query_row["id"],
@@ -298,6 +397,7 @@ def run_scheduler(
                 result_count=len(response.results), credit_usage=response.usage,
             )
             calls_used[lane.provider] += 1
+            group_calls_used[(lane.lv2_id, lane.provider)] += 1
 
             result.provider_usage.setdefault(lane.provider, []).append(response.usage)
             result.candidates.extend(

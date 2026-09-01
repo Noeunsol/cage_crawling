@@ -8,6 +8,7 @@ LV2가 여러 개 선택되면 목록이 길어지므로, 두 섹션 모두 LV2 
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import streamlit as st
@@ -64,7 +65,7 @@ st.subheader("① 검색어 생성 대상 선택")
 st.caption(
     "이미 검색어가 있는 type은 재사용하도록 기본 체크 해제됩니다. 필요한 type·개수만 골라 한 번에 생성하세요. "
     + (
-        "기본 개수는 1단계 수집 설정(목표량·후보 배수·provider 비율)으로 역산한 제안값입니다."
+        "기본 개수는 목표량·provider 비율·기존 accepted 전환율로 역산한 제안값입니다."
         if setup else
         "1단계 수집 설정을 먼저 확정하면 목표량 기반으로 개수를 제안해줍니다. 지금은 고정 기본값입니다."
     )
@@ -79,7 +80,9 @@ for lv2, type_names in types_by_lv2.items():
             tavily_n, serpapi_n = _active_counts(lv2, type_name)
             # type마다 target(수집 설정 기반)과 보유 개수가 다르므로, 이미 보유한 만큼은 빼고
             # 부족한 만큼만 생성 제안한다 — 안 그러면 이미 충분한 type도 매번 새로 더 만들게 된다.
-            target_tavily, target_serpapi = suggested_query_counts(configs, setup, lv2, len(type_names))
+            target_tavily, target_serpapi = suggested_query_counts(
+                configs, setup, lv2, len(type_names), conn=conn, type_name=type_name,
+            )
             plan[key] = {
                 "checked": tavily_n == 0 or serpapi_n == 0,
                 "tavily_count": max(0, target_tavily - tavily_n),
@@ -103,7 +106,9 @@ for lv2, type_names in types_by_lv2.items():
         for type_name in type_names:
             key = f"{lv2}::{type_name}"
             tavily_n, serpapi_n = _active_counts(lv2, type_name)
-            target_tavily, target_serpapi = suggested_query_counts(configs, setup, lv2, len(type_names))
+            target_tavily, target_serpapi = suggested_query_counts(
+                configs, setup, lv2, len(type_names), conn=conn, type_name=type_name,
+            )
             with st.container(border=True):
                 col_check, col_tavily, col_serpapi = st.columns([3, 1, 1])
                 with col_check:
@@ -131,12 +136,13 @@ st.metric("이번 일괄 생성으로 예상되는 OpenAI 호출 수", total_cal
 if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_calls == 0):
     try:
         client = generator.build_client(configs["providers"])
+        async_client = generator.build_async_client(configs["providers"])
     except RuntimeError as e:
         st.error(str(e))
     else:
         prompt_cfg = load_prompt("query_generation")
         fresh_prompt_cfg = load_prompt("fresh_vocabulary")
-        model = configs["providers"]["openai"]["model"]
+        model = configs["providers"]["openai"]["query_generation_model"]
         openai_cfg = configs["providers"]["openai"]
         generated_summary = []
         rejected_summary = []
@@ -161,22 +167,47 @@ if st.button("✨ 선택한 type 일괄 생성", type="primary", disabled=total_
                 "vocabulary: lv2=%s type=%s state=%s terms=%d", lv2, type_name, vocab_state, len(merged_vocabulary),
             )
 
-            for provider, count in [
-                ("tavily", plan[key]["tavily_count"]), ("serpapi", plan[key]["serpapi_count"]),
-            ]:
-                if count <= 0:
+            providers_to_run = [
+                (provider, count) for provider, count in [
+                    ("tavily", plan[key]["tavily_count"]), ("serpapi", plan[key]["serpapi_count"]),
+                ] if count > 0
+            ]
+            if not providers_to_run:
+                continue
+
+            # tavily/serpapi는 서로 다른 provider라 결과가 절대 안 섞이므로(파일 상단 주석 참고)
+            # 같은 type 안에서는 asyncio.gather로 동시에 보내 벽시계 시간을 줄인다.
+            # return_exceptions=True: 하나가 rate limit/네트워크 오류로 실패해도 다른 하나가
+            # 이미 낸 비용(성공한 결과)까지 같이 취소되지 않게 한다 — 실패한 쪽만 아래서 걸러낸다.
+            async def _generate_all():
+                return await asyncio.gather(*[
+                    generator.generate_queries_async(
+                        async_client, prompt_cfg, taxonomy_lv2=lv2, type_name=type_name,
+                        definition=type_cfg["definition"],
+                        search_vocabulary=merged_vocabulary,
+                        include_criteria=type_cfg["include_criteria"],
+                        exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
+                        query_axes=type_cfg.get("query_axes", []),
+                        provider=provider,
+                        query_count=int(count), model=model,
+                        query_limits=configs["providers"].get("query_limits", {}),
+                    )
+                    for provider, count in providers_to_run
+                ], return_exceptions=True)
+
+            results = asyncio.run(_generate_all())
+
+            for (provider, count), result in zip(providers_to_run, results):
+                if isinstance(result, BaseException):
+                    # 이 (type, provider) 한 콜만 건너뛴다 — 이미 저장된 다른 type/provider 결과는
+                    # 그대로 남고, 배치 전체는 계속 진행한다 (2026-08-31: 예외 하나가 전체 배치를
+                    # 죽이던 문제를 고침).
+                    _logger.warning(
+                        "query generation failed: lv2=%s type=%s provider=%s error=%s",
+                        lv2, type_name, provider, result,
+                    )
+                    st.warning(f"{type_name} ({provider}): 검색어 생성 실패로 건너뜁니다 — {result}")
                     continue
-                result = generator.generate_queries(
-                    client, prompt_cfg, taxonomy_lv2=lv2, type_name=type_name,
-                    definition=type_cfg["definition"],
-                    search_vocabulary=merged_vocabulary,
-                    include_criteria=type_cfg["include_criteria"],
-                    exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
-                    query_axes=type_cfg.get("query_axes", []),
-                    provider=provider,
-                    query_count=int(count), model=model,
-                    query_limits=configs["providers"].get("query_limits", {}),
-                )
                 repository.save_generated_queries(
                     conn, taxonomy_lv2=lv2, type_name=type_name, provider=provider,
                     query_texts=result.accepted, prompt_version=str(prompt_cfg["version"]), model=model,
@@ -289,7 +320,9 @@ for lv2, type_names in types_by_lv2.items():
             if tavily_n + serpapi_n == 0:
                 empty_types.append((lv2, type_name))
 
-            target_tavily, target_serpapi = suggested_query_counts(configs, setup, lv2, len(type_names))
+            target_tavily, target_serpapi = suggested_query_counts(
+                configs, setup, lv2, len(type_names), conn=conn, type_name=type_name,
+            )
             type_cfg = find_type(configs, lv2, type_name)
             with st.container(border=True):
                 st.markdown(

@@ -4,6 +4,7 @@ from datetime import date
 
 from ui.common import (
     default_date_range_for_lv2, effective_date_range, effective_provider_ratio, exclusion_reason_label,
+    suggested_query_counts,
 )
 
 
@@ -78,3 +79,29 @@ def test_exclusion_reason_label_blank_when_not_excluded():
     assert exclusion_reason_label("accepted", "accepted | 한국 관련성: ok") == ""
     assert exclusion_reason_label(None, None) == ""
     assert exclusion_reason_label("excluded", None) == ""
+
+
+def test_suggested_query_counts_uses_accepted_conversion_and_provider_split(monkeypatch):
+    configs = {
+        "collection": {
+            "query_generation": {"tavily_count_per_type": 1, "serpapi_count_per_type": 1, "safety_factor": 1},
+            "provider_ratio": {"default": {"tavily": 60, "serpapi": 40}, "by_lv2": {}},
+        },
+        "providers": {
+            "tavily": {"max_results_per_request": 10},
+            "serpapi": {"max_results_per_request": 10},
+        },
+    }
+    setup = {
+        "target_count": 100, "candidate_multiplier": 2,
+        "provider_ratio": {"tavily": 60, "serpapi": 40}, "provider_ratio_overrides": {},
+    }
+    multipliers = {"tavily": 2, "serpapi": 3}
+    monkeypatch.setattr(
+        "src.discovery.adaptive_multiplier.compute_multiplier",
+        lambda _conn, _configs, _lv2, _type, provider: multipliers[provider],
+    )
+
+    assert suggested_query_counts(
+        configs, setup, "LV2", conn=object(), type_name="type_a",
+    ) == (12, 12)

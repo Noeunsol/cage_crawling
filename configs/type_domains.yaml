@@ -1,3 +1,7 @@
+# type별로 serpapi 검색을 제한할 허용 도메인 목록 (블랙리스트의 반대 — 여기 없는 도메인은 그
+# type의 serpapi 검색에서 애초에 안 나온다). tavily는 domain 제한 없이 country 파라미터로 편향만 준다.
+# blacklist.yaml(전역 금지 목록)과는 별개 — 여긴 provider=serpapi, type 단위로만 적용된다.
+# UI("도메인 설정" 페이지)에서 편집하면 이 파일이 통째로 재작성되어 주석은 사라진다.
 types:
   cyberbullying_and_harassment:
     serpapi_allowed_domains:

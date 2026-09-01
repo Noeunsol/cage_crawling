@@ -82,6 +82,13 @@ def _validate_collection(cfg: dict, issues: list[str]) -> None:
 
 def _validate_providers(cfg: dict, issues: list[str]) -> None:
     _require("model" in cfg.get("openai", {}), issues, "providers.yaml: openai.model이 없습니다.")
+    _require("query_generation_model" in cfg.get("openai", {}), issues,
+             "providers.yaml: openai.query_generation_model이 없습니다.")
+    for key in (
+        "query_generation_input_price_per_1m_usd", "query_generation_output_price_per_1m_usd",
+        "web_search_price_per_1k_calls_usd",
+    ):
+        _require(cfg.get("openai", {}).get(key, -1) >= 0, issues, f"providers.yaml: openai.{key}가 없거나 잘못됐습니다.")
     for provider in ("openai", "tavily", "serpapi"):
         _require("api_key_env" in cfg.get(provider, {}), issues,
                  f"providers.yaml: {provider}.api_key_env가 없습니다.")

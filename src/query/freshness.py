@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+from dataclasses import dataclass
 
 from openai import OpenAI
 
@@ -26,6 +28,16 @@ _MODEL = "gpt-5.6-luna"  # ponytail: 지원 모델이 바뀌면 여기만 갱신
 _CITATION_SUFFIX = re.compile(r"\s*\(\[[^\]]*\]\([^)]*\)\)")
 
 
+@dataclass
+class FreshVocabularyResult:
+    terms: list[str]
+    prompt_tokens: int
+    completion_tokens: int
+    elapsed_s: float
+    web_search_calls: int = 1
+    model: str = _MODEL
+
+
 def _strip_citations(terms: list[str]) -> list[str]:
     return [_CITATION_SUFFIX.sub("", t).strip() for t in terms]
 
@@ -37,11 +49,13 @@ def fetch_fresh_vocabulary(
     *,
     type_name: str,
     definition: str,
-) -> list[str]:
+) -> FreshVocabularyResult:
     system_prompt, user_prompt = render_prompt(prompt_cfg, type_name=type_name, definition=definition)
+    started = time.perf_counter()
     response = client.responses.create(
         model=_MODEL,
         tools=[{"type": "web_search"}],
+        tool_choice="required",
         input=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -55,4 +69,13 @@ def fetch_fresh_vocabulary(
             }
         },
     )
-    return sanitize_short_terms(_strip_citations(json.loads(response.output_text)["terms"]))
+    usage = getattr(response, "usage", None)
+    output_items = getattr(response, "output", None) or []
+    web_search_calls = sum(getattr(item, "type", None) == "web_search_call" for item in output_items) or 1
+    return FreshVocabularyResult(
+        terms=sanitize_short_terms(_strip_citations(json.loads(response.output_text)["terms"])),
+        prompt_tokens=getattr(usage, "input_tokens", 0) if usage else 0,
+        completion_tokens=getattr(usage, "output_tokens", 0) if usage else 0,
+        elapsed_s=time.perf_counter() - started,
+        web_search_calls=web_search_calls,
+    )

@@ -7,7 +7,7 @@ Streamlit UI 없이 CLI로 실행한다 (UI가 유일한 실행 경로였기 때
     python -m experiments.run_experiment --target-count 30 --confirm            # 전체 19종 LV2
     python -m experiments.run_experiment --target-count 30 --lv2 1_A_Toxic_Language --confirm
 
-각 run의 (lv2_id, run_id)는 experiments/experiment_runs.jsonl에 한 줄씩 append된다 —
+각 run의 (lv2_id, run_id)는 experiments/test_experiment_runs.jsonl에 한 줄씩 append된다 —
 build_report.py가 이 로그로 어떤 run을 집계할지 찾는다.
 """
 
@@ -23,12 +23,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.loader import PROJECT_ROOT, load_all_configs
+from experiments.common import EXPERIMENT_CSV_DIR, EXPERIMENT_DB_PATH, EXPERIMENT_LOG_PATH
+from src.config.loader import load_all_configs
 from src.config.validator import validate_configs
 from src.discovery.serpapi_provider import SerpApiProvider
 from src.discovery.tavily_provider import TavilyProvider
+from src.discovery.adaptive_multiplier import compute_multiplier
 from src.pipeline.collector import run_collection
 from src.pipeline.preflight import run_preflight
+from src.storage import csv_exporter
 from src.query import freshness, generator, repository, vocabulary, year_injection
 from src.storage.repositories import fresh_vocabulary as fresh_vocab_repo
 from src.storage.repositories import query_generation_calls as generation_calls_repo
@@ -40,7 +43,7 @@ from ui.common import (
     taxonomy_groups,
 )
 
-LOG_PATH = Path(__file__).with_name("experiment_runs.jsonl")
+LOG_PATH = EXPERIMENT_LOG_PATH
 EXPERIMENT_TAG = "quant_eval"
 
 
@@ -55,61 +58,79 @@ def _lv2_targets(configs: dict, lv2_id: str) -> list[tuple[str, str]]:
     return []
 
 
-def ensure_queries(conn, configs: dict, targets: list[tuple[str, str]], setup: dict) -> None:
-    """targets 중 active 검색어가 없는 (lv2, type, provider)만 골라 OpenAI로 생성해 채운다.
+def ensure_queries(conn, configs: dict, targets: list[tuple[str, str]], setup: dict, run_id: str | None = None) -> None:
+    """targets의 active 검색어를 실험 목표 개수까지 OpenAI로 보충한다.
 
     query_review.py("3. 검색어 생성" 화면)와 동일한 로직 재사용 — UI 없이 이 부분만 필요해서 옮겼다.
     """
-    missing = [
-        (lv2, type_name, provider)
-        for lv2, type_name in targets
-        for provider in ("tavily", "serpapi")
-        if not repository.list_active_queries(conn, taxonomy_lv2=lv2, type_name=type_name, provider=provider)
-    ]
-    if not missing:
+    types_per_lv2 = Counter(lv2 for lv2, _ in targets)
+    deficits = []
+    for lv2_id, type_name in targets:
+        tavily_target, serpapi_target = suggested_query_counts(
+            configs, setup, lv2_id, types_per_lv2[lv2_id], conn=conn, type_name=type_name,
+        )
+        for provider, target in (("tavily", tavily_target), ("serpapi", serpapi_target)):
+            current = len(repository.list_active_queries(
+                conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+            ))
+            if current < target:
+                deficits.append((lv2_id, type_name, provider, target))
+
+    if not deficits:
         return
 
     client = generator.build_client(configs["providers"])
     prompt_cfg = load_prompt("query_generation")
     fresh_prompt_cfg = load_prompt("fresh_vocabulary")
-    model = configs["providers"]["openai"]["model"]
-    types_per_lv2 = Counter(lv2 for lv2, _ in targets)
+    model = configs["providers"]["openai"]["query_generation_model"]
 
-    print(f"  검색어 없는 (LV2, type, provider) {len(missing)}건 자동 생성 중...")
-    for lv2_id, type_name, provider in missing:
+    print(f"  검색어가 부족한 (LV2, type, provider) {len(deficits)}건 자동 보충 중...")
+    for lv2_id, type_name, provider, target in deficits:
         type_cfg = find_type(configs, lv2_id, type_name)
-        tavily_count, serpapi_count = suggested_query_counts(configs, setup, lv2_id, types_per_lv2[lv2_id])
-        count = tavily_count if provider == "tavily" else serpapi_count
-        if count <= 0:
-            continue
+
+        def _record_fresh_usage(result) -> None:
+            generation_calls_repo.record_call(
+                conn, run_id=run_id, taxonomy_lv2=lv2_id, type_name=type_name,
+                provider="fresh_vocabulary", model=result.model,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+                elapsed_s=result.elapsed_s, web_search_calls=result.web_search_calls,
+            )
 
         merged_vocabulary, _state, freshness_error = vocabulary.resolve_vocabulary(
             client=client, fresh_prompt_cfg=fresh_prompt_cfg, fresh_vocab_repo=fresh_vocab_repo,
             freshness_module=freshness, conn=conn, configs=configs,
             lv2_id=lv2_id, type_name=type_name, type_cfg=type_cfg,
+            on_fresh_usage=_record_fresh_usage,
         )
         if freshness_error is not None:
             print(f"    [경고] {lv2_id}::{type_name} 최근 표현 웹서치 실패 — 기존 vocabulary만 사용")
 
-        result = generator.generate_queries(
-            client, prompt_cfg, taxonomy_lv2=lv2_id, type_name=type_name,
-            definition=type_cfg["definition"], search_vocabulary=merged_vocabulary,
-            include_criteria=type_cfg["include_criteria"],
-            exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
-            query_axes=type_cfg.get("query_axes", []), provider=provider,
-            query_count=int(count), model=model,
-            query_limits=configs["providers"].get("query_limits", {}),
-        )
-        repository.save_generated_queries(
-            conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
-            query_texts=result.accepted, prompt_version=str(prompt_cfg["version"]), model=model,
-        )
-        generation_calls_repo.record_call(
-            conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider, model=model,
-            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-            elapsed_s=result.elapsed_s,
-        )
-        print(f"    {lv2_id}::{type_name}::{provider} -> {len(result.accepted)}개 생성")
+        for attempt in range(1, 4):
+            current = len(repository.list_active_queries(
+                conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+            ))
+            count = target - current
+            if count <= 0:
+                break
+            result = generator.generate_queries(
+                client, prompt_cfg, taxonomy_lv2=lv2_id, type_name=type_name,
+                definition=type_cfg["definition"], search_vocabulary=merged_vocabulary,
+                include_criteria=type_cfg["include_criteria"],
+                exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
+                query_axes=type_cfg.get("query_axes", []), provider=provider,
+                query_count=int(count), model=model,
+                query_limits=configs["providers"].get("query_limits", {}),
+            )
+            repository.save_generated_queries(
+                conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+                query_texts=result.accepted, prompt_version=str(prompt_cfg["version"]), model=model,
+            )
+            generation_calls_repo.record_call(
+                conn, run_id=run_id, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider, model=model,
+                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+                elapsed_s=result.elapsed_s,
+            )
+            print(f"    {lv2_id}::{type_name}::{provider} -> {len(result.accepted)}개 생성 ({attempt}/3)")
 
 
 def ensure_year_variants(conn, configs: dict, targets: list[tuple[str, str]], date_range_by_lv2: dict) -> None:
@@ -156,7 +177,8 @@ def ensure_year_variants(conn, configs: dict, targets: list[tuple[str, str]], da
 
 def run_one_lv2(
     conn, configs: dict, lv2_id: str, *,
-    target_count: int, candidate_multiplier: float, use_adaptive_multiplier: bool = False,
+    target_count: int, candidate_multiplier: float, use_adaptive_multiplier: bool = True,
+    adaptive_multiplier_snapshot: dict[str, float] | None = None,
 ) -> str | None:
     targets = _lv2_targets(configs, lv2_id)
     if not targets:
@@ -169,36 +191,49 @@ def run_one_lv2(
         "date_from": date_from, "date_to": date_to,
         "provider_ratio": configs["collection"]["provider_ratio"]["default"],
         "target_count": target_count, "candidate_multiplier": candidate_multiplier,
+        "adaptive_multiplier_snapshot": adaptive_multiplier_snapshot or {},
     }
     date_range_by_lv2 = {lv2_id: effective_date_range(setup, configs, lv2_id)}
     provider_ratio_by_lv2 = {lv2_id: effective_provider_ratio(setup, configs, lv2_id)}
 
-    ensure_queries(conn, configs, targets, setup)
-    ensure_year_variants(conn, configs, targets, date_range_by_lv2)
+    run_id = runs_repo.new_run_id()
+    runs_repo.create_run(conn, run_id, {
+        "target_count": target_count, "candidate_multiplier": candidate_multiplier,
+        "adaptive_multiplier": use_adaptive_multiplier,
+        "adaptive_multiplier_snapshot": adaptive_multiplier_snapshot or {},
+        "targets": [f"{lv2}::{t}" for lv2, t in targets],
+        "experiment": EXPERIMENT_TAG, "experiment_lv2": lv2_id, "taxonomy_filter_enabled": False,
+    })
+
+    try:
+        ensure_queries(conn, configs, targets, setup, run_id=run_id)
+        ensure_year_variants(conn, configs, targets, date_range_by_lv2)
+    except Exception as error:  # 검색어 생성 시간·실패도 run에 남긴다.
+        runs_repo.finish_run(conn, run_id, "failed", {}, [f"검색어 준비 오류: {error}"])
+        print(f"[fail] {lv2_id}: 검색어 준비 오류: {error}")
+        return run_id
 
     report = run_preflight(
         conn, configs, targets, target_count=target_count, candidate_multiplier=candidate_multiplier,
     )
     if not report.can_run:
+        runs_repo.finish_run(conn, run_id, "failed", {}, ["사전 검사 실패"])
         print(f"[skip] {lv2_id}: 사전 검사 실패 (missing_api_keys={report.missing_api_keys})")
-        return None
+        return run_id
 
-    run_id = runs_repo.new_run_id()
     providers = {
         "tavily": TavilyProvider(_provider_api_key(configs, "tavily"), configs["providers"]["tavily"]),
         "serpapi": SerpApiProvider(_provider_api_key(configs, "serpapi"), configs["providers"]["serpapi"]),
     }
     openai_client = generator.build_client(configs["providers"])
 
-    # (A) 수집 중 accepted/excluded를 가르는 OpenAI taxonomy 적합성 검사는 이 실험에서 끈다.
-    # 품질은 수집 후 score_quality.py((B), accepted에 영향 없는 별도 점수화)로만 측정한다.
+    # 수집 중 accepted/excluded를 가르는 OpenAI taxonomy 적합성 검사는 이 실험에서 끈다.
+    # 품질은 수집 후 score_quality.py(accepted에 영향 없는 별도 점수화)로만 측정한다.
+    # save_over_target_results는 기본값(true)을 그대로 쓴다 — 검색 콜은 이미 target_count 기준으로
+    # 예산이 정해져 목표 도달 시 새 콜을 안 부르지만, 이미 나간 콜이 돌려준 후보(=이미 비용을 낸
+    # 결과)는 target_count를 넘더라도 끝까지 fetch/추출/저장한다(2026-09-01, "이미 쓴 콜은
+    # 킵고잉·안 쓴 콜만 stop" 원칙 확인).
     run_configs = {**configs, "extraction": {**configs["extraction"], "taxonomy_filter": {"enabled": False}}}
-
-    runs_repo.create_run(conn, run_id, {
-        "target_count": target_count, "candidate_multiplier": candidate_multiplier,
-        "targets": [f"{lv2}::{t}" for lv2, t in targets],
-        "experiment": EXPERIMENT_TAG, "experiment_lv2": lv2_id, "taxonomy_filter_enabled": False,
-    })
 
     def _on_progress(event) -> None:
         print(f"  [{event.processed}/{event.total}] {event.lv2_id}::{event.type_name} -> {event.outcome.status}")
@@ -210,13 +245,15 @@ def run_one_lv2(
             date_range_by_lv2=date_range_by_lv2, provider_ratio_by_lv2=provider_ratio_by_lv2,
             openai_client=openai_client, on_progress=_on_progress,
             use_adaptive_multiplier=use_adaptive_multiplier,
+            adaptive_multiplier_snapshot=adaptive_multiplier_snapshot,
         )
     except Exception as error:  # noqa: BLE001 - 한 LV2 실패로 나머지 실험까지 멈추지 않게 한다
         runs_repo.finish_run(conn, run_id, "failed", {}, [f"실행 오류: {error}"])
         print(f"[fail] {lv2_id}: {error}")
-        return None
+        return run_id
 
     runs_repo.finish_run(conn, run_id, "completed", summary.provider_usage, summary.warnings)
+    csv_exporter.export_run(conn, run_id, EXPERIMENT_CSV_DIR)
     print(f"[done] {lv2_id}: run_id={run_id} accepted={summary.accepted}/{target_count}")
     return run_id
 
@@ -228,9 +265,8 @@ def main() -> None:
     parser.add_argument("--lv2", action="append", help="특정 LV2 id만 실행 (반복 지정 가능). 생략하면 전체 LV2.")
     parser.add_argument("--confirm", action="store_true", help="실제 API 호출(비용 발생)에 동의")
     parser.add_argument(
-        "--adaptive-multiplier", action="store_true",
-        help="candidate_multiplier 대신 provider별 실측 생존율 기반 배수를 쓴다 (collection.yaml의 "
-             "adaptive_multiplier 설정, 표본 min_samples 미만인 (lv2,type,provider)는 initial 고정값)",
+        "--fixed-multiplier", action="store_true",
+        help="실측 accepted 전환율 대신 --candidate-multiplier 고정값을 쓴다",
     )
     args = parser.parse_args()
 
@@ -240,21 +276,30 @@ def main() -> None:
 
     configs = load_all_configs()
     validate_configs(configs)
-    db_path = PROJECT_ROOT / configs["app"]["database"]["path"]
-    conn = connect(db_path)
+    conn = connect(EXPERIMENT_DB_PATH)
 
     lv2_ids = args.lv2 or [g["lv2_id"] for g in taxonomy_groups(configs)]
+    adaptive_snapshot = {
+        f"{lv2_id}::{type_name}::{provider}": compute_multiplier(conn, configs, lv2_id, type_name, provider)
+        for lv2_id in lv2_ids
+        for _, type_name in _lv2_targets(configs, lv2_id)
+        for provider in ("tavily", "serpapi")
+    }
+    print(f"실험 DB: {EXPERIMENT_DB_PATH}")
     print(f"실험 대상 LV2 {len(lv2_ids)}개, target_count={args.target_count}")
 
     with LOG_PATH.open("a", encoding="utf-8") as log_f:
         for lv2_id in lv2_ids:
             run_id = run_one_lv2(
                 conn, configs, lv2_id, target_count=args.target_count, candidate_multiplier=args.candidate_multiplier,
-                use_adaptive_multiplier=args.adaptive_multiplier,
+                use_adaptive_multiplier=not args.fixed_multiplier,
+                adaptive_multiplier_snapshot=adaptive_snapshot,
             )
             if run_id:
+                run_status = runs_repo.get_run(conn, run_id)["status"]
                 log_f.write(json.dumps({
                     "lv2_id": lv2_id, "run_id": run_id, "target_count": args.target_count,
+                    "status": run_status,
                     "logged_at": datetime.now(timezone.utc).isoformat(),
                 }, ensure_ascii=False) + "\n")
                 log_f.flush()

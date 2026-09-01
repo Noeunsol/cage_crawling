@@ -182,15 +182,41 @@ def test_process_candidate_discards_duplicate_url_without_fetching(tmp_path, mon
     monkeypatch.setattr("requests.get", fail_if_called)
 
     from src.storage.repositories import contents as contents_repo
-    contents_repo.upsert_content(
+    content_id, _ = contents_repo.upsert_content(
+        conn, title="t", content="c", published_date=None, canonical_url="https://example.com/a",
+        source_name=None, source_domain="example.com", source_category=None,
+        status="accepted", content_hash="h",
+    )
+    conn.execute(
+        """INSERT INTO content_taxonomy_mappings
+           (content_id, taxonomy_lv2, type_name, decision) VALUES (?, '1_C_Self_Harm', 'suicide', 'accepted')""",
+        (content_id,),
+    )
+
+    outcome = process_candidate(conn, _candidate(query_id), **_common_kwargs(conn, filter_checks=[]))
+    assert outcome.status == "discarded"
+    assert outcome.reason == "duplicate"
+
+
+def test_process_candidate_reuses_same_url_for_another_taxonomy_without_fetching(tmp_path, monkeypatch):
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("fetch called")))
+
+    from src.storage.repositories import contents as contents_repo
+    content_id, _ = contents_repo.upsert_content(
         conn, title="t", content="c", published_date=None, canonical_url="https://example.com/a",
         source_name=None, source_domain="example.com", source_category=None,
         status="accepted", content_hash="h",
     )
 
     outcome = process_candidate(conn, _candidate(query_id), **_common_kwargs(conn, filter_checks=[]))
-    assert outcome.status == "discarded"
-    assert outcome.reason == "duplicate"
+
+    assert outcome.status == "accepted"
+    mapping = conn.execute(
+        "SELECT * FROM content_taxonomy_mappings WHERE content_id = ?", (content_id,),
+    ).fetchone()
+    assert (mapping["taxonomy_lv2"], mapping["type_name"]) == ("1_C_Self_Harm", "suicide")
 
 
 def test_process_candidate_discards_on_fetch_timeout(tmp_path, monkeypatch):
@@ -325,10 +351,14 @@ def test_preflight_reports_missing_domains_and_queries(tmp_path):
         conn, taxonomy_lv2="1_C_Self_Harm", type_name="suicide", provider="tavily",
         query_text="쿼리", status="generated", created_by="user",
     )
+    queries_repo.create_query(
+        conn, taxonomy_lv2="1_C_Self_Harm", type_name="suicide", provider="serpapi",
+        query_text="쿼리2", status="generated", created_by="user",
+    )
     configs = {
         "providers": {"openai": {"api_key_env": "OPENAI_API_KEY"},
                        "tavily": {"api_key_env": "TAVILY_API_KEY"},
-                       "serpapi": {"api_key_env": "SERPAPI_KEY"}},
+                       "serpapi": {"api_key_env": "SERPAPI_KEY", "max_pages_per_query": 3}},
         "type_domains": {"types": {}},
         "blacklist": {"domains": []},
     }
@@ -342,8 +372,39 @@ def test_preflight_reports_missing_domains_and_queries(tmp_path):
     suicide_report = next(t for t in report.type_reports if t.type_name == "suicide")
     assert suicide_report.candidate_target == 8
     assert suicide_report.tavily_query_count == 1
+    assert suicide_report.serpapi_query_count == 1
     assert suicide_report.has_serpapi_domain is False
 
     assert any("suicide" in w for w in report.domain_missing_warnings)
     assert any("self_injury" in w for w in report.no_query_warnings)
-    assert report.max_requests_estimate == 1
+    # tavily 1건 + serpapi 1건 * max_pages_per_query(3) — serpapi는 목표 미달 시 페이지를
+    # 넘겨가며 재호출될 수 있으므로 worst-case 추정에 페이지 수를 곱해야 한다.
+    assert report.max_requests_estimate == 4
+
+
+def test_preflight_call_budget_is_shared_across_types_not_multiplied_per_type(tmp_path):
+    # type마다 콜 예산을 따로 곱하면(구버전 방식) type 수만큼 worst-case가 부풀려진다 — 같은
+    # LV2의 type들은 (lv2, provider) 하나의 예산을 나눠 쓰는 게 scheduler.py의 실제 동작과 맞다.
+    conn = _make_conn(tmp_path)
+    for type_name in ("suicide", "self_injury"):
+        for i in range(5):
+            queries_repo.create_query(
+                conn, taxonomy_lv2="1_C_Self_Harm", type_name=type_name, provider="serpapi",
+                query_text=f"{type_name}쿼리{i}", status="generated", created_by="user",
+            )
+    configs = {
+        "providers": {"openai": {"api_key_env": "OPENAI_API_KEY"},
+                       "tavily": {"api_key_env": "TAVILY_API_KEY"},
+                       "serpapi": {"api_key_env": "SERPAPI_KEY", "max_results_per_request": 10, "max_pages_per_query": 1}},
+        "type_domains": {"types": {}},
+        "blacklist": {"domains": []},
+        "collection": {"scheduling": {"lane_call_budget_multiplier": 3}},
+    }
+    report = run_preflight(
+        conn, configs, targets=[("1_C_Self_Harm", "suicide"), ("1_C_Self_Harm", "self_injury")],
+        target_count=4, candidate_multiplier=1.0,
+    )
+
+    # type당 candidate_target=2(합계 4) -> group budget = ceil(4/10)*3 = 3. type마다 따로
+    # 3씩(합 6)이 아니라 두 type이 합쳐서 3건만 잡혀야 한다.
+    assert report.max_requests_estimate == 3

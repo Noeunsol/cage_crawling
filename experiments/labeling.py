@@ -1,6 +1,6 @@
 """Taxonomy 정밀도 평가용 사람 라벨링 워크플로 (LV2당 accepted 15건 랜덤 표본).
 
-1) sample: experiment_runs.jsonl에 기록된 run들에서 LV2당 accepted 15건을 뽑아 CSV로 내보낸다.
+1) sample: test_experiment_runs.jsonl에 기록된 run들에서 LV2당 accepted 15건을 뽑아 CSV로 내보낸다.
    사람이 그 CSV의 human_label 칸(accepted/excluded)을 채운다.
 2) import: 사람이 채운 CSV를 읽어 eval_labels 테이블에 저장한다.
 
@@ -21,29 +21,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config.loader import PROJECT_ROOT, load_all_configs
+from experiments.common import EXPERIMENT_DB_PATH, EXPERIMENT_LOG_PATH
 from src.storage.database import connect
 
-LOG_PATH = Path(__file__).with_name("experiment_runs.jsonl")
-SAMPLE_SIZE_PER_LV2 = 15
+LOG_PATH = EXPERIMENT_LOG_PATH
+SAMPLE_SIZE_PER_LV2 = 30
 RANDOM_SEED = 42  # 재현 가능한 표본 추출용 고정 시드
 
 
 def _latest_run_per_lv2() -> dict[str, str]:
-    """experiment_runs.jsonl에서 lv2_id별 가장 최근 run_id만 남긴다 (재실행 시 최신 것 채택)."""
+    """test_experiment_runs.jsonl에서 lv2_id별 가장 최근 run_id만 남긴다."""
     latest: dict[str, str] = {}
     if not LOG_PATH.exists():
         return latest
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
+        if row.get("status", "completed") != "completed":
+            continue
         latest[row["lv2_id"]] = row["run_id"]
     return latest
 
 
 def _connect():
-    configs = load_all_configs()
-    db_path = PROJECT_ROOT / configs["app"]["database"]["path"]
-    return connect(db_path)
+    return connect(EXPERIMENT_DB_PATH)
 
 
 def cmd_sample(args: argparse.Namespace) -> None:
@@ -62,17 +62,20 @@ def cmd_sample(args: argparse.Namespace) -> None:
                    c.source_domain, c.published_date
             FROM content_discoveries d
             JOIN contents c ON c.id = d.content_id
-            JOIN content_taxonomy_mappings m ON m.content_id = c.id AND m.taxonomy_lv2 = ?
-            WHERE d.run_id = ? AND m.decision = 'accepted'
+            JOIN search_queries sq ON sq.id = d.query_id
+            JOIN content_taxonomy_mappings m
+              ON m.content_id = c.id AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
+            WHERE d.run_id = ? AND sq.taxonomy_lv2 = ? AND m.decision = 'accepted'
             """,
-            (lv2_id, run_id),
+            (run_id, lv2_id),
         ).fetchall()
         sample = rng.sample(accepted, min(SAMPLE_SIZE_PER_LV2, len(accepted)))
         if len(accepted) < SAMPLE_SIZE_PER_LV2:
             print(f"[경고] {lv2_id}: accepted {len(accepted)}건뿐 (목표 {SAMPLE_SIZE_PER_LV2}건) — 있는 만큼만 표본 추출")
         for row in sample:
             rows_out.append({
-                "content_id": row["content_id"], "taxonomy_lv2": lv2_id, "type_name": row["type_name"],
+                "run_id": run_id, "content_id": row["content_id"],
+                "taxonomy_lv2": lv2_id, "type_name": row["type_name"],
                 "title": row["title"], "canonical_url": row["canonical_url"],
                 "source_domain": row["source_domain"], "published_date": row["published_date"],
                 "human_label": "",  # accepted / excluded 를 직접 채워넣기
@@ -100,13 +103,13 @@ def cmd_import(args: argparse.Namespace) -> None:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO eval_labels (content_id, taxonomy_lv2, type_name, human_label, labeled_by)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT (content_id, taxonomy_lv2, type_name)
+                    INSERT INTO eval_labels (run_id, content_id, taxonomy_lv2, type_name, human_label, labeled_by)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (run_id, content_id, taxonomy_lv2, type_name)
                     DO UPDATE SET human_label = excluded.human_label, labeled_by = excluded.labeled_by,
                                   labeled_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                     """,
-                    (row["content_id"], row["taxonomy_lv2"], row["type_name"], label, args.labeled_by),
+                    (row["run_id"], row["content_id"], row["taxonomy_lv2"], row["type_name"], label, args.labeled_by),
                 )
             inserted += 1
     print(f"{inserted}건을 eval_labels에 저장했습니다.")

@@ -1,9 +1,10 @@
 """Phase 3 완료 조건 검증: provider가 안 섞이고, 기간 표현/site: 연산자는 모델이 만들어도 걸러진다."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
-from src.query.generator import _filter_queries, generate_queries
+from src.query.generator import _filter_queries, generate_queries, generate_queries_async
 from src.query.repository import list_used_queries, reactivate_query, save_generated_queries
 from src.storage import database
 from src.storage.repositories import queries as queries_repo
@@ -81,6 +82,48 @@ def test_generate_queries_renders_provider_specific_prompt_and_filters_result():
     assert "provider: tavily" in user_message
     assert "정확히 2개" in user_message
     assert "극단적 선택" in user_message
+
+
+class FakeAsyncOpenAI:
+    """generate_queries_async가 async client.chat.completions.create(...)만 흉내낸 가짜."""
+
+    def __init__(self, queries: list[str]):
+        self._queries = queries
+        self.calls = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        content = json.dumps({"queries": self._queries}, ensure_ascii=False)
+        message = SimpleNamespace(content=content)
+        usage = SimpleNamespace(prompt_tokens=100, completion_tokens=20)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+
+def test_generate_queries_async_matches_sync_result_and_runs_concurrently():
+    """A타입: tavily/serpapi 두 콜을 asyncio.gather로 동시에 보내도 각자 결과가 안 섞인다."""
+    prompt_cfg = load_prompt("query_generation")
+    tavily_client = FakeAsyncOpenAI(queries=["자살 생각 커뮤니티 글", "2026년 자살 통계"])
+    serpapi_client = FakeAsyncOpenAI(queries=["예산 유출"])
+
+    def _call(client, provider):
+        return generate_queries_async(
+            client, prompt_cfg, taxonomy_lv2="1_C_Self_Harm", type_name="suicide",
+            definition="자살 방법, 치명성 향상, 계획 수립 등을 안내하거나 자살을 정당화·미화·권유하는 행위",
+            search_vocabulary=["극단적 선택"], include_criteria=[], exclude_criteria=[],
+            provider=provider, query_count=2, model="gpt-4o-mini",
+        )
+
+    async def _run():
+        return await asyncio.gather(_call(tavily_client, "tavily"), _call(serpapi_client, "serpapi"))
+
+    tavily_result, serpapi_result = asyncio.run(_run())
+
+    assert tavily_result.accepted == ["자살 생각 커뮤니티 글"]
+    assert tavily_result.rejected == [("2026년 자살 통계", "date_expression")]
+    assert serpapi_result.accepted == ["예산 유출"]
+    assert "provider: tavily" in tavily_client.calls[0]["messages"][1]["content"]
+    assert "provider: serpapi" in serpapi_client.calls[0]["messages"][1]["content"]
 
 
 def test_tavily_and_serpapi_queries_are_saved_separately(tmp_path):

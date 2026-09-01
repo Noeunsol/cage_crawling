@@ -80,7 +80,7 @@ def build_vocabulary(*, configs: dict, lv2_id: str, type_cfg: dict, fresh_terms:
 
 def resolve_vocabulary(
     *, client, fresh_prompt_cfg: dict, fresh_vocab_repo, freshness_module, conn, configs: dict,
-    lv2_id: str, type_name: str, type_cfg: dict,
+    lv2_id: str, type_name: str, type_cfg: dict, on_fresh_usage=None,
 ) -> tuple[list[str], str, Exception | None]:
     """type 하나의 최종 search_vocabulary를 만든다: 캐시 조회 → 미스면 웹서치 1회 → 정적/최신/폴백 병합.
 
@@ -91,9 +91,12 @@ def resolve_vocabulary(
     error: Exception | None = None
     if fresh_terms is None:
         try:
-            fresh_terms = freshness_module.fetch_fresh_vocabulary(
+            fresh_result = freshness_module.fetch_fresh_vocabulary(
                 client, fresh_prompt_cfg, type_name=type_name, definition=type_cfg["definition"],
             )
+            fresh_terms = getattr(fresh_result, "terms", fresh_result)
+            if on_fresh_usage is not None and hasattr(fresh_result, "prompt_tokens"):
+                on_fresh_usage(fresh_result)
             fresh_vocab_repo.save(conn, lv2_id, type_name, fresh_terms)
         except Exception as e:  # 웹서치 실패는 치명적이지 않다 — 정적 vocabulary만으로 계속 진행
             error = e

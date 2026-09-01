@@ -56,6 +56,16 @@ def test_missing_required_field_raises_readable_error():
     assert any("openai.model" in issue for issue in exc_info.value.issues)
 
 
+def test_missing_query_generation_model_raises_readable_error():
+    configs = load_all_configs()
+    del configs["providers"]["openai"]["query_generation_model"]
+
+    with pytest.raises(ConfigError) as exc_info:
+        validate_configs(configs)
+
+    assert any("openai.query_generation_model" in issue for issue in exc_info.value.issues)
+
+
 def test_bad_provider_ratio_is_caught():
     configs = load_all_configs()
     configs["collection"]["provider_ratio"]["default"] = {"tavily": 60, "serpapi": 60}

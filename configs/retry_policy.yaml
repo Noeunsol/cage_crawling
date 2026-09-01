@@ -29,6 +29,8 @@ reasons:
     retry_mode: never
   blacklisted_domain:
     retry_mode: never
+  target_reached:            # save_over_target_results=false일 때 lv2 목표 수집량 도달 후 건너뜀 (7.4절)
+    retry_mode: never
   low_korea_relevance:
     retry_mode: never
   taxonomy_mismatch:

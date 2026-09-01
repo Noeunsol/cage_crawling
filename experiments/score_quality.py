@@ -1,4 +1,4 @@
-"""experiment_runs.jsonl의 run들에서 accepted 콘텐츠 품질을 OpenAI로 점수화한다.
+"""test_experiment_runs.jsonl의 run들에서 accepted 콘텐츠 품질을 OpenAI로 점수화한다.
 
 채택 여부를 다시 판단하거나 걸러내지 않는다 — 이미 accepted인 콘텐츠에 1~5점 품질 점수(구체성/
 정보성/적합도/한국 현지성/종합 + 문제 태그)만 매겨서 content_quality_scores에 저장한다
@@ -22,17 +22,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from openai import AsyncOpenAI
 
-from src.config.loader import PROJECT_ROOT, load_all_configs
+from experiments.common import EXPERIMENT_DB_PATH, EXPERIMENT_LOG_PATH
+from src.config.loader import load_all_configs
 from src.storage.database import connect
 from src.utils.prompts import call_structured_output_async, load_prompt
 
-LOG_PATH = Path(__file__).with_name("experiment_runs.jsonl")
+LOG_PATH = EXPERIMENT_LOG_PATH
 
 
 def _latest_run_per_lv2() -> dict[str, str]:
     latest: dict[str, str] = {}
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
+        if row.get("status", "completed") != "completed":
+            continue
         latest[row["lv2_id"]] = row["run_id"]
     return latest
 
@@ -67,17 +70,21 @@ async def _score_one(conn, client, prompt_cfg, model, configs, lv2_id, row, sema
             return f"{type(e).__name__}: {str(e)[:150]}"
 
     data = result.data
+    # 종합점수 = 네 항목(사례구체성/본문품질/Taxonomy관련성/한국관련성)의 평균 — 모델이 아니라 여기서 계산한다.
+    overall = round(
+        (data["specificity"] + data["content_quality"] + data["relevance_strength"] + data["korean_locality"]) / 4, 2
+    )
     with conn:
         conn.execute(
             """
             INSERT INTO content_quality_scores
-                (content_id, taxonomy_lv2, type_name, specificity, informativeness,
+                (run_id, content_id, taxonomy_lv2, type_name, specificity, content_quality,
                  relevance_strength, korean_locality, overall, reason, issues, model,
                  prompt_tokens, completion_tokens, elapsed_s)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (row["content_id"], lv2_id, row["type_name"], data["specificity"], data["informativeness"],
-             data["relevance_strength"], data["korean_locality"], data["overall"], data["reason"],
+            (row["run_id"], row["content_id"], lv2_id, row["type_name"], data["specificity"], data["content_quality"],
+             data["relevance_strength"], data["korean_locality"], overall, data["reason"],
              json.dumps(data["issues"], ensure_ascii=False), model,
              result.prompt_tokens, result.completion_tokens, result.elapsed_s),
         )
@@ -86,8 +93,7 @@ async def _score_one(conn, client, prompt_cfg, model, configs, lv2_id, row, sema
 
 async def run(args: argparse.Namespace) -> None:
     configs = load_all_configs()
-    db_path = PROJECT_ROOT / configs["app"]["database"]["path"]
-    conn = connect(db_path)
+    conn = connect(EXPERIMENT_DB_PATH)
     client = _build_async_client(configs)
     prompt_cfg = load_prompt("quality_score")
     model = configs["providers"]["openai"]["model"]
@@ -97,20 +103,23 @@ async def run(args: argparse.Namespace) -> None:
     for lv2_id, run_id in _latest_run_per_lv2().items():
         accepted = conn.execute(
             """
-            SELECT DISTINCT c.id AS content_id, m.type_name, c.title, c.content
+            SELECT DISTINCT ? AS run_id, c.id AS content_id, m.type_name, c.title, c.content
             FROM content_discoveries d
             JOIN contents c ON c.id = d.content_id
-            JOIN content_taxonomy_mappings m ON m.content_id = c.id AND m.taxonomy_lv2 = ?
-            WHERE d.run_id = ? AND m.decision = 'accepted'
+            JOIN search_queries sq ON sq.id = d.query_id
+            JOIN content_taxonomy_mappings m
+              ON m.content_id = c.id AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
+            WHERE d.run_id = ? AND sq.taxonomy_lv2 = ? AND m.decision = 'accepted'
             """,
-            (lv2_id, run_id),
+            (run_id, run_id, lv2_id),
         ).fetchall()
 
         todo = [
             row for row in accepted
             if not conn.execute(
-                "SELECT 1 FROM content_quality_scores WHERE content_id = ? AND taxonomy_lv2 = ? AND type_name = ?",
-                (row["content_id"], lv2_id, row["type_name"]),
+                """SELECT 1 FROM content_quality_scores
+                   WHERE run_id = ? AND content_id = ? AND taxonomy_lv2 = ? AND type_name = ?""",
+                (run_id, row["content_id"], lv2_id, row["type_name"]),
             ).fetchone()
         ]
         if args.limit is not None:
@@ -131,9 +140,8 @@ async def run(args: argparse.Namespace) -> None:
 
         avg_overall = conn.execute(
             """
-            SELECT AVG(q.overall) a, COUNT(*) n FROM content_quality_scores q
-            JOIN content_discoveries d ON d.content_id = q.content_id
-            WHERE d.run_id = ? AND q.taxonomy_lv2 = ?
+            SELECT AVG(overall) a, COUNT(*) n FROM content_quality_scores
+            WHERE run_id = ? AND taxonomy_lv2 = ?
             """,
             (run_id, lv2_id),
         ).fetchone()

@@ -6,15 +6,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
-import time
 from dataclasses import dataclass
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
-from src.utils.prompts import render_prompt
+from src.utils.prompts import call_structured_output, call_structured_output_async
 
 # 기간을 가리키는 표현 (5.1절: 검색어에 절대 넣지 않는다. 기간 제한은 API 날짜 필터가 담당)
 _DATE_EXPRESSION = re.compile(
@@ -33,12 +31,21 @@ class GeneratedQueries:
     elapsed_s: float = 0.0
 
 
-def build_client(providers_cfg: dict) -> OpenAI:
+def _resolve_api_key(providers_cfg: dict) -> str:
     env_name = providers_cfg["openai"]["api_key_env"]
     api_key = os.environ.get(env_name)
     if not api_key:
         raise RuntimeError(f"{env_name} 환경변수가 설정되지 않았습니다.")
-    return OpenAI(api_key=api_key)
+    return api_key
+
+
+def build_client(providers_cfg: dict) -> OpenAI:
+    return OpenAI(api_key=_resolve_api_key(providers_cfg))
+
+
+def build_async_client(providers_cfg: dict) -> AsyncOpenAI:
+    """provider 하나의 tavily/serpapi 호출을 asyncio.gather로 동시에 보낼 때 쓴다."""
+    return AsyncOpenAI(api_key=_resolve_api_key(providers_cfg))
 
 
 def _format_criteria(criteria: list[str]) -> str:
@@ -86,6 +93,39 @@ def _filter_queries(raw_queries: list[str], provider: str = "", limits: dict | N
     return GeneratedQueries(accepted=accepted, rejected=rejected)
 
 
+def _render_inputs(
+    *,
+    taxonomy_lv2: str,
+    type_name: str,
+    definition: str,
+    search_vocabulary: list[str] | None,
+    include_criteria: list[str],
+    exclude_criteria: list[str],
+    query_axes: list[str] | None,
+    provider: str,
+    query_count: int,
+) -> dict:
+    return dict(
+        taxonomy_lv2=taxonomy_lv2,
+        type_name=type_name,
+        definition=definition,
+        search_vocabulary=_format_criteria(search_vocabulary or []),
+        include_criteria=_format_criteria(include_criteria),
+        exclude_criteria=_format_criteria(exclude_criteria),
+        query_axes=_format_criteria(query_axes or []),
+        provider=provider,
+        query_count=str(query_count),
+    )
+
+
+def _to_generated_queries(output, *, provider: str, query_limits: dict | None) -> GeneratedQueries:
+    result = _filter_queries(output.data["queries"], provider=provider, limits=query_limits)
+    result.prompt_tokens = output.prompt_tokens
+    result.completion_tokens = output.completion_tokens
+    result.elapsed_s = output.elapsed_s
+    return result
+
+
 def generate_queries(
     client: OpenAI,
     prompt_cfg: dict,
@@ -103,35 +143,36 @@ def generate_queries(
     query_limits: dict | None = None,
 ) -> GeneratedQueries:
     """provider 하나(tavily 또는 serpapi)에 대한 검색어 묶음을 생성한다."""
-    system_prompt, user_prompt = render_prompt(
-        prompt_cfg,
-        taxonomy_lv2=taxonomy_lv2,
-        type_name=type_name,
-        definition=definition,
-        search_vocabulary=_format_criteria(search_vocabulary or []),
-        include_criteria=_format_criteria(include_criteria),
-        exclude_criteria=_format_criteria(exclude_criteria),
-        query_axes=_format_criteria(query_axes or []),
-        provider=provider,
-        query_count=str(query_count),
+    inputs = _render_inputs(
+        taxonomy_lv2=taxonomy_lv2, type_name=type_name, definition=definition,
+        search_vocabulary=search_vocabulary, include_criteria=include_criteria,
+        exclude_criteria=exclude_criteria, query_axes=query_axes, provider=provider, query_count=query_count,
     )
+    output = call_structured_output(client, prompt_cfg, model, **inputs)
+    return _to_generated_queries(output, provider=provider, query_limits=query_limits)
 
-    started = time.monotonic()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {"name": "queries", "schema": prompt_cfg["output_schema"], "strict": True},
-        },
+
+async def generate_queries_async(
+    client: AsyncOpenAI,
+    prompt_cfg: dict,
+    *,
+    taxonomy_lv2: str,
+    type_name: str,
+    definition: str,
+    search_vocabulary: list[str] | None = None,
+    include_criteria: list[str],
+    exclude_criteria: list[str],
+    query_axes: list[str] | None = None,
+    provider: str,
+    query_count: int,
+    model: str,
+    query_limits: dict | None = None,
+) -> GeneratedQueries:
+    """generate_queries()의 비동기 버전 — 한 type의 tavily/serpapi 콜을 asyncio.gather로 동시에 보낼 때 쓴다."""
+    inputs = _render_inputs(
+        taxonomy_lv2=taxonomy_lv2, type_name=type_name, definition=definition,
+        search_vocabulary=search_vocabulary, include_criteria=include_criteria,
+        exclude_criteria=exclude_criteria, query_axes=query_axes, provider=provider, query_count=query_count,
     )
-    elapsed_s = time.monotonic() - started
-    payload = json.loads(response.choices[0].message.content)
-    result = _filter_queries(payload["queries"], provider=provider, limits=query_limits)
-    result.prompt_tokens = response.usage.prompt_tokens
-    result.completion_tokens = response.usage.completion_tokens
-    result.elapsed_s = elapsed_s
-    return result
+    output = await call_structured_output_async(client, prompt_cfg, model, **inputs)
+    return _to_generated_queries(output, provider=provider, query_limits=query_limits)

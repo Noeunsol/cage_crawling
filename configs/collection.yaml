@@ -16,9 +16,8 @@ dates:
 
 candidate_multiplier_options: [1.0, 1.5, 2.0, 3.0]
 
-# provider별 자동 candidate_multiplier (7절 확장, 2026-08-31). use_adaptive_multiplier=True로 실행할
-# 때만 쓰인다 — 기본 UI/실행 경로는 defaults.candidate_multiplier(단일값)를 그대로 쓰고 이 블록은
-# 무시한다 (src/discovery/adaptive_multiplier.py).
+# provider별 자동 candidate_multiplier (7절 확장, 2026-08-31). 기본 UI/실험 경로에서
+# 실제 accepted 전환율로 자동 계산하며, 표본이 부족할 때는 아래 initial 값을 쓴다.
 candidate_multiplier_by_provider:
   tavily:
     initial: 2.0
@@ -72,6 +71,12 @@ scheduling:
   stop_before_new_request_when_target_met: true
   finish_started_requests: true
   save_over_target_results: true
+  # lane(=lv2,type,provider 하나) 하나가 target을 못 채워도, "콜당 결과 최대치를 다 채운다는 이상적인
+  # 가정으로 필요한 콜 수"의 이 배수까지만 시도하고 포기한다. 없으면 target 미달 시 검색어를 전부
+  # 소진할 때까지(serpapi는 페이지까지 곱해서) 무한정 호출해 크레딧을 낭비할 수 있다.
+  # candidate_multiplier_options(목표 대비 수집 배수)와 같은 결의 값으로 2.0을 기본값으로 삼음
+  # (2026-09-01, 기존 3.0은 저조한 lane에서 낭비 콜을 과하게 허용한다고 판단해 낮춤).
+  lane_call_budget_multiplier: 2.0
 
 domain_partition:
   enabled: true
@@ -83,6 +88,9 @@ domain_partition:
 
 # provider 비율 (7.6절). LV2 성격(뉴스형/커뮤니티형/혼합형)에 따라 사용자가 확정한 표.
 # by_lv2에 없는 LV2는 default(5:5)를 쓴다. Streamlit "1. 수집 설정" 화면에서 실행 시점에 개별 조정도 가능.
+# 이 비율은 "실제 API 호출 수" 기준이다 — scheduler._call_weighted_ratio가 provider별 콜당 결과 수
+# (max_results_per_request: tavily 20 vs serpapi 10)로 보정하므로, 예를 들어 50:50이면 콘텐츠 목표는
+# tavily가 serpapi의 2배로 잡히지만(콜당 2배 더 찾아오니까) 실제 호출 횟수는 50:50에 가깝게 맞춰진다.
 provider_ratio:
   default:
     tavily: 50

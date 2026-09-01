@@ -1,6 +1,10 @@
 # API provider 설정 (5절). API key 값 자체는 여기 두지 않고 .env의 환경변수 이름만 참조한다 (16.1절).
 openai:
   model: gpt-4o-mini
+  query_generation_model: gpt-5.6-luna
+  query_generation_input_price_per_1m_usd: 0.20
+  query_generation_output_price_per_1m_usd: 1.20
+  web_search_price_per_1k_calls_usd: 10.00
   api_key_env: OPENAI_API_KEY
   # 1M 토큰당 USD (model 바꾸면 같이 갱신해야 함 — OpenAI 공식 가격표 참고)
   input_price_per_1m_usd: 0.15
@@ -15,8 +19,8 @@ tavily:
 query_limits:
   # 검색어 검증 상한(핵심어 수/글자수). generator._filter_queries가 강제한다.
   tavily:
-    max_terms: 8
-    max_characters: 80
+    max_terms: 5
+    max_characters: 40
   serpapi:
     max_terms: 5
     max_characters: 45
@@ -27,5 +31,4 @@ serpapi:
   # 결과가 10개로 고정된다. 실제와 맞춰 10으로 낮춤 — Google/SerpAPI가 복구하면 100으로 되돌릴 것.
   max_results_per_request: 10
   max_pages_per_query: 10  # 1페이지가 가득 차고 후보 목표가 부족할 때만 다음 페이지 요청
-  allow_cache: true
   no_cache: false

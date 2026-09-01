@@ -13,6 +13,7 @@ import math
 import os
 import sqlite3
 from datetime import date, timedelta
+from pathlib import Path
 
 import streamlit as st
 import yaml
@@ -49,11 +50,35 @@ def get_db() -> sqlite3.Connection:
     트랜잭션 상태를 동시에 건드려 "cannot commit - no transaction is active" 에러가 난다.
     세션별로 커넥션을 분리하면 각 세션 안에서는 항상 순차 실행이라 이 문제가 없다.
     """
-    if "db_conn" not in st.session_state:
-        configs = get_configs()
-        db_path = PROJECT_ROOT / configs["app"]["database"]["path"]
+    configs = get_configs()
+    db_path = Path(st.session_state.get("db_path", configs["app"]["database"]["path"]))
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+
+    connected_path = st.session_state.get("db_conn_path")
+    if "db_conn" not in st.session_state or (connected_path and connected_path != str(db_path)):
+        if "db_conn" in st.session_state:
+            st.session_state["db_conn"].close()
         st.session_state["db_conn"] = connect(db_path)
+        st.session_state["db_conn_path"] = str(db_path)
     return st.session_state["db_conn"]
+
+
+def render_db_panel() -> None:
+    """사이드바에서 database 디렉터리의 SQLite DB를 선택한다."""
+    default = get_configs()["app"]["database"]["path"]
+    options = [str(path.relative_to(PROJECT_ROOT)) for path in sorted((PROJECT_ROOT / "database").glob("*.db"))]
+    if default not in options:
+        options.insert(0, default)
+
+    selected = st.sidebar.selectbox(
+        "DB 파일",
+        options,
+        index=options.index(st.session_state.get("db_path", default))
+        if st.session_state.get("db_path", default) in options else 0,
+        key="db_path",
+    )
+    st.sidebar.caption(f"사용 중: `{selected}`")
 
 
 def reload_configs() -> None:
@@ -289,8 +314,10 @@ def effective_provider_ratio(setup: dict, configs: dict, lv2_id: str) -> dict:
     return by_lv2.get(lv2_id, setup["provider_ratio"])
 
 
-def suggested_query_counts(configs: dict, setup: dict, lv2_id: str, num_types_in_lv2: int = 1) -> tuple[int, int]:
-    """수집 설정(target_count/candidate_multiplier/provider_ratio)으로 검색어 생성 개수를 역산한다.
+def suggested_query_counts(
+    configs: dict, setup: dict, lv2_id: str, num_types_in_lv2: int = 1, *, conn=None, type_name: str | None = None,
+) -> tuple[int, int]:
+    """목표량·provider 배분·실제 accepted 전환율로 검색어 수를 역산한다.
 
     target_count는 LV2 기준 목표라 이 LV2의 type 수만큼 먼저 나눈 뒤(나머지는 올림) 콜당
     최대 결과 수로 나눈 최소 호출 수에 safety_factor를 곱한다 — 실제로는 중복·필터링 탓에
@@ -302,10 +329,32 @@ def suggested_query_counts(configs: dict, setup: dict, lv2_id: str, num_types_in
         return qgen_cfg["tavily_count_per_type"], qgen_cfg["serpapi_count_per_type"]
 
     per_type = per_type_target_count(setup["target_count"], num_types_in_lv2)
-    total = candidate_target(per_type, setup["candidate_multiplier"])
     ratio = effective_provider_ratio(setup, configs, lv2_id)
-    tavily_target = round(total * ratio["tavily"] / 100)
-    serpapi_target = total - tavily_target
+    tavily_accepted = round(per_type * ratio["tavily"] / 100)
+    serpapi_accepted = per_type - tavily_accepted
+    # type당 목표가 1건처럼 작아도 배분 비율이 0이 아닌 provider의
+    # 검색어 후보군은 없애지 않는다. 이때 합계는 목표량보다 1건 늘어날 수 있다.
+    if ratio["tavily"] > 0:
+        tavily_accepted = max(1, tavily_accepted)
+    if ratio["serpapi"] > 0:
+        serpapi_accepted = max(1, serpapi_accepted)
+
+    if conn is not None and type_name is not None:
+        from src.discovery.adaptive_multiplier import compute_multiplier
+
+        snapshot = setup.get("adaptive_multiplier_snapshot", {})
+        tavily_multiplier = snapshot.get(
+            f"{lv2_id}::{type_name}::tavily", compute_multiplier(conn, configs, lv2_id, type_name, "tavily"),
+        )
+        serpapi_multiplier = snapshot.get(
+            f"{lv2_id}::{type_name}::serpapi", compute_multiplier(conn, configs, lv2_id, type_name, "serpapi"),
+        )
+        tavily_target = math.ceil(tavily_accepted * tavily_multiplier)
+        serpapi_target = math.ceil(serpapi_accepted * serpapi_multiplier)
+    else:
+        total = candidate_target(per_type, setup["candidate_multiplier"])
+        tavily_target = round(total * ratio["tavily"] / 100)
+        serpapi_target = total - tavily_target
 
     def _suggest(provider_target: int, provider: str, floor: int) -> int:
         if provider_target <= 0:

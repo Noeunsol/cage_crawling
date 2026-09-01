@@ -15,10 +15,19 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 # 컬럼이 새로 필요해지면 여기 추가한다 (2026-08-31: 근사 중복 탐지용 컬럼). 이미 있으면 조용히
 # 건너뛴다 — 매번 connect()할 때마다 안전하게 다시 돌 수 있다.
 _COLUMN_MIGRATIONS = [
+    ("query_generation_calls", "run_id", "TEXT REFERENCES collection_runs(run_id)"),
+    ("query_generation_calls", "web_search_calls", "INTEGER NOT NULL DEFAULT 0"),
     ("contents", "title_normalized", "TEXT"),
     ("contents", "content_fingerprint", "TEXT"),
     ("content_duplicates", "title_similarity", "REAL"),
     ("content_duplicates", "content_similarity", "REAL"),
+]
+
+# informativeness -> content_quality 컬럼명 변경 (2026-08-31: 정량평가 품질 지표를 스펙의
+# 4항목-한국관련성/Taxonomy관련성/사례구체성/본문품질-에 맞추면서). RENAME COLUMN은 SQLite
+# 3.25+에서 지원하며 기존 값(과거 정의 기준 점수)은 그대로 보존된다.
+_COLUMN_RENAMES = [
+    ("content_quality_scores", "informativeness", "content_quality"),
 ]
 
 
@@ -27,6 +36,10 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    for table, old_name, new_name in _COLUMN_RENAMES:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if old_name in existing and new_name not in existing:
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old_name} TO {new_name}")
 
 
 def connect(db_path: Path) -> sqlite3.Connection:

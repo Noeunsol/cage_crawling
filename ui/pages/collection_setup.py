@@ -153,7 +153,7 @@ if date_error:
     st.error(date_error)
 
 # ---------------------------------------------------------------- ③ 목표 수집량과 후보 배수
-st.subheader("③ 목표 수집량과 후보 배수")
+st.subheader("③ 목표 수집량과 초기 후보 배수")
 col1, col2 = st.columns(2)
 with col1:
     setup["target_count"] = st.number_input(
@@ -174,7 +174,7 @@ with col2:
     options = configs["collection"]["candidate_multiplier_options"]
     setup["candidate_multiplier"] = st.select_slider(
         "후보 배수 (candidate_multiplier)", options=options, value=setup["candidate_multiplier"],
-        help="candidate_target = ceil(목표 × 배수). 필터링으로 제외될 걸 감안해 더 많이 찾아봅니다 (7.1절).",
+        help="실측 전환율 표본이 부족할 때만 쓰는 초기 안전값입니다.",
     )
     st.caption(multiplier_help.get(setup["candidate_multiplier"], ""))
 

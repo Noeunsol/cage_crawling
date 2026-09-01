@@ -82,6 +82,19 @@ def test_api_key_panel_lets_user_enter_missing_key_manually(monkeypatch):
     assert any("✅ **openai**" in w.value for w in at.markdown)
 
 
+def test_app_lets_user_select_database():
+    at = AppTest.from_file("app.py")
+    at.run(timeout=30)
+
+    db_select = at.selectbox(key="db_path")
+    assert "database/content.db" in db_select.options
+    assert "database/test_content.db" in db_select.options
+
+    db_select.select("database/test_content.db")
+    at.run(timeout=30)
+    assert at.session_state["db_path"] == "database/test_content.db"
+
+
 def test_query_review_unchecks_types_that_already_have_both_providers_covered(tmp_path, monkeypatch):
     from src.storage import database
     from src.storage.repositories import queries as queries_repo
@@ -234,6 +247,113 @@ def test_collection_setup_lv2_date_override_adds_widgets(monkeypatch):
 
     assert not at.exception
     assert len(at.date_input) == 2  # 전역 컨트롤은 없앴고, LV2 override 2개만 남는다
+
+
+class _FakeSyncClient:
+    """freshness/vocabulary 경로가 웹서치를 시도하다 실패해도 조용히 넘어가는지만 필요 — 실제 호출은 안 감."""
+
+    def __init__(self):
+        self.responses = None  # .responses.create(...) 호출 시 AttributeError -> resolve_vocabulary가 흡수
+
+
+class _FakeAsyncClient:
+    """generate_queries_async가 부르는 client.chat.completions.create(...)만 흉내낸다."""
+
+    class _Completions:
+        async def create(self, **kwargs):
+            import json as _json
+            from types import SimpleNamespace
+
+            content = _json.dumps({"queries": ["가짜 검색어 하나"]}, ensure_ascii=False)
+            message = SimpleNamespace(content=content)
+            usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.chat = SimpleNamespace(completions=self._Completions())
+
+
+class _PartiallyFailingAsyncClient:
+    """tavily 콜은 성공하고 serpapi 콜만 실패하는 가짜 client — 부분 실패 시 나머지가 살아있는지 확인용."""
+
+    class _Completions:
+        async def create(self, **kwargs):
+            import json as _json
+            from types import SimpleNamespace
+
+            user_message = kwargs["messages"][1]["content"]
+            if "provider: serpapi" in user_message:
+                raise RuntimeError("잠깐 API 오류")
+            content = _json.dumps({"queries": ["가짜 검색어 하나"]}, ensure_ascii=False)
+            message = SimpleNamespace(content=content)
+            usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5)
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+    def __init__(self):
+        from types import SimpleNamespace
+
+        self.chat = SimpleNamespace(completions=self._Completions())
+
+
+def test_query_review_batch_generation_keeps_partial_success_when_one_provider_call_fails(tmp_path, monkeypatch):
+    """serpapi 콜이 예외를 던져도 tavily 콜(이미 성공한 결과)은 저장되고, 배치 전체가 죽지 않는다."""
+    from src.query.repository import list_active_queries
+    from src.storage import database
+
+    conn = database.connect(tmp_path / "test.db")
+    monkeypatch.setattr("ui.common.get_db", lambda: conn)
+    monkeypatch.setattr("src.query.generator.build_client", lambda providers_cfg: _FakeSyncClient())
+    monkeypatch.setattr("src.query.generator.build_async_client", lambda providers_cfg: _PartiallyFailingAsyncClient())
+
+    at = AppTest.from_file("ui/pages/query_review.py")
+    at.session_state["setup"] = {
+        "selected_lv2": ["1_A_Toxic_Language"], "type_enabled": {}, "target_count": 5, "candidate_multiplier": 1.5,
+        "date_from": date(2025, 1, 1), "date_to": date(2026, 1, 1),
+        "provider_ratio": {"tavily": 50, "serpapi": 50},
+        "date_overrides": {}, "provider_ratio_overrides": {}, "confirmed": True,
+    }
+    at.run(timeout=30)
+    assert not at.exception
+
+    next(b for b in at.button if "일괄 생성" in b.label).click()
+    at.run(timeout=60)
+
+    assert not at.exception   # 예외 하나 때문에 전체 스크립트가 죽지 않아야 한다
+    assert any("생성 실패로 건너뜁니다" in w.value for w in at.warning)
+    saved = list_active_queries(
+        conn, taxonomy_lv2="1_A_Toxic_Language", type_name="cyberbullying_and_harassment", provider="tavily",
+    )
+    assert len(saved) == 1   # 실패한 serpapi와 별개로 tavily 결과는 저장돼 있다
+
+
+def test_query_review_batch_generation_runs_async_gather_without_exception(tmp_path, monkeypatch):
+    """type당 tavily/serpapi를 asyncio.gather로 동시 호출하는 경로가 Streamlit 안에서 실제로 도는지 확인한다."""
+    from src.storage import database
+
+    conn = database.connect(tmp_path / "test.db")
+    monkeypatch.setattr("ui.common.get_db", lambda: conn)
+    monkeypatch.setattr("src.query.generator.build_client", lambda providers_cfg: _FakeSyncClient())
+    monkeypatch.setattr("src.query.generator.build_async_client", lambda providers_cfg: _FakeAsyncClient())
+
+    at = AppTest.from_file("ui/pages/query_review.py")
+    at.session_state["setup"] = {
+        "selected_lv2": ["1_A_Toxic_Language"], "type_enabled": {}, "target_count": 5, "candidate_multiplier": 1.5,
+        "date_from": date(2025, 1, 1), "date_to": date(2026, 1, 1),
+        "provider_ratio": {"tavily": 100, "serpapi": 0},
+        "date_overrides": {}, "provider_ratio_overrides": {}, "confirmed": True,
+    }
+    at.run(timeout=30)
+    assert not at.exception
+
+    generate_button = next(b for b in at.button if "일괄 생성" in b.label)
+    assert generate_button.disabled is False
+    generate_button.click()
+    at.run(timeout=60)
+
+    assert not at.exception
+    assert any("생성을 마쳤습니다" in s.value for s in at.success)
 
 
 def test_query_review_lets_user_reactivate_used_query(tmp_path, monkeypatch):

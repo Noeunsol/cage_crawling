@@ -96,6 +96,7 @@ CREATE INDEX IF NOT EXISTS idx_query_executions_query ON query_executions(query_
 -- 검색어 생성(OpenAI) 호출 1건당 1행. DB 전체 OpenAI 비용 집계용 (14.3절 검색어 생성 화면).
 CREATE TABLE IF NOT EXISTS query_generation_calls (
     id                 INTEGER PRIMARY KEY,
+    run_id             TEXT REFERENCES collection_runs(run_id),
     taxonomy_lv2       TEXT NOT NULL,
     type_name          TEXT NOT NULL,
     provider           TEXT NOT NULL,          -- tavily / serpapi (이 호출로 검색어를 만든 대상)
@@ -103,6 +104,7 @@ CREATE TABLE IF NOT EXISTS query_generation_calls (
     prompt_tokens      INTEGER NOT NULL,
     completion_tokens  INTEGER NOT NULL,
     elapsed_s          REAL NOT NULL,
+    web_search_calls   INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -197,14 +199,15 @@ CREATE INDEX IF NOT EXISTS idx_domain_bundles_type ON serpapi_domain_bundles(typ
 -- 정량 평가 실험용: accepted 콘텐츠에 대한 사람 라벨(Taxonomy 정밀도 산출용).
 -- 정량 평가 실험용: accepted 콘텐츠의 OpenAI 품질 점수 (제외/재판정에는 쓰지 않는다 — 성능 수치화 전용).
 CREATE TABLE IF NOT EXISTS content_quality_scores (
+    run_id              TEXT NOT NULL REFERENCES collection_runs(run_id),
     content_id          INTEGER NOT NULL REFERENCES contents(id),
     taxonomy_lv2        TEXT NOT NULL,
     type_name           TEXT NOT NULL,
     specificity         INTEGER NOT NULL,
-    informativeness     INTEGER NOT NULL,
+    content_quality     INTEGER NOT NULL,
     relevance_strength  INTEGER NOT NULL,
     korean_locality     INTEGER NOT NULL,
-    overall             INTEGER NOT NULL,
+    overall             REAL NOT NULL,   -- 네 항목(specificity/content_quality/relevance_strength/korean_locality)의 평균 — 코드가 계산, 모델이 매기지 않음
     reason              TEXT,
     issues              TEXT,   -- JSON 문자열 배열 (예: ["ad_content", "generic_description"])
     model               TEXT NOT NULL,
@@ -212,15 +215,16 @@ CREATE TABLE IF NOT EXISTS content_quality_scores (
     completion_tokens    INTEGER NOT NULL,
     elapsed_s            REAL NOT NULL,
     scored_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (content_id, taxonomy_lv2, type_name)
+    PRIMARY KEY (run_id, content_id, taxonomy_lv2, type_name)
 );
 
 CREATE TABLE IF NOT EXISTS eval_labels (
+    run_id       TEXT NOT NULL REFERENCES collection_runs(run_id),
     content_id   INTEGER NOT NULL REFERENCES contents(id),
     taxonomy_lv2 TEXT NOT NULL,
     type_name    TEXT NOT NULL,
     human_label  TEXT NOT NULL,   -- accepted / excluded (사람 판단)
     labeled_by   TEXT NOT NULL,
     labeled_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    PRIMARY KEY (content_id, taxonomy_lv2, type_name)
+    PRIMARY KEY (run_id, content_id, taxonomy_lv2, type_name)
 );

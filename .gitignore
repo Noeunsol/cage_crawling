@@ -24,6 +24,7 @@ logs/
 
 # experiments/ 실행 산출물 (스크립트는 추적, 결과물은 매 run마다 갱신되므로 제외)
 experiments/experiment_runs.jsonl
+experiments/test_experiment_runs.jsonl
 experiments/report.md
 experiments/report.csv
 experiments/report_failure_reasons.csv
