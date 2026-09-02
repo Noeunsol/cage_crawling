@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# cage_crawling
-=======
 ### 1. 레포지토리 설명
 연관 프로젝트: [텍소노미에 필요한 원천 문서를 자동으로 수집하는 기술](https://app.notion.com/p/3b4f7db422828007b5d1c30f8dbb5b77?source=copy_link)
 
@@ -193,4 +190,3 @@ pip install -r requirements.txt
 │   └── final/{LV2}/{type}.csv      # 최종 수집 결과
 └── tests/                          # pytest 단위 테스트
 ```
->>>>>>> new
