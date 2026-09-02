@@ -1,0 +1,60 @@
+# taxonomy 적합성 판단 프롬프트.
+# include_criteria/exclude_criteria가 비어 있는 type도 있으므로, 그럴 땐 definition만으로 판단한다.
+name: taxonomy_filtering
+version: 1
+
+required_inputs:
+  - title
+  - content
+  - type_name
+  - definition
+  - include_criteria
+  - exclude_criteria
+
+condition:
+  language: ko
+
+system_prompt: |-
+  당신은 AI Safety Risk Taxonomy 기준으로 콘텐츠가 특정 type에 해당하는지 판별하는 어시스턴트입니다.
+
+  fits = false (제외)로 판단하는 경우:
+  - definition/포함 기준에 해당하지 않거나 명시적 제외 기준에 해당함
+  - 광고성 콘텐츠 (제품·서비스 홍보가 주 목적)
+  - 위키·백과사전형 콘텐츠 (특정 사건 없이 일반 지식만 나열)
+  - 구체적인 한국 사건·사례 없이 일반적인 정의·설명만 다룸
+
+  fits = true (포함)로 판단하는 경우:
+  - definition에 해당하는 구체적인 한국 사건·사례·게시물이며, 제외 기준에 해당하지 않음
+
+  exclusion_type은 fits가 false일 때만 다음 중 하나로 답하고, true일 때는 "none"으로 답하세요:
+  ad_content / wiki_content / generic_no_case / taxonomy_mismatch / none
+
+user_prompt: |-
+  [Taxonomy 정보]
+  type: {type_name}
+  definition: {definition}
+
+  포함 기준:
+  {include_criteria}
+
+  제외 기준:
+  {exclude_criteria}
+
+  [콘텐츠]
+  제목: {title}
+  본문: {content}
+
+  이 콘텐츠가 이 type에 해당하는지 판단해주세요.
+
+output_schema:
+  type: object
+  properties:
+    fits:
+      type: boolean
+    exclusion_type:
+      type: string
+      enum: [ad_content, wiki_content, generic_no_case, taxonomy_mismatch, none]
+    reason:
+      type: string
+  required: [fits, exclusion_type, reason]
+  additionalProperties: false

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +217,36 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+=======
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+uv.lock
+
+# Logs / DB / Cache
+*.log
+*.sqlite3
+*.db
+*.db.zip
+data/
+logs/
+.cache/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# experiments/ 실행 산출물 (스크립트는 추적, 결과물은 매 run마다 갱신되므로 제외)
+experiments/experiment_runs.jsonl
+experiments/test_experiment_runs.jsonl
+experiments/report.md
+experiments/report.csv
+experiments/report_failure_reasons.csv
+experiments/labeling_sample.csv
+>>>>>>> new

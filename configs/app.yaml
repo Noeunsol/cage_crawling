@@ -1,0 +1,8 @@
+# 앱 전역 경로/기본값.
+database:
+  path: database/content.db
+
+export:
+  final_dir: data/final   # data/final/[LV2]/[type].csv
+
+logging_config: configs/logging.yaml

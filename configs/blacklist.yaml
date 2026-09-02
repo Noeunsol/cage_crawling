@@ -1,0 +1,29 @@
+# 전체 수집 대상에서 항상 제외하는 도메인 (provider 무관, 전역 금지 목록).
+# type_domains.yaml(type별 serpapi 허용 목록)의 반대 개념 — 이건 어디서도 절대 허용하지 않는다.
+# UI("도메인 설정" 페이지)에서 편집하면 이 파일이 통째로 재작성되어 주석은 사라진다.
+domains:
+- boho.or.kr
+- blog.naver.com
+- dbpia.co.kr
+- facebook.com
+- github.com
+- humanrights.go.kr
+- instagram.com
+- kci.go.kr
+- kisa.or.kr
+- khan.co.kr
+- ko.wikipedia.org
+- kr.linkedin.com
+- namu.wiki
+- pann.nate.com
+- police.go.kr
+- quasarzone.com
+- reddit.com
+- scienceon.kisti.re.kr
+- sentinelone.com
+- threads.com
+- tiktok.com
+- twitter.com
+- x.com
+- youtu.be
+- youtube.com

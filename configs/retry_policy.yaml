@@ -1,0 +1,73 @@
+# 실패/제외 사유별 재시도 정책. reason code는 discarded_candidates.reason에 그대로 저장된다.
+#
+# retry_mode 3단계 (2026-08-31, retryable bool을 대체):
+#   immediate            — find_retryable_candidates가 다음 run에서 max_attempts까지 자동 재시도
+#   after_parser_update  — 지금 코드로는 다시 시도해도 똑같이 실패할 걸로 보여 자동 재시도는 안 함.
+#                           파서/추출 로직을 고친 뒤 사람이 골라서 수동으로 재시도해야 하는 후보들.
+#   never                — 재시도해도 결과가 달라질 수 없음(권한/404/이미 저장됨 등)
+#
+# src/utils/retry_policy_helpers.py::is_immediately_retryable()가 이 값을 읽어서
+# discarded_candidates.retryable(bool)을 계산한다 — DB엔 여전히 bool만 저장되고,
+# after_parser_update/never 구분은 여기 retry_mode로만 남는다(사람이 나중에 조회할 때 씀).
+reasons:
+  timeout:
+    retry_mode: immediate
+    max_attempts: 3
+    backoff_seconds: 5
+  temporary_http_error:
+    retry_mode: immediate
+    max_attempts: 3
+    backoff_seconds: 5
+  access_denied:            # 로그인/권한이 필요해 본문에 접근할 수 없음
+    retry_mode: never
+  not_found:                 # 삭제되었거나 존재하지 않는 글
+    retry_mode: never
+  date_out_of_range:
+    retry_mode: never                       # 이번 실행 날짜 범위에서는 재시도 안 함
+    retryable_for_different_date_range: true  # 다른 기간으로 재실행하면 재시도 가능
+  duplicate:
+    retry_mode: never
+  blacklisted_domain:
+    retry_mode: never
+  homepage_url:              # 검색 API가 특정 기사 대신 사이트 홈페이지를 돌려준 경우 — fetch 자체를 안 함
+    retry_mode: never
+  target_reached:            # save_over_target_results=false일 때 lv2 목표 수집량 도달 후 건너뜀
+    retry_mode: never
+  low_korea_relevance:
+    retry_mode: never
+  taxonomy_mismatch:
+    retry_mode: never
+  # extraction_failed를 둘로 쪼갰다(2026-08-31) — 예전엔 하나로 묶여서 reddit/tiktok처럼
+  # 구조적으로 파싱 불가능한 사이트도 timeout처럼 재시도됐다(실측: retry 101건 중 대부분 낭비).
+  extraction_empty:      # trafilatura가 본문을 아예 못 찾음 — 대개 JS 렌더링 사이트, 정적 fetch로는 못 구함
+    retry_mode: after_parser_update
+    max_attempts: 1
+  extraction_too_short:  # 뭔가 뽑히긴 했는데 min_content_length 미만 — 로그인 미리보기/일시적 응답일 수 있어 재시도 가치 있음
+    retry_mode: immediate
+    max_attempts: 2
+    backoff_seconds: 5
+  unexpected_error:          # 알려지지 않은 예외(라이브러리 버그 등) — 한 후보 실패가 전체 실행을 막지 않는다
+    retry_mode: immediate
+    max_attempts: 2
+    backoff_seconds: 5
+
+# provider별 요청 간 최소 간격(초)과 동시 요청 수.
+rate_limit:
+  # 검색(tavily/serpapi)은 scheduler.py가 round-robin으로 순차 호출한다 — max_concurrency는
+  # 실제로 쓰이지 않으므로 실상태 그대로 1로 명시해둔다 (2026-08-31: 예전엔 4였는데 코드가
+  # 안 읽어서 죽은 설정이었다).
+  tavily:
+    min_interval_seconds: 0.5
+    max_concurrency: 1
+  serpapi:
+    min_interval_seconds: 0.5
+    max_concurrency: 1
+  # fetch만 실제로 동시 실행된다 (collector.py의 asyncio.to_thread). max_concurrency는 전체 상한,
+  # max_concurrency_per_domain은 같은 도메인에 대한 상한 — 둘 다 코드가 실제로 읽는다.
+  fetch:
+    min_interval_seconds: 1.0
+    max_concurrency: 5
+    max_concurrency_per_domain: 2
+
+request:
+  timeout_seconds: 15
