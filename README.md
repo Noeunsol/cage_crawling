@@ -187,7 +187,6 @@ pip install -r requirements.txt
 ├── experiments/                    # 정량 평가 CLI (run_experiment → score_quality → build_report, labeling)
 ├── database/                       # SQLite DB (content.db)
 ├── data/
-│   ├── final/{LV2}/{type}.csv      # 최종 수집 결과
-│   └── fail/{LV2}/{type}.csv       # 실패/샘플 데이터
+│   └── final/{LV2}/{type}.csv      # 최종 수집 결과
 └── tests/                          # pytest 단위 테스트
 ```
