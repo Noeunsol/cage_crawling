@@ -55,3 +55,15 @@ def is_blocklisted_domain(domain: str, blacklist_domains: list[str]) -> bool:
     """루트 도메인을 등록하면 ``www``·모바일 등 모든 하위 도메인도 차단한다."""
     domain = domain.lower().split(":", 1)[0].rstrip(".")
     return any(domain == blocked or domain.endswith(f".{blocked}") for blocked in blacklist_domains)
+
+
+def is_homepage_url(normalized_url: str) -> bool:
+    """도메인 루트만 가리키는 URL(뉴스사 홈페이지 등)인지 본다.
+
+    검색 API가 특정 기사 대신 사이트 홈페이지를 결과로 돌려주는 경우가 있다(2026-09-01 실측:
+    newsis.com, donga.com). 홈페이지는 여러 기사가 뒤섞여 있어 trafilatura가 무엇을 뽑아도
+    특정 기사 하나로 신뢰할 수 없으므로 fetch 전에 걸러낸다. normalize_url()이 루트 경로를
+    항상 "/"로 통일해두므로, 쿼리 파라미터 없이 경로가 "/"뿐이면 홈페이지로 본다.
+    """
+    parts = urlsplit(normalized_url)
+    return parts.path == "/" and not parts.query

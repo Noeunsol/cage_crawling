@@ -32,11 +32,12 @@ def find_retryable_candidates(
             """
             SELECT dc.original_url, dc.normalized_url, dc.reason, dc.query_id, sq.provider,
                    (SELECT COUNT(*) FROM discarded_candidates dc2
-                    WHERE dc2.normalized_url = dc.normalized_url) AS attempt_count
+                    WHERE dc2.normalized_url = dc.normalized_url
+                      AND dc2.reason = dc.reason) AS attempt_count
             FROM discarded_candidates dc
             JOIN search_queries sq ON sq.id = dc.query_id
             WHERE sq.taxonomy_lv2 = ? AND sq.type_name = ? AND dc.retryable = 1
-            ORDER BY dc.discarded_at DESC
+            ORDER BY dc.discarded_at DESC, dc.id DESC
             """,
             (lv2_id, type_name),
         ).fetchall()

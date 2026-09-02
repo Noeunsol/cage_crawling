@@ -173,6 +173,26 @@ def test_process_candidate_skips_fetch_entirely_for_blacklisted_domain(tmp_path,
     assert conn.execute("SELECT COUNT(*) c FROM contents").fetchone()["c"] == 0
 
 
+def test_process_candidate_skips_fetch_entirely_for_homepage_url(tmp_path, monkeypatch):
+    # 검색 API가 특정 기사 대신 사이트 홈페이지를 결과로 돌려줄 때가 있다(실측: newsis.com,
+    # donga.com) — 여러 기사가 섞여 있어 fetch해도 신뢰할 수 없으므로 요청 자체를 안 한다.
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+
+    def boom(*a, **kw):
+        raise AssertionError("홈페이지 URL인데 fetch를 시도했다")
+
+    monkeypatch.setattr("requests.get", boom)
+
+    outcome = process_candidate(
+        conn, _candidate(query_id, url="https://www.newsis.com/"), **_common_kwargs(conn, []),
+    )
+
+    assert outcome.status == "discarded"
+    assert outcome.reason == "homepage_url"
+    assert conn.execute("SELECT COUNT(*) c FROM contents").fetchone()["c"] == 0
+
+
 def test_process_candidate_discards_duplicate_url_without_fetching(tmp_path, monkeypatch):
     conn = _make_conn(tmp_path)
     query_id = _seed_query(conn)

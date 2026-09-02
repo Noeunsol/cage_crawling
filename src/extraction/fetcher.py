@@ -49,7 +49,8 @@ def fetch(url: str, extraction_cfg: dict, retry_policy: dict) -> FetchResult:
         raise FetchError("access_denied", is_immediately_retryable(reasons_cfg, "access_denied"))
     if status == 404:
         raise FetchError("not_found", is_immediately_retryable(reasons_cfg, "not_found"))
-    if status >= 500:
+    if status >= 500 or status == 429:
+        # 429(rate limit)는 4xx여도 서버 쪽의 일시적 상태라 500대와 동일하게 재시도 대상이다.
         raise FetchError(
             "temporary_http_error", is_immediately_retryable(reasons_cfg, "temporary_http_error")
         )

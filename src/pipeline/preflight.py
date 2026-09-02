@@ -51,7 +51,7 @@ def run_preflight(
     serpapi_page_size = configs["providers"].get("serpapi", {}).get("max_results_per_request", 10)
     # scheduler.py의 lane_call_budget_multiplier와 같은 안전장치 — target을 못 채워도 검색어를
     # 무한정 다 쓰지 않고 이 배수에서 포기하므로, worst-case 추정도 이 상한을 넘지 않는다.
-    budget_multiplier = configs.get("collection", {}).get("scheduling", {}).get("lane_call_budget_multiplier", 3)
+    budget_multiplier = configs.get("collection", {}).get("scheduling", {}).get("lane_call_budget_multiplier", 2.0)
     # target_count는 LV2 기준 목표다 — 같은 LV2에 type이 여럿이면 나눠 갖는다 (나머지는 올림).
     types_per_lv2 = Counter(lv2_id for lv2_id, _ in targets)
 

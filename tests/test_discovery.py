@@ -82,6 +82,25 @@ def test_tavily_provider_sends_exclude_domains_and_date_filter(monkeypatch):
     assert response.usage == {"requests": 1}
 
 
+def test_tavily_provider_skips_results_missing_url(monkeypatch):
+    """Tavily가 이상 응답으로 url 없는 항목을 섞어 보내도 KeyError로 전체 검색이 죽으면 안 된다
+    (serpapi_provider.py는 이미 "link" in item으로 방어하고 있었는데 tavily는 무방비였다)."""
+    def fake_search(self, **kwargs):
+        return {
+            "results": [{"url": "https://a.com/1"}, {"score": 0.5}, {"url": "https://a.com/2"}],
+            "usage": {},
+        }
+
+    monkeypatch.setattr("tavily.TavilyClient.search", fake_search)
+    provider = TavilyProvider(api_key="dummy", config={})
+
+    response = provider.search(
+        "자살 생각 커뮤니티 글", date_from=date(2025, 1, 1), date_to=date(2026, 1, 1), exclude_domains=[],
+    )
+
+    assert [r.url for r in response.results] == ["https://a.com/1", "https://a.com/2"]
+
+
 def test_tavily_provider_sends_country_when_configured(monkeypatch):
     captured = {}
 

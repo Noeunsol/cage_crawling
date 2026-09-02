@@ -161,17 +161,18 @@ def _build_lanes(
                 warnings.append(
                     f"{lv2_id}::{type_name}: {reason} 목표 {per_type_target_count}건 전량을 Tavily로 진행합니다."
                 )
+            def _multiplier(provider: str) -> float:
+                key = f"{lv2_id}::{type_name}::{provider}"
+                snapshot = adaptive_multiplier_snapshot or {}
+                if key in snapshot:
+                    return snapshot[key]
+                return adaptive_multiplier.compute_multiplier(conn, configs, lv2_id, type_name, provider)
+
             tavily_target = (
-                math.ceil(tavily_accepted_share * (adaptive_multiplier_snapshot or {}).get(
-                    f"{lv2_id}::{type_name}::tavily",
-                    adaptive_multiplier.compute_multiplier(conn, configs, lv2_id, type_name, "tavily"),
-                )) if tavily_accepted_share > 0 else 0
+                math.ceil(tavily_accepted_share * _multiplier("tavily")) if tavily_accepted_share > 0 else 0
             )
             serpapi_target = (
-                math.ceil(serpapi_accepted_share * (adaptive_multiplier_snapshot or {}).get(
-                    f"{lv2_id}::{type_name}::serpapi",
-                    adaptive_multiplier.compute_multiplier(conn, configs, lv2_id, type_name, "serpapi"),
-                )) if serpapi_accepted_share > 0 else 0
+                math.ceil(serpapi_accepted_share * _multiplier("serpapi")) if serpapi_accepted_share > 0 else 0
             )
         else:
             total = math.ceil(per_type_target_count * candidate_multiplier)
@@ -226,7 +227,7 @@ def _build_lanes(
     # 배수가 의도보다 훨씬 커진다(2026-08-31 리뷰에서 발견: type 5개 x lane당 3콜 = 15콜로 총
     # 기대치의 7배가 나왔다). "콜당 최대치를 다 채운다는 이상적인 가정으로 (lv2,provider) 전체가
     # 필요한 콜 수" x lane_call_budget_multiplier를 그 (lv2,provider)의 모든 type이 나눠 쓴다.
-    budget_multiplier = configs.get("collection", {}).get("scheduling", {}).get("lane_call_budget_multiplier", 3)
+    budget_multiplier = configs.get("collection", {}).get("scheduling", {}).get("lane_call_budget_multiplier", 2.0)
     group_targets: dict[tuple[str, str], int] = {}
     for lane in lanes:
         group_targets[(lane.lv2_id, lane.provider)] = group_targets.get((lane.lv2_id, lane.provider), 0) + lane.target

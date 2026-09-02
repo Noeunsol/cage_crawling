@@ -38,7 +38,7 @@ from src.utils import similarity
 from src.utils.quota import QuotaExceededError, classify as classify_quota_error
 from src.utils.retry_policy_helpers import is_immediately_retryable
 from src.utils.text import compute_content_hash
-from src.utils.urls import is_blocklisted_domain, normalize_url
+from src.utils.urls import is_blocklisted_domain, is_homepage_url, normalize_url
 
 
 def _domain(url: str) -> str:
@@ -165,6 +165,13 @@ async def _fetch_all(
             return _FetchExtractResult(
                 final_url=normalized_url, domain=domain,
                 error_reason="blacklisted_domain", error_retryable=False,
+            )
+        if is_homepage_url(normalized_url):
+            # 검색 API가 특정 기사 대신 사이트 홈페이지를 결과로 돌려줄 때가 있다 — 여러 기사가
+            # 뒤섞여 있어 무엇을 추출해도 특정 사례 하나로 신뢰할 수 없으므로 fetch 자체를 안 한다.
+            return _FetchExtractResult(
+                final_url=normalized_url, domain=domain,
+                error_reason="homepage_url", error_retryable=False,
             )
         async with global_sem, _domain_sem(domain):
             try:
@@ -333,6 +340,11 @@ def process_candidate(
         return _discard(
             conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
             reason="blacklisted_domain", retryable=False, detail="블랙리스트 도메인이라 요청을 보내지 않았습니다.",
+        )
+    if is_homepage_url(normalized_url):
+        return _discard(
+            conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
+            reason="homepage_url", retryable=False, detail="사이트 홈페이지라 특정 기사로 신뢰할 수 없어 요청을 보내지 않았습니다.",
         )
     reused = _reuse_for_new_taxonomy(
         conn, candidate, run_id=run_id, type_cfg=type_cfg, date_from=date_from,

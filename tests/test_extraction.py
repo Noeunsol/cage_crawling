@@ -171,6 +171,29 @@ def test_fetch_500_is_temporary_http_error_retryable(monkeypatch):
         assert e.retryable is True
 
 
+def test_fetch_429_is_retryable_like_5xx(monkeypatch):
+    # 429(rate limit)는 4xx지만 500대처럼 서버의 일시적 상태라 재시도 대상이어야 한다.
+    # 예전엔 "status >= 400"에 걸려 무조건 retryable=False로 영구 폐기됐다.
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(429))
+    try:
+        fetch("https://example.com/a", EXTRACTION_CFG, RETRY_POLICY)
+        assert False
+    except FetchError as e:
+        assert e.reason == "temporary_http_error"
+        assert e.retryable is True
+
+
+def test_fetch_400_stays_not_retryable(monkeypatch):
+    # 429를 제외한 나머지 4xx(요청 자체가 잘못된 경우)는 여전히 재시도해도 소용없다.
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(400))
+    try:
+        fetch("https://example.com/a", EXTRACTION_CFG, RETRY_POLICY)
+        assert False
+    except FetchError as e:
+        assert e.reason == "temporary_http_error"
+        assert e.retryable is False
+
+
 # ---------------------------------------------------------------- general_extractor
 def test_extract_handles_backslashes_in_body_without_json_decode_error():
     # 예전엔 trafilatura output_format="json" + json.loads(raw)를 썼는데, 본문에 백슬래시가

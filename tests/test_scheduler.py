@@ -4,8 +4,9 @@ from datetime import date
 
 import pytest
 
+from src.discovery import scheduler as scheduler_module
 from src.discovery.base import DiscoveredResult, DiscoveryResponse, build_fingerprint
-from src.discovery.scheduler import _call_weighted_ratio, run_scheduler
+from src.discovery.scheduler import _build_lanes, _call_weighted_ratio, run_scheduler
 from src.storage import database
 from src.storage.repositories import domain_bundles as bundles_repo
 from src.storage.repositories import query_executions as exec_repo
@@ -491,3 +492,30 @@ def test_unexpected_error_stops_that_provider_but_keeps_earlier_candidates(tmp_p
     # 실패한 두 번째 검색어는 fingerprint가 안 남아 status가 그대로 generated라, 다음 실행에서 재시도된다.
     remaining = queries_repo.list_queries(conn, taxonomy_lv2="LV2_A", type_name="type_a", provider="tavily")
     assert sum(1 for q in remaining if q["status"] == "generated") == 2  # 쿼리2(실패)·쿼리3(미시도)
+
+
+def test_adaptive_multiplier_snapshot_hit_skips_recompute(tmp_path, monkeypatch):
+    """snapshot에 이미 값이 있으면 compute_multiplier()를 다시 호출하지 않아야 한다.
+
+    dict.get(key, expensive())는 값이 있어도 default 인자를 항상 먼저 평가하므로, 이 캐시가
+    사실상 매번 무력화되던 버그의 회귀 테스트. compute_multiplier가 호출되면 바로 실패시킨다.
+    """
+    conn = _make_conn(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("snapshot에 값이 있는데도 compute_multiplier가 호출됨")
+
+    monkeypatch.setattr(scheduler_module.adaptive_multiplier, "compute_multiplier", _boom)
+
+    lanes, _warnings, _budgets = _build_lanes(
+        conn, BASE_CONFIGS, targets=[("LV2_A", "type_a")],
+        target_count=2, candidate_multiplier=1.0,
+        date_range_by_lv2={"LV2_A": (date(2025, 1, 1), date(2026, 1, 1))},
+        provider_ratio_by_lv2={},
+        use_adaptive_multiplier=True,
+        adaptive_multiplier_snapshot={"LV2_A::type_a::tavily": 2.5},
+    )
+
+    # 검색어가 없어 lane 자체는 안 만들어지지만(경고만 남음), 그 전에 이미 배수 조회가 끝난다 —
+    # compute_multiplier가 안 불렸다는 것 자체가 이 테스트의 검증 대상이다.
+    assert lanes == []

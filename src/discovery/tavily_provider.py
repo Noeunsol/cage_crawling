@@ -47,6 +47,7 @@ class TavilyProvider:
         results = [
             DiscoveredResult(url=item["url"], rank=i + 1, relevance_score=item.get("score"))
             for i, item in enumerate(response.get("results", []))
+            if "url" in item
         ]
         return DiscoveryResponse(
             results=results, request_params=request_params, usage=response.get("usage", {}),
