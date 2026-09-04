@@ -271,6 +271,33 @@ def test_process_candidate_discards_extraction_failure(tmp_path, monkeypatch):
     assert outcome.reason == "extraction_too_short"
 
 
+def test_process_candidate_retries_dcinside_once_when_first_fetch_is_gate_page(tmp_path, monkeypatch):
+    # dcinside는 성인인증/안내 페이지를 첫 응답으로 돌려줄 때가 있다 — 본문 컨테이너가 없는
+    # 그 페이지 하나만 보고 실패 단정하지 않고 한 번 더 받아본다(collector._fetch_and_extract).
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+    gate_html = "<html><body><p>성인인증이 필요합니다.</p></body></html>"
+    real_html = """
+    <html><body>
+    <span class="title_subject">진짜 게시글 제목</span>
+    <div class="write_div"><p>이것은 실제 게시글 본문입니다. 충분히 긴 텍스트를 넣어서 최소 길이
+    기준을 통과시킵니다. 재요청으로 성인인증 페이지를 지나 진짜 본문을 받아온 사례입니다.</p></div>
+    </body></html>
+    """
+    responses = iter([gate_html, real_html])
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=next(responses), url="https://gall.dcinside.com/board/view/?id=1&no=1"))
+
+    outcome = process_candidate(
+        conn, _candidate(query_id, url="https://gall.dcinside.com/board/view/?id=1&no=1"),
+        run_id="run-1", type_cfg=TYPE_CFG, date_from=date(2025, 1, 1), date_to=date(2026, 1, 1),
+        extraction_cfg=EXTRACTION_CFG, retry_policy=RETRY_POLICY, filter_checks=[],
+    )
+
+    assert outcome.status == "accepted"
+    row = conn.execute("SELECT * FROM contents").fetchone()
+    assert row["title"] == "진짜 게시글 제목"
+
+
 def test_process_candidate_discards_unexpected_exception_instead_of_crashing(tmp_path, monkeypatch):
     # 알려진 예외(FetchError/ExtractionError)가 아닌 어떤 버그가 나도, 이 후보 하나만
     # discarded 처리되고 예외가 run_collection 루프까지 전파되면 안 된다 (2026-08-26 사고 이후 추가).

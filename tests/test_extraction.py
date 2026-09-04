@@ -302,12 +302,34 @@ def test_parser_registry_defaults_to_general_extractor():
 
 
 def test_parser_registry_uses_registered_domain_parser():
-    def fake_parser(html, url, min_len):
+    def fake_parser(html, url, min_len, extraction_cfg=None):
         return ExtractedContent(title="커스텀", content="커스텀 파서 결과", published_date=None)
 
     parser_registry.register("special.com", fake_parser)
     parser = parser_registry.get_parser("special.com")
     assert parser("<html></html>", "https://special.com/a", 1).title == "커스텀"
+
+
+def test_get_parser_falls_back_to_general_extractor_when_dedicated_parser_fails():
+    def broken_parser(html, url, min_len, extraction_cfg=None):
+        raise ExtractionError("extraction_empty")
+
+    parser_registry.register("broken.com", broken_parser)
+    parser = parser_registry.get_parser("broken.com")
+    result = parser(SAMPLE_HTML, "https://broken.com/a", 10)
+    assert result.title == "진짜 제목입니다"
+
+
+def test_extract_falls_back_to_title_tag_when_trafilatura_finds_no_title():
+    # 본문만 있고 trafilatura가 title로 인식할 h1/og:title이 전혀 없는 페이지.
+    html = """
+    <html><head><title>title 태그뿐인 제목</title></head>
+    <body><p>본문만 있고 트라필라투라가 제목으로 인식할 요소가 전혀 없는 페이지입니다.
+    충분히 긴 텍스트를 넣어서 본문 길이 기준을 통과시킵니다. 광고나 배너와 무관한 순수 텍스트입니다.</p></body>
+    </html>
+    """
+    result = extract(html, url="https://example.com/a", min_content_length=10)
+    assert result.title == "title 태그뿐인 제목"
 
 
 # ---------------------------------------------------------------- 중복 체크

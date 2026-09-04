@@ -51,4 +51,4 @@ def test_raises_extraction_error_when_view_content_missing():
 
 
 def test_get_parser_routes_bbs_ruliweb_to_dedicated_parser():
-    assert get_parser("bbs.ruliweb.com") is parse
+    assert get_parser("bbs.ruliweb.com").dedicated is parse

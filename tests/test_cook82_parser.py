@@ -42,5 +42,5 @@ def test_raises_extraction_error_when_article_body_missing():
 
 
 def test_get_parser_routes_82cook_domains_to_dedicated_parser():
-    assert get_parser("82cook.com") is parse
-    assert get_parser("www.82cook.com") is parse
+    assert get_parser("82cook.com").dedicated is parse
+    assert get_parser("www.82cook.com").dedicated is parse

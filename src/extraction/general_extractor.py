@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import trafilatura
 
-from src.extraction.cleaner import clean_article_text
+from src.extraction.cleaner import clean_article_text, title_from_html_tag
 
 
 class ExtractionError(Exception):
@@ -68,7 +68,7 @@ def extract(
         raise ExtractionError("extraction_empty")
 
     data = document.as_dict()
-    title = (data.get("title") or "").strip()
+    title = (data.get("title") or "").strip() or title_from_html_tag(html)
     content = clean_article_text(
         data.get("text") or "",
         (extraction_cfg or {}).get("cleaning", {}),

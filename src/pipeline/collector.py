@@ -129,10 +129,22 @@ def _fetch_and_extract(normalized_url: str, extraction_cfg: dict, retry_policy: 
     try:
         extracted = get_parser(domain)(fetched.html, final_url, min_length, extraction_cfg)
     except ExtractionError as e:
-        return _FetchExtractResult(
-            final_url=final_url, domain=domain,
-            error_reason=e.reason, error_retryable=is_immediately_retryable(retry_policy["reasons"], e.reason),
-        )
+        # dcinside는 성인인증/안내 페이지를 돌려줄 때가 있어 첫 시도만으로 실패 단정하지 않고 한 번 더
+        # 받아본다 (2026-09-04, pre 브랜치의 DcinsidePostExtractor 재요청 로직 이식).
+        if domain == "gall.dcinside.com":
+            try:
+                retried = fetch(normalized_url, extraction_cfg, retry_policy)
+                extracted = get_parser(domain)(retried.html, final_url, min_length, extraction_cfg)
+            except (FetchError, ExtractionError):
+                return _FetchExtractResult(
+                    final_url=final_url, domain=domain,
+                    error_reason=e.reason, error_retryable=is_immediately_retryable(retry_policy["reasons"], e.reason),
+                )
+        else:
+            return _FetchExtractResult(
+                final_url=final_url, domain=domain,
+                error_reason=e.reason, error_retryable=is_immediately_retryable(retry_policy["reasons"], e.reason),
+            )
 
     return _FetchExtractResult(final_url=final_url, domain=domain, source_category=source_category, extracted=extracted)
 

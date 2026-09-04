@@ -16,7 +16,7 @@ from typing import Callable
 
 from src.extraction.cook82_parser import parse as cook82_parse
 from src.extraction.dcinside_parser import parse as dcinside_parse
-from src.extraction.general_extractor import ExtractedContent, extract as general_extract
+from src.extraction.general_extractor import ExtractedContent, ExtractionError, extract as general_extract
 from src.extraction.instiz_parser import parse as instiz_parse
 from src.extraction.kin_parser import parse as kin_parse
 from src.extraction.ruliweb_parser import parse as ruliweb_parse
@@ -61,9 +61,26 @@ def register(domain: str, parser: ParserFunc) -> None:
     _DOMAINS.setdefault(domain, _DomainConfig()).parser = parser
 
 
+def _with_general_fallback(dedicated: ParserFunc) -> ParserFunc:
+    """전용 파서가 실패(셀렉터가 사이트 개편으로 깨짐 등)하면 general_extract로 한 번 더 시도한다.
+
+    둘 다 실패하면 general_extract 쪽 예외를 최종 실패 사유로 전달한다 (2026-09-04, pre 브랜치의
+    사다리 방식 이식 — 전용 파서 하나에 전부 걸지 않는다).
+    """
+    def _parse(html: str, url: str, min_content_length: int, extraction_cfg: dict | None = None) -> ExtractedContent:
+        try:
+            return dedicated(html, url, min_content_length, extraction_cfg)
+        except ExtractionError:
+            return general_extract(html, url, min_content_length, extraction_cfg)
+    _parse.dedicated = dedicated  # 테스트에서 "어떤 전용 파서로 라우팅됐는지" 확인용
+    return _parse
+
+
 def get_parser(domain: str) -> ParserFunc:
     entry = _DOMAINS.get(domain)
-    return entry.parser if entry and entry.parser else general_extract
+    if entry and entry.parser:
+        return _with_general_fallback(entry.parser)
+    return general_extract
 
 
 def get_source_category(domain: str) -> str | None:
