@@ -67,7 +67,11 @@ query_generation:
   safety_factor: 2.5
 
 scheduling:
-  strategy: round_robin
+  # coverage_deficit(기본값): 아직 한 번도 검색 안 된 type을 먼저 돌리고, 그 다음은 남은 목표
+  # (candidate 기준 deficit)가 큰 type을 우선한다 — beliefs=0/disability=0처럼 검색 기회 자체를
+  # 못 받는 type이 생기지 않게 한다 (2026-09-04). round_robin: 예전 방식(순서를 무작위로 섞은 뒤
+  # 단순 라운드로빈) — 비교 실험용 baseline으로 남겨둠.
+  strategy: coverage_deficit
   stop_before_new_request_when_target_met: true
   finish_started_requests: true
   save_over_target_results: true
@@ -77,6 +81,10 @@ scheduling:
   # candidate_multiplier_options(목표 대비 수집 배수)와 같은 결의 값으로 2.0을 기본값으로 삼음
   # (2026-09-01, 기존 3.0은 저조한 lane에서 낭비 콜을 과하게 허용한다고 판단해 낮춤).
   lane_call_budget_multiplier: 2.0
+  # type 하나(두 provider 합산)가 받을 수 있는 최대 검색 횟수. 검색이 유독 어려운 type 하나가
+  # (lv2,provider) 공유 예산을 독점하지 못하게 막는 안전장치 — 미설정(기본)이면 무제한이고
+  # lane_call_budget_multiplier 기반 그룹 예산만 상한 역할을 한다. 값을 넣어 켤 것.
+  # max_calls_per_type: 8
 
 domain_partition:
   enabled: true

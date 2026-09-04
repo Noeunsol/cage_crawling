@@ -494,6 +494,94 @@ def test_unexpected_error_stops_that_provider_but_keeps_earlier_candidates(tmp_p
     assert sum(1 for q in remaining if q["status"] == "generated") == 2  # 쿼리2(실패)·쿼리3(미시도)
 
 
+def test_coverage_first_gives_every_type_at_least_one_call_before_any_second_call(tmp_path):
+    # 2_F_Bias_and_Hate에서 beliefs=0/disability=0처럼 예산이 부족할 때 특정 type이 검색
+    # 기회 자체를 못 받던 문제(2026-09-04)의 회귀 테스트. 예산(3콜)이 type 수(3개)와 같으면
+    # 어느 type도 두 번째 호출을 받기 전에 셋 다 최소 한 번은 불려야 한다.
+    conn = _make_conn(tmp_path)
+    runs_repo.create_run(conn, "run-cov", {})
+    for label in ("A", "B", "C"):
+        _seed_query(conn, "LV2_X", f"type_{label.lower()}", "tavily", f"쿼리 {label}1")
+        _seed_query(conn, "LV2_X", f"type_{label.lower()}", "tavily", f"쿼리 {label}2")
+
+    tavily = FakeProvider([["u1"], ["u2"], ["u3"]])
+    configs = {
+        "taxonomy": {"taxonomy": [
+            {"lv2_id": "LV2_X", "types": [{"name": "type_a"}, {"name": "type_b"}, {"name": "type_c"}]},
+        ]},
+        "type_domains": {"types": {}},
+        "domain_aliases": {"groups": {}},
+        "blacklist": {"domains": []},
+        "collection": {"provider_ratio": {"default": {"tavily": 100, "serpapi": 0}}},
+    }
+    date_range = {"LV2_X": (date(2025, 1, 1), date(2026, 1, 1))}
+
+    run_scheduler(
+        conn, {"tavily": tavily, "serpapi": None}, configs, "run-cov",
+        targets=[("LV2_X", "type_a"), ("LV2_X", "type_b"), ("LV2_X", "type_c")],
+        target_count=30, candidate_multiplier=1.0,
+        date_range_by_lv2=date_range, provider_ratio_by_lv2={},
+        max_calls_by_provider={"tavily": 3},
+    )
+
+    called_types = {text[3] for text, _ in tavily.calls}  # "쿼리 A1" -> "A"
+    assert called_types == {"A", "B", "C"}  # 셋 중 누구도 0건으로 남지 않는다
+
+
+def test_max_calls_per_type_caps_combined_provider_calls(tmp_path):
+    conn = _make_conn(tmp_path)
+    runs_repo.create_run(conn, "run-type-cap", {})
+    for i in range(3):
+        _seed_query(conn, "LV2_A", "type_a", "tavily", f"쿼리{i}")
+
+    tavily = FakeProvider([["u1"], ["u2"], ["u3"]])
+    configs = {
+        **BASE_CONFIGS,
+        "collection": {
+            "provider_ratio": {"default": {"tavily": 100, "serpapi": 0}},
+            "scheduling": {"max_calls_per_type": 1},
+        },
+    }
+    date_range = {"LV2_A": (date(2025, 1, 1), date(2026, 1, 1))}
+
+    result = run_scheduler(
+        conn, {"tavily": tavily, "serpapi": None}, configs, "run-type-cap",
+        targets=[("LV2_A", "type_a")], target_count=30, candidate_multiplier=1.0,
+        date_range_by_lv2=date_range, provider_ratio_by_lv2={},
+    )
+
+    assert len(tavily.calls) == 1
+    assert any("type별 최대 호출 수" in w for w in result.warnings)
+
+
+def test_round_robin_baseline_strategy_still_interleaves(tmp_path):
+    # strategy: round_robin으로 명시하면 예전 baseline(무작위 셔플 + 단순 라운드로빈)이 그대로
+    # 동작해야 한다 — 비교 실험용으로 남겨둔 경로.
+    conn = _make_conn(tmp_path)
+    runs_repo.create_run(conn, "run-rr", {})
+    _seed_query(conn, "LV2_A", "type_a", "tavily", "쿼리 A1")
+    _seed_query(conn, "LV2_A", "type_a", "tavily", "쿼리 A2")
+    _seed_query(conn, "LV2_B", "type_b", "tavily", "쿼리 B1")
+    _seed_query(conn, "LV2_B", "type_b", "tavily", "쿼리 B2")
+
+    tavily = FakeProvider([["u1"], ["u2"], ["u3"], ["u4"]])
+    date_range = {"LV2_A": (date(2025, 1, 1), date(2026, 1, 1)), "LV2_B": (date(2025, 1, 1), date(2026, 1, 1))}
+    configs = {**BASE_CONFIGS, "collection": {**BASE_CONFIGS["collection"], "scheduling": {"strategy": "round_robin"}}}
+
+    run_scheduler(
+        conn, {"tavily": tavily, "serpapi": None}, configs, "run-rr",
+        targets=[("LV2_A", "type_a"), ("LV2_B", "type_b")],
+        target_count=2, candidate_multiplier=1.0,
+        date_range_by_lv2=date_range, provider_ratio_by_lv2={},
+    )
+
+    called_queries = [text for text, _ in tavily.calls]
+    assert sorted(called_queries) == ["쿼리 A1", "쿼리 A2", "쿼리 B1", "쿼리 B2"]
+    lane_of_query = {"쿼리 A1": "A", "쿼리 A2": "A", "쿼리 B1": "B", "쿼리 B2": "B"}
+    called_lanes = [lane_of_query[q] for q in called_queries]
+    assert called_lanes in (["A", "B", "A", "B"], ["B", "A", "B", "A"])
+
+
 def test_adaptive_multiplier_snapshot_hit_skips_recompute(tmp_path, monkeypatch):
     """snapshot에 이미 값이 있으면 compute_multiplier()를 다시 호출하지 않아야 한다.
 
