@@ -14,6 +14,7 @@ build_report.py가 이 로그로 어떤 run을 집계할지 찾는다.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -80,12 +81,19 @@ def ensure_queries(conn, configs: dict, targets: list[tuple[str, str]], setup: d
         return
 
     client = generator.build_client(configs["providers"])
+    async_client = generator.build_async_client(configs["providers"])
     prompt_cfg = load_prompt("query_generation")
     fresh_prompt_cfg = load_prompt("fresh_vocabulary")
     model = configs["providers"]["openai"]["query_generation_model"]
 
-    print(f"  검색어가 부족한 (LV2, type, provider) {len(deficits)}건 자동 보충 중...")
+    # 같은 type의 tavily/serpapi 생성 요청은 서로 데이터 의존이 없으므로 asyncio.gather로
+    # 동시에 보낸다 (provider별 재시도(최대 3회)는 이전 결과에 의존하므로 그대로 순차).
+    grouped: dict[tuple[str, str], dict[str, int]] = {}
     for lv2_id, type_name, provider, target in deficits:
+        grouped.setdefault((lv2_id, type_name), {})[provider] = target
+
+    print(f"  검색어가 부족한 (LV2, type, provider) {len(deficits)}건 자동 보충 중...")
+    for (lv2_id, type_name), provider_targets in grouped.items():
         type_cfg = find_type(configs, lv2_id, type_name)
 
         def _record_fresh_usage(result) -> None:
@@ -105,32 +113,42 @@ def ensure_queries(conn, configs: dict, targets: list[tuple[str, str]], setup: d
         if freshness_error is not None:
             print(f"    [경고] {lv2_id}::{type_name} 최근 표현 웹서치 실패 — 기존 vocabulary만 사용")
 
-        for attempt in range(1, 4):
-            current = len(repository.list_active_queries(
-                conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
-            ))
-            count = target - current
-            if count <= 0:
-                break
-            result = generator.generate_queries(
-                client, prompt_cfg, taxonomy_lv2=lv2_id, type_name=type_name,
-                definition=type_cfg["definition"], search_vocabulary=merged_vocabulary,
-                include_criteria=type_cfg["include_criteria"],
-                exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
-                query_axes=type_cfg.get("query_axes", []), provider=provider,
-                query_count=int(count), model=model,
-                query_limits=configs["providers"].get("query_limits", {}),
-            )
-            repository.save_generated_queries(
-                conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
-                query_texts=result.accepted, prompt_version=str(prompt_cfg["version"]), model=model,
-            )
-            generation_calls_repo.record_call(
-                conn, run_id=run_id, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider, model=model,
-                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
-                elapsed_s=result.elapsed_s,
-            )
-            print(f"    {lv2_id}::{type_name}::{provider} -> {len(result.accepted)}개 생성 ({attempt}/3)")
+        async def _fill_provider(provider: str, target: int) -> None:
+            for attempt in range(1, 4):
+                current = len(repository.list_active_queries(
+                    conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+                ))
+                count = target - current
+                if count <= 0:
+                    break
+                result = await generator.generate_queries_async(
+                    async_client, prompt_cfg, taxonomy_lv2=lv2_id, type_name=type_name,
+                    definition=type_cfg["definition"], search_vocabulary=merged_vocabulary,
+                    include_criteria=type_cfg["include_criteria"],
+                    exclude_criteria=vocabulary.effective_exclude_criteria(type_cfg),
+                    query_axes=type_cfg.get("query_axes", []), provider=provider,
+                    query_count=int(count), model=model,
+                    query_limits=configs["providers"].get("query_limits", {}),
+                )
+                repository.save_generated_queries(
+                    conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+                    query_texts=result.accepted, prompt_version=str(prompt_cfg["version"]), model=model,
+                )
+                generation_calls_repo.record_call(
+                    conn, run_id=run_id, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider, model=model,
+                    prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens,
+                    elapsed_s=result.elapsed_s,
+                )
+                print(f"    {lv2_id}::{type_name}::{provider} -> {len(result.accepted)}개 생성 ({attempt}/3)")
+
+        results = asyncio.run(asyncio.gather(*(
+            _fill_provider(provider, target) for provider, target in provider_targets.items()
+        ), return_exceptions=True))
+        for provider, result in zip(provider_targets, results):
+            if isinstance(result, BaseException):
+                # 다른 provider가 이미 낸 비용(성공한 생성 결과)까지 취소하지 않는다 —
+                # ui/pages/query_review.py의 동일 패턴(2026-08-31)과 동일한 이유.
+                print(f"    [경고] {lv2_id}::{type_name}::{provider} 검색어 생성 실패로 건너뜁니다 — {result}")
 
 
 def ensure_year_variants(conn, configs: dict, targets: list[tuple[str, str]], date_range_by_lv2: dict) -> None:
