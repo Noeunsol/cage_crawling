@@ -84,14 +84,24 @@ types:
     - bobaedream.co.kr
     - gall.dcinside.com
     - ruliweb.com
+  # 2026-09-08: eating_disorder에서 kin.naver.com이, self_injury/suicide에서 ruliweb.com이
+  # site: 검색과 궁합이 안 좋아 완전 무관한 글(게임 스킨 추천, 커뮤니티 잡담 등)만 반환해서 뺐다
+  # (실측: 두 도메인 다 후보 전량이 품질 게이트에서 탈락 — 범용 대형 커뮤니티/Q&A 허브라 슬랭성
+  # 짧은 검색어로는 도메인 내 정밀 매칭이 안 되는 것으로 추정).
   eating_disorder:
     serpapi_allowed_domains:
-    - kin.naver.com
     - doctornow.co.kr
     - gall.dcinside.com
     - 82cook.com
     - newsis.com
     - nocutnews.co.kr
+    # 2026-09-08 추가: 커뮤니티/일반뉴스 도메인만으로 0건이라, 거식증/폭식증을 임상 주제로 다루는
+    # 건강 전문 매체를 보강한다 — 실제 투병·치료 사례 기사가 더 있을 가능성.
+    # 실측: hidoc.co.kr은 기존에 사용 가능 확인됨([[unfetchable-domains-rule]]). kormedi.com은
+    # robots.txt가 개별 기사 경로를 막지 않고 정적 HTML 한글 2,000자+ 확인. health.chosun.com은
+    # robots.txt가 /news//healthcarenews/ 등 기사 경로 자체를 Disallow해서 제외했다.
+    - hidoc.co.kr
+    - kormedi.com
   self_injury:
     serpapi_allowed_domains:
     - kin.naver.com
@@ -99,7 +109,6 @@ types:
     - hani.co.kr
     - 82cook.com
     - newsis.com
-    - ruliweb.com
   suicide:
     serpapi_allowed_domains:
     - kin.naver.com
@@ -108,7 +117,6 @@ types:
     - newsis.com
     - 82cook.com
     - hani.co.kr
-    - ruliweb.com
   child_endangerment:
     serpapi_allowed_domains:
     - newsis.com

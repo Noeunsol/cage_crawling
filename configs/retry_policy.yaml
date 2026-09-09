@@ -37,6 +37,8 @@ reasons:
     retry_mode: never
   taxonomy_mismatch:
     retry_mode: never
+  low_relevance_score:       # tavily가 매긴 관련성 점수가 min_relevance_score 미만 — fetch 자체를 안 함
+    retry_mode: never
   # extraction_failed를 둘로 쪼갰다(2026-08-31) — 예전엔 하나로 묶여서 reddit/tiktok처럼
   # 구조적으로 파싱 불가능한 사이트도 timeout처럼 재시도됐다(실측: retry 101건 중 대부분 낭비).
   extraction_empty:      # trafilatura가 본문을 아예 못 찾음 — 대개 JS 렌더링 사이트, 정적 fetch로는 못 구함

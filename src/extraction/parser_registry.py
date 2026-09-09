@@ -14,9 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from src.extraction.bobaedream_parser import parse as bobaedream_parse
 from src.extraction.cook82_parser import parse as cook82_parse
 from src.extraction.dcinside_parser import parse as dcinside_parse
-from src.extraction.general_extractor import ExtractedContent, extract as general_extract
+from src.extraction.general_extractor import ExtractedContent, ExtractionError, extract as general_extract
 from src.extraction.instiz_parser import parse as instiz_parse
 from src.extraction.kin_parser import parse as kin_parse
 from src.extraction.ruliweb_parser import parse as ruliweb_parse
@@ -47,7 +48,12 @@ _DOMAINS: dict[str, _DomainConfig] = {
     "kin.naver.com": _DomainConfig(parser=kin_parse, category="qna"),
     "www.instiz.net": _DomainConfig(parser=instiz_parse),
     "instiz.net": _DomainConfig(parser=instiz_parse, category="community"),
-    "bobaedream.co.kr": _DomainConfig(category="community"),
+    # bobaedream.co.kr(모바일): 게시판 메뉴 목록과 실제 글 제목이 한 컨테이너에 뒤섞여 있어
+    # 범용 추출기가 제목을 엉뚱하게(그것도 매번 똑같이) 뽑는 실패가 확인됨 (2026-09-08 실측).
+    # 실제 검색 결과는 거의 항상 m.bobaedream.co.kr(모바일)이라 그쪽에 등록한다 — 파서는
+    # 정확히 일치하는 도메인에만 적용되므로 데스크톱 도메인도 따로 등록해둔다.
+    "bobaedream.co.kr": _DomainConfig(parser=bobaedream_parse, category="community"),
+    "m.bobaedream.co.kr": _DomainConfig(parser=bobaedream_parse),
     "coinpan.com": _DomainConfig(category="community"),
     "inven.co.kr": _DomainConfig(category="community"),
     "mlbpark.donga.com": _DomainConfig(category="community"),
@@ -61,9 +67,34 @@ def register(domain: str, parser: ParserFunc) -> None:
     _DOMAINS.setdefault(domain, _DomainConfig()).parser = parser
 
 
+def _with_general_fallback(dedicated: ParserFunc) -> ParserFunc:
+    """전용 파서가 실패(셀렉터가 사이트 개편으로 깨짐 등)하면 general_extract로 한 번 더 시도한다.
+
+    "extraction_empty"(셀렉터가 컨테이너 자체를 못 찾음)일 때만 대체한다. "extraction_too_short"는
+    전용 파서가 본문을 제대로 찾았는데 원문 자체가 짧다는 뜻이라 대체하면 안 된다 — 대체하면
+    범용 추출기가 그 도메인에서 원래 잘못 집던 것(갤러리 목록 등, 전용 파서를 만든 이유 그 자체)을
+    다시 불러와 "성공"으로 둔갑시킨다 (2026-09-08 실측, gall.dcinside.com 정상 단문 게시글이
+    갤러리 목록으로 잘못 대체됨).
+
+    둘 다 실패하면 general_extract 쪽 예외를 최종 실패 사유로 전달한다 (2026-09-04, pre 브랜치의
+    사다리 방식 이식 — 전용 파서 하나에 전부 걸지 않는다).
+    """
+    def _parse(html: str, url: str, min_content_length: int, extraction_cfg: dict | None = None) -> ExtractedContent:
+        try:
+            return dedicated(html, url, min_content_length, extraction_cfg)
+        except ExtractionError as exc:
+            if exc.reason != "extraction_empty":
+                raise
+            return general_extract(html, url, min_content_length, extraction_cfg)
+    _parse.dedicated = dedicated  # 테스트에서 "어떤 전용 파서로 라우팅됐는지" 확인용
+    return _parse
+
+
 def get_parser(domain: str) -> ParserFunc:
     entry = _DOMAINS.get(domain)
-    return entry.parser if entry and entry.parser else general_extract
+    if entry and entry.parser:
+        return _with_general_fallback(entry.parser)
+    return general_extract
 
 
 def get_source_category(domain: str) -> str | None:

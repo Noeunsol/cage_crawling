@@ -20,7 +20,7 @@ def parse(
 
     title_el = soup.select_one("span.subject_inner_text")
     title_meta = soup.select_one('meta[property="og:title"]')
-    title = title_with_meta_fallback(title_el, title_meta)
+    title = title_with_meta_fallback(title_el, title_meta, soup.title)
 
     body_el = soup.select_one("div.view_content, [itemprop='articleBody']")
     if body_el is None:

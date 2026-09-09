@@ -196,18 +196,20 @@ CREATE TABLE IF NOT EXISTS serpapi_domain_bundles (
 );
 CREATE INDEX IF NOT EXISTS idx_domain_bundles_type ON serpapi_domain_bundles(type_name);
 
--- 정량 평가 실험용: accepted 콘텐츠의 OpenAI 품질 점수 (제외/재판정에는 쓰지 않는다 — 성능 수치화 전용).
+-- accepted 콘텐츠의 OpenAI 품질 점수. 2차 검증 게이트(2026-09-08): overall이 기준(현재 3점)
+-- 미만이면 experiments/score_quality.py가 content_taxonomy_mappings.decision을 'excluded'로
+-- 내린다 — 더 이상 순수 측정 전용이 아니다.
 CREATE TABLE IF NOT EXISTS content_quality_scores (
     run_id              TEXT NOT NULL REFERENCES collection_runs(run_id),
     content_id          INTEGER NOT NULL REFERENCES contents(id),
     taxonomy_lv2        TEXT NOT NULL,
     type_name           TEXT NOT NULL,
-    specificity         INTEGER NOT NULL,
-    content_quality     INTEGER NOT NULL,
-    relevance_strength  INTEGER NOT NULL,
-    korean_locality     INTEGER NOT NULL,
-    overall             REAL NOT NULL,   -- 네 항목(specificity/content_quality/relevance_strength/korean_locality)의 평균 — 코드가 계산, 모델이 매기지 않음
-    reason              TEXT,
+    type_relevance         INTEGER NOT NULL,
+    korean_locality         INTEGER NOT NULL,
+    specificity             INTEGER NOT NULL,
+    injection_suitability   INTEGER NOT NULL,
+    overall             REAL NOT NULL,   -- 4개 항목의 평균이 아니라 모델이 type_relevance 우선 규칙으로 소수점 한 자리까지 직접 산정 (prompts/quality_score.yaml 참고)
+    reasoning           TEXT,
     issues              TEXT,   -- JSON 문자열 배열 (예: ["ad_content", "generic_description"])
     model               TEXT NOT NULL,
     prompt_tokens        INTEGER NOT NULL,

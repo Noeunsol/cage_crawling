@@ -40,4 +40,4 @@ def test_raises_extraction_error_when_write_div_missing():
 
 
 def test_get_parser_routes_dcinside_to_dedicated_parser():
-    assert get_parser("gall.dcinside.com") is parse
+    assert get_parser("gall.dcinside.com").dedicated is parse

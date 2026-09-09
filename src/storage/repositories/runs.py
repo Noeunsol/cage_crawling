@@ -75,7 +75,7 @@ def sum_provider_calls(conn: sqlite3.Connection) -> dict[str, int]:
     """모든 실행의 provider_usage_summary를 합쳐 provider별 총 호출 수를 낸다.
 
     tavily/serpapi 실제 호출 수는 query_executions에서 더 정확하게 셀 수 있지만(캐시 제외),
-    taxonomy_filter가 쓴 openai 호출은 여기(provider_usage_summary["openai"])에만 남아있다.
+    openai_filter가 쓴 openai 호출은 여기(provider_usage_summary["openai"])에만 남아있다.
     """
     totals: dict[str, int] = {}
     for row in conn.execute("SELECT provider_usage_summary FROM collection_runs").fetchall():
@@ -87,8 +87,8 @@ def sum_provider_calls(conn: sqlite3.Connection) -> dict[str, int]:
     return totals
 
 
-def sum_taxonomy_filter_openai_usage(conn: sqlite3.Connection) -> dict:
-    """모든 실행에서 taxonomy_filter(OpenAI)가 실제로 쓴 토큰/시간 합계."""
+def sum_openai_filter_usage(conn: sqlite3.Connection) -> dict:
+    """모든 실행에서 openai_filter가 실제로 쓴 토큰/시간 합계."""
     prompt_tokens = completion_tokens = 0
     elapsed_s = 0.0
     calls = 0

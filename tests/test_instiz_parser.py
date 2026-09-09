@@ -32,5 +32,5 @@ def test_rejects_list_page():
 
 
 def test_registry_routes_instiz_and_uses_community_threshold():
-    assert get_parser("www.instiz.net") is parse
+    assert get_parser("www.instiz.net").dedicated is parse
     assert get_source_category("www.instiz.net") == "community"

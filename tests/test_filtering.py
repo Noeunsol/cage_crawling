@@ -4,7 +4,7 @@ import json
 from datetime import date
 from types import SimpleNamespace
 
-from src.filtering import blacklist_filter, date_filter, korea_relevance_filter, taxonomy_filter
+from src.filtering import blacklist_filter, date_filter, korea_relevance_filter, openai_filter
 from src.filtering.pipeline import FilterContext, FilterOutcome, build_filter_chain, run_filters
 from src.utils.text import compute_content_hash
 
@@ -78,12 +78,20 @@ def test_korea_relevance_filter_ratio_threshold_is_configurable():
     assert lenient.passed is True
 
 
-def test_taxonomy_filter_rejects_generic_definition():
-    fake = FakeOpenAI({"fits": False, "exclusion_type": "generic_no_case", "reason": "구체적 사례 없음"})
+def test_openai_filter_rejects_low_taxonomy_fit_score():
+    fake = FakeOpenAI({"taxonomy_fit_score": 0, "korea_relevance_score": 4, "reason": "구체적 사례 없음"})
     from src.utils.prompts import load_prompt
-    outcome = taxonomy_filter.check(_ctx(), fake, load_prompt("taxonomy_filtering"), "gpt-4o-mini")
+    outcome = openai_filter.check(_ctx(), fake, load_prompt("openai_filtering"), "gpt-4o-mini")
     assert outcome.passed is False
     assert outcome.reason == "taxonomy_mismatch"
+
+
+def test_openai_filter_rejects_low_korea_relevance_score():
+    fake = FakeOpenAI({"taxonomy_fit_score": 4, "korea_relevance_score": 0, "reason": "해외 사례"})
+    from src.utils.prompts import load_prompt
+    outcome = openai_filter.check(_ctx(), fake, load_prompt("openai_filtering"), "gpt-4o-mini")
+    assert outcome.passed is False
+    assert outcome.reason == "low_korea_relevance"
 
 
 # ---------------------------------------------------------------- run_filters / build_filter_chain
@@ -105,7 +113,7 @@ def test_run_filters_short_circuits_on_first_failure():
 
 
 def test_build_filter_chain_skips_llm_calls_when_blacklist_rejects_first():
-    fake = FakeOpenAI({"fits": True, "exclusion_type": "none", "reason": "ok"})
+    fake = FakeOpenAI({"taxonomy_fit_score": 4, "korea_relevance_score": 4, "reason": "ok"})
 
     chain = build_filter_chain(blacklist_domains=["bad.com"], openai_client=fake, model="gpt-4o-mini")
     decision = run_filters(_ctx(source_domain="bad.com"), chain)
@@ -116,24 +124,24 @@ def test_build_filter_chain_skips_llm_calls_when_blacklist_rejects_first():
 
 
 def test_build_filter_chain_accepts_when_everything_passes():
-    fake = FakeOpenAI({"fits": True, "reason": "ok", "exclusion_type": "none"})
+    fake = FakeOpenAI({"taxonomy_fit_score": 4, "korea_relevance_score": 4, "reason": "ok"})
 
     chain = build_filter_chain(blacklist_domains=[], openai_client=fake, model="gpt-4o-mini")
     decision = run_filters(_ctx(), chain)
     assert "한글 비율" in decision.outcomes["korea_relevance"].detail  # accepted여도 판단 근거가 남는다
 
     assert decision.status == "accepted"
-    assert fake.call_count == 1  # 이제 taxonomy만 OpenAI를 쓴다 (한국 관련성은 규칙 기반)
+    assert fake.call_count == 1  # 이제 openai_filter만 OpenAI를 쓴다 (사전 한국 관련성은 규칙 기반)
 
 
-def test_build_filter_chain_can_disable_taxonomy_filter():
-    fake = FakeOpenAI({"fits": False, "exclusion_type": "generic_no_case", "reason": "should not be called"})
+def test_build_filter_chain_can_disable_openai_filter():
+    fake = FakeOpenAI({"taxonomy_fit_score": 0, "korea_relevance_score": 0, "reason": "should not be called"})
 
     chain = build_filter_chain(
-        blacklist_domains=[], openai_client=fake, model="gpt-4o-mini", enable_taxonomy_filter=False,
+        blacklist_domains=[], openai_client=fake, model="gpt-4o-mini", enable_openai_filter=False,
     )
     decision = run_filters(_ctx(), chain)
 
-    assert decision.status == "accepted"   # taxonomy가 없으니 규칙 기반 필터만 통과하면 채택된다
-    assert "taxonomy" not in decision.outcomes
+    assert decision.status == "accepted"   # openai_filter가 없으니 규칙 기반 필터만 통과하면 채택된다
+    assert "openai" not in decision.outcomes
     assert fake.call_count == 0            # OpenAI가 한 번도 호출되지 않는다

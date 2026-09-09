@@ -21,13 +21,24 @@ _COLUMN_MIGRATIONS = [
     ("contents", "content_fingerprint", "TEXT"),
     ("content_duplicates", "title_similarity", "REAL"),
     ("content_duplicates", "content_similarity", "REAL"),
+    ("content_quality_scores", "injection_suitability", "INTEGER"),
 ]
 
 # informativeness -> content_quality 컬럼명 변경 (2026-08-31: 정량평가 품질 지표를 스펙의
 # 4항목-한국관련성/Taxonomy관련성/사례구체성/본문품질-에 맞추면서). RENAME COLUMN은 SQLite
 # 3.25+에서 지원하며 기존 값(과거 정의 기준 점수)은 그대로 보존된다.
+# 2026-09-08: grounding 자료 전용 루브릭(type_relevance/korean_locality/specificity/
+# injection_suitability)으로 재정의. relevance_strength->type_relevance, reason->reasoning으로
+# 이름을 맞추고, content_quality는 새 스펙에 없어 컬럼째 드롭한다. overall도 4항목 평균이 아니라
+# 모델이 type_relevance 우선 규칙으로 직접 산정한다(컬럼명/타입은 그대로 재사용).
 _COLUMN_RENAMES = [
     ("content_quality_scores", "informativeness", "content_quality"),
+    ("content_quality_scores", "relevance_strength", "type_relevance"),
+    ("content_quality_scores", "reason", "reasoning"),
+]
+
+_COLUMN_DROPS = [
+    ("content_quality_scores", "content_quality"),
 ]
 
 
@@ -40,6 +51,10 @@ def _apply_column_migrations(conn: sqlite3.Connection) -> None:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if old_name in existing and new_name not in existing:
             conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old_name} TO {new_name}")
+    for table, column in _COLUMN_DROPS:
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column in existing:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
 
 def connect(db_path: Path) -> sqlite3.Connection:

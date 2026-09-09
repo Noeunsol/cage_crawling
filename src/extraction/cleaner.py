@@ -24,13 +24,24 @@ def strip_noise_tags(element) -> None:
         tag.decompose()
 
 
-def title_with_meta_fallback(title_el, title_meta) -> str:
-    """CSS로 찾은 제목 요소가 없으면 og:title 메타 태그 내용으로 대체한다."""
+def title_with_meta_fallback(title_el, title_meta, title_tag=None) -> str:
+    """CSS 제목 요소 → og:title 메타 → <title> 태그 순으로 첫 값을 쓴다."""
     if title_el is not None:
         return title_el.get_text(strip=True)
-    if title_meta is not None:
-        return (title_meta.get("content") or "").strip()
+    if title_meta is not None and (title_meta.get("content") or "").strip():
+        return title_meta["content"].strip()
+    if title_tag is not None:
+        return title_tag.get_text(strip=True)
     return ""
+
+
+_TITLE_TAG = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+
+
+def title_from_html_tag(html: str) -> str:
+    """trafilatura가 title을 못 찾았을 때 최후의 안전망으로 <title> 태그를 직접 찾는다."""
+    match = _TITLE_TAG.search(html)
+    return normalize_whitespace(match.group(1)).strip() if match else ""
 
 
 def extract_dotted_date(text: str, sep: str = ".") -> str | None:

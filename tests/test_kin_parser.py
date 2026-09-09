@@ -36,5 +36,25 @@ def test_rejects_category_pages():
 
 
 def test_registry_routes_kin_and_uses_qna_threshold():
-    assert get_parser("kin.naver.com") is parse
+    assert get_parser("kin.naver.com").dedicated is parse
     assert get_source_category("kin.naver.com") == "qna"
+
+
+NEXT_DATA_HTML = """
+<html><body>
+<script id="__NEXT_DATA__">{"props": {"pageProps": {
+  "questionDetail": {"questionContent": "질문 DOM이 아니라 JSON에만 있는 신형 페이지 사례입니다."},
+  "answerList": [{"answerContent": "JSON에서만 찾을 수 있는 답변 내용입니다. 충분히 길게 적어봅니다."}]
+}}}</script>
+</body></html>
+"""
+
+
+def test_falls_back_to_next_data_json_when_dom_selectors_miss():
+    result = parse(
+        NEXT_DATA_HTML,
+        "https://kin.naver.com/qna/detail.naver?d1id=1&dirId=1&docId=123",
+        min_content_length=1,
+    )
+    assert "신형 페이지" in result.content
+    assert "JSON에서만" in result.content

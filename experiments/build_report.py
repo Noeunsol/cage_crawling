@@ -55,14 +55,19 @@ _EXTRACTION_FAILURE_REASONS = {"extraction_empty", "extraction_too_short"}
 _DUPLICATE_REASONS = {"duplicate", "near_duplicate", "same_content_hash"}
 
 
-def _latest_run_per_lv2() -> list[tuple[str, str, int]]:
-    latest: dict[str, tuple[str, int]] = {}
+def _runs_per_lv2() -> dict[str, list[tuple[str, int]]]:
+    """LV2 하나가 여러 번(전체 수집 + type 보충 재실행 등) 나뉘어 돌았을 수 있어, 로그에 있는
+    completed run 전부를 모아 합산한다 — 마지막 run 하나만 보면 그 전 run들의 accepted가 누락된다
+    (2026-09-08, cyberstalking만 tavily로 보충 재실행했을 때 실제로 발견한 문제).
+    (run_id, target_count) 쌍 그대로 돌려준다 — main()이 현재 DB에 없는 run_id를 걸러낸 *뒤에*
+    target_count를 합산해야, 다른 실험 DB에서 온 run의 목표량이 섞여 들어가지 않는다."""
+    runs_by_lv2: dict[str, list[tuple[str, int]]] = {}
     for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
         if row.get("status", "completed") != "completed":
             continue
-        latest[row["lv2_id"]] = (row["run_id"], row["target_count"])
-    return [(lv2, run_id, tc) for lv2, (run_id, tc) in latest.items()]
+        runs_by_lv2.setdefault(row["lv2_id"], []).append((row["run_id"], row["target_count"]))
+    return runs_by_lv2
 
 
 def _rate(numerator: float, denominator: float) -> float | None:
@@ -84,28 +89,36 @@ def _query_generation_cost_usd(configs: dict, prompt_tokens: int, completion_tok
     ) / 1_000_000
 
 
-def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) -> dict:
-    run_row = runs_repo.get_run(conn, run_id)
-    settings = json.loads(run_row["settings_snapshot"]) if run_row["settings_snapshot"] else {}
-    usage = json.loads(run_row["provider_usage_summary"]) if run_row["provider_usage_summary"] else {}
+def build_row(conn, configs: dict, lv2_id: str, run_ids: list[str], target_count: int) -> dict:
+    placeholders = ",".join("?" * len(run_ids))
+    run_rows = [r for r in (runs_repo.get_run(conn, rid) for rid in run_ids) if r is not None]
+    settings = next(
+        (json.loads(r["settings_snapshot"]) for r in run_rows if r["settings_snapshot"]), {}
+    )
+    usage: dict[str, list] = {}
+    for r in run_rows:
+        if not r["provider_usage_summary"]:
+            continue
+        for provider, calls in json.loads(r["provider_usage_summary"]).items():
+            usage.setdefault(provider, []).extend(calls)
 
     discoveries_count = conn.execute(
-        "SELECT COUNT(*) c FROM content_discoveries WHERE run_id = ?", (run_id,)
+        f"SELECT COUNT(*) c FROM content_discoveries WHERE run_id IN ({placeholders})", run_ids
     ).fetchone()["c"]
     discarded_count = conn.execute(
-        "SELECT COUNT(*) c FROM discarded_candidates WHERE run_id = ?", (run_id,)
+        f"SELECT COUNT(*) c FROM discarded_candidates WHERE run_id IN ({placeholders})", run_ids
     ).fetchone()["c"]
     accepted_count = conn.execute(
-        """
+        f"""
         SELECT COUNT(DISTINCT d.content_id) n
         FROM content_discoveries d
         JOIN search_queries sq ON sq.id = d.query_id
         JOIN content_taxonomy_mappings m
           ON m.content_id = d.content_id
          AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
-        WHERE d.run_id = ? AND m.decision = 'accepted'
+        WHERE d.run_id IN ({placeholders}) AND m.decision = 'accepted'
         """,
-        (run_id,),
+        run_ids,
     ).fetchone()["n"]
     search_candidates = discoveries_count + discarded_count  # 검색이 실제로 찾아낸 후보 총수
     collection_failures = search_candidates - accepted_count  # accepted가 안 된 나머지 전부(제외+실패)
@@ -114,7 +127,8 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     serpapi_calls = len(usage.get("serpapi", []))
 
     discarded_reasons = conn.execute(
-        "SELECT reason, COUNT(*) c FROM discarded_candidates WHERE run_id = ? GROUP BY reason", (run_id,)
+        f"SELECT reason, COUNT(*) c FROM discarded_candidates WHERE run_id IN ({placeholders}) GROUP BY reason",
+        run_ids,
     ).fetchall()
     reason_counts = {r["reason"]: r["c"] for r in discarded_reasons}
     post_extraction_discarded = sum(c for reason, c in reason_counts.items() if reason in _POST_EXTRACTION_REASONS)
@@ -127,30 +141,30 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     # provider별 후보/accepted 기여율. 후보는 content_discoveries(추출까지 간 건)+discarded_candidates
     # (query_id로 provider 역추적) 합산, discarded 쪽에서 query_id가 없는 행(드묾)은 집계에서 빠진다.
     candidate_by_provider = dict(conn.execute(
-        """
+        f"""
         SELECT provider, COUNT(*) c FROM (
-            SELECT provider FROM content_discoveries WHERE run_id = ?
+            SELECT provider FROM content_discoveries WHERE run_id IN ({placeholders})
             UNION ALL
             SELECT sq.provider FROM discarded_candidates dc
             JOIN search_queries sq ON sq.id = dc.query_id
-            WHERE dc.run_id = ?
+            WHERE dc.run_id IN ({placeholders})
         )
         GROUP BY provider
         """,
-        (run_id, run_id),
+        run_ids + run_ids,
     ).fetchall())
     accepted_by_provider = dict(conn.execute(
-        """
+        f"""
         SELECT d.provider, COUNT(DISTINCT d.content_id) n
         FROM content_discoveries d
         JOIN search_queries sq ON sq.id = d.query_id
         JOIN content_taxonomy_mappings m
           ON m.content_id = d.content_id
          AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
-        WHERE d.run_id = ? AND m.decision = 'accepted'
+        WHERE d.run_id IN ({placeholders}) AND m.decision = 'accepted'
         GROUP BY d.provider
         """,
-        (run_id,),
+        run_ids,
     ).fetchall())
     total_candidates_by_provider = sum(candidate_by_provider.values())
     tavily_candidate_share = _rate(candidate_by_provider.get("tavily", 0), total_candidates_by_provider)
@@ -159,7 +173,7 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     serpapi_accepted_share = _rate(accepted_by_provider.get("serpapi", 0), accepted_count)
 
     domain_counts = conn.execute(
-        """
+        f"""
         SELECT c.source_domain, COUNT(DISTINCT c.id) n
         FROM content_discoveries d
         JOIN contents c ON c.id = d.content_id
@@ -167,10 +181,10 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
         JOIN content_taxonomy_mappings m
           ON m.content_id = c.id
          AND m.taxonomy_lv2 = sq.taxonomy_lv2 AND m.type_name = sq.type_name
-        WHERE d.run_id = ? AND m.decision = 'accepted'
+        WHERE d.run_id IN ({placeholders}) AND m.decision = 'accepted'
         GROUP BY c.source_domain
         """,
-        (run_id,),
+        run_ids,
     ).fetchall()
     unique_domain_count = len(domain_counts)
     top_domain_share = _rate(max((r["n"] for r in domain_counts), default=0), accepted_count)
@@ -178,21 +192,21 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     taxonomy_prompt_tokens = sum(c["prompt_tokens"] for c in usage.get("openai", []))
     taxonomy_completion_tokens = sum(c["completion_tokens"] for c in usage.get("openai", []))
     query_usage = conn.execute(
-        """
+        f"""
         SELECT COALESCE(SUM(prompt_tokens), 0) prompt_tokens,
                COALESCE(SUM(completion_tokens), 0) completion_tokens,
                COALESCE(SUM(web_search_calls), 0) web_search_calls
-        FROM query_generation_calls WHERE run_id = ?
+        FROM query_generation_calls WHERE run_id IN ({placeholders})
         """,
-        (run_id,),
+        run_ids,
     ).fetchone()
 
     quality_rows = conn.execute(
-        """
+        f"""
         SELECT overall, prompt_tokens, completion_tokens FROM content_quality_scores
-        WHERE run_id = ? AND taxonomy_lv2 = ?
+        WHERE run_id IN ({placeholders}) AND taxonomy_lv2 = ?
         """,
-        (run_id, lv2_id),
+        run_ids + [lv2_id],
     ).fetchall()
     quality_avg = round(sum(r["overall"] for r in quality_rows) / len(quality_rows), 2) if quality_rows else None
     high_quality_ratio = _rate(sum(1 for r in quality_rows if r["overall"] >= 4), len(quality_rows))
@@ -200,7 +214,8 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
     quality_completion_tokens = sum(r["completion_tokens"] for r in quality_rows)
 
     labels = conn.execute(
-        "SELECT human_label FROM eval_labels WHERE run_id = ? AND taxonomy_lv2 = ?", (run_id, lv2_id)
+        f"SELECT human_label FROM eval_labels WHERE run_id IN ({placeholders}) AND taxonomy_lv2 = ?",
+        run_ids + [lv2_id],
     ).fetchall()
     labeled_total = len(labels)
     # eval_labels는 accepted 표본만 뽑으므로, 사람이 accepted로 동의한 비율 = precision.
@@ -216,7 +231,7 @@ def build_row(conn, configs: dict, lv2_id: str, run_id: str, target_count: int) 
         5,
     )
     quality_openai_cost = round(_openai_cost_usd(configs, quality_prompt_tokens, quality_completion_tokens), 5)
-    elapsed = runs_repo.elapsed_seconds(run_row)
+    elapsed = sum(runs_repo.elapsed_seconds(r) for r in run_rows)
 
     return {
         "LV2": lv2_id,
@@ -265,7 +280,21 @@ def main() -> None:
     configs = load_all_configs()
     conn = connect(EXPERIMENT_DB_PATH)
 
-    rows = [build_row(conn, configs, lv2, run_id, tc) for lv2, run_id, tc in _latest_run_per_lv2()]
+    rows = []
+    for lv2, entries in _runs_per_lv2().items():
+        # LOG_PATH는 여러 실험 DB에 걸쳐 누적되는 로그라, 지금 연결된 EXPERIMENT_DB_PATH에는
+        # 없는(다른 db에서 실행된) run_id가 섞여 있을 수 있다 — 그런 run_id와 그 목표량은 걸러낸다.
+        found = [(rid, tc) for rid, tc in entries if runs_repo.get_run(conn, rid) is not None]
+        missing = len(entries) - len(found)
+        if missing:
+            print(f"[skip] {lv2}: run_id {missing}개가 {EXPERIMENT_DB_PATH}에 없음 (다른 실험 DB의 기록)")
+        if not found:
+            continue
+        found_run_ids = [rid for rid, _ in found]
+        # LV2 목표는 초기 전체 수집 run의 target_count다 — type 보충 재실행은 대개 더 작은
+        # target_count로 돌기 때문에 합산하면 목표가 재실행 횟수만큼 부풀어 오른다(2026-09-09).
+        target_count = max(tc for _, tc in found)
+        rows.append(build_row(conn, configs, lv2, found_run_ids, target_count))
     rows.sort(key=lambda r: r["LV2"])
 
     with REPORT_CSV_PATH.open("w", encoding="utf-8", newline="") as f:

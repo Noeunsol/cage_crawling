@@ -12,7 +12,7 @@ class ProcessOutcome:
     status: str            # accepted / excluded / discarded
     reason: str | None = None    # status != accepted일 때 retry_policy.yaml의 reason code
     detail: str | None = None    # 사람이 읽을 설명
-    openai_usage: dict | None = None  # taxonomy_filter가 실제로 호출됐으면 {"prompt_tokens", "completion_tokens", "elapsed_s"}
+    openai_usage: dict | None = None  # openai_filter가 실제로 호출됐으면 {"prompt_tokens", "completion_tokens", "elapsed_s"}
 
 
 @dataclass
@@ -49,7 +49,7 @@ class RunSummary:
             self.discard_reasons[outcome.reason] = self.discard_reasons.get(outcome.reason, 0) + 1
         if outcome.openai_usage:
             # tavily/serpapi와 같은 모양(provider -> [usage, ...])으로 넣어서 결과 화면의
-            # "provider별 호출 수" 표에 openai(taxonomy_filter) 호출도 그대로 같이 뜨게 한다.
+            # "provider별 호출 수" 표에 openai(openai_filter) 호출도 그대로 같이 뜨게 한다.
             self.provider_usage.setdefault("openai", []).append(outcome.openai_usage)
 
 
