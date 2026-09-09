@@ -92,6 +92,7 @@ async def _eval_row(client, prompt_cfg, model, type_info, type_name, row, semaph
 
 async def process_file(client, prompt_cfg, model, configs, path: Path, limit: int | None, semaphore) -> None:
     path = path.resolve()
+    display_path = path.relative_to(CSV_DIR) if path.is_relative_to(CSV_DIR) else path
     lv2_id = path.parent.name
     type_name = path.stem
     type_info = _find_type_info(configs, lv2_id, type_name)
@@ -103,7 +104,7 @@ async def process_file(client, prompt_cfg, model, configs, path: Path, limit: in
     if limit is not None:
         todo = todo[:limit]
     if not todo:
-        print(f"  {path.relative_to(CSV_DIR)}: 평가할 신규 행 없음 ({len(rows)}행)")
+        print(f"  {display_path}: 평가할 신규 행 없음 ({len(rows)}행)")
         return
 
     results = await asyncio.gather(*[
@@ -111,7 +112,7 @@ async def process_file(client, prompt_cfg, model, configs, path: Path, limit: in
     ])
     failures = [r for r in results if r is not None]
     print(
-        f"  {path.relative_to(CSV_DIR)}: {len(todo)}행 시도 -> "
+        f"  {display_path}: {len(todo)}행 시도 -> "
         f"{len(todo) - len(failures)}행 평가 성공, {len(failures)}행 실패"
     )
     for f in failures[:5]:
