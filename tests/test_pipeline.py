@@ -8,11 +8,12 @@ import requests
 
 from src.discovery.base import DiscoveredResult, DiscoveryResponse
 from src.discovery.scheduler import ScheduledCandidate
-from src.pipeline.collector import process_candidate, run_collection
+from src.pipeline.collector import ReclassifyContext, process_candidate, run_collection
 from src.pipeline.preflight import run_preflight
 from src.storage import database
 from src.storage.repositories import queries as queries_repo
 from src.storage.repositories import runs as runs_repo
+from src.utils.prompts import load_prompt
 from src.utils.text import compute_content_hash
 
 SAMPLE_HTML = """
@@ -33,7 +34,7 @@ EXTRACTION_CFG = {
     "fetch": {"user_agent": "test-agent", "timeout_seconds": 5},
     "min_content_length": {"default": 10},
     "korea_relevance": {"min_korean_ratio": 0.3},
-    "taxonomy_filter": {"enabled": True},
+    "openai_filter": {"enabled": True},
 }
 RETRY_POLICY = {
     "reasons": {
@@ -82,7 +83,7 @@ class RoutingFakeOpenAI:
 
 ACCEPT_ALL_OPENAI = lambda: RoutingFakeOpenAI({
     "korea_relevance": {"relevant": True, "reason": "한국 커뮤니티 글"},
-    "taxonomy_filtering": {"fits": True, "exclusion_type": "none", "reason": "구체적 사례"},
+    "openai_filtering": {"taxonomy_fit_score": 4, "korea_relevance_score": 4, "reason": "구체적 사례"},
 })
 
 
@@ -191,6 +192,116 @@ def test_process_candidate_skips_fetch_entirely_for_homepage_url(tmp_path, monke
     assert outcome.status == "discarded"
     assert outcome.reason == "homepage_url"
     assert conn.execute("SELECT COUNT(*) c FROM contents").fetchone()["c"] == 0
+
+
+def test_process_candidate_skips_fetch_entirely_for_low_tavily_relevance_score(tmp_path, monkeypatch):
+    # tavily가 매긴 관련성 점수가 임계값 미만이면 무관한 콘텐츠일 가능성이 높아 fetch 자체를 안
+    # 한다(2026-09-08 실측: rank 10번대부터 score가 0.1 아래로 떨어지며 taxonomy_mismatch로
+    # 끝나는 무관 콘텐츠가 섞여 들어옴 — fetch/추출/openai 필터 비용을 아낀다).
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+
+    def boom(*a, **kw):
+        raise AssertionError("관련성 점수가 낮은데 fetch를 시도했다")
+
+    monkeypatch.setattr("requests.get", boom)
+
+    candidate = _candidate(query_id)
+    candidate.relevance_score = 0.05
+
+    outcome = process_candidate(
+        conn, candidate, **_common_kwargs(conn, []), min_tavily_relevance_score=0.15,
+    )
+
+    assert outcome.status == "discarded"
+    assert outcome.reason == "low_relevance_score"
+    assert conn.execute("SELECT COUNT(*) c FROM contents").fetchone()["c"] == 0
+
+
+def test_process_candidate_reclassifies_taxonomy_mismatch_to_sibling_type(tmp_path, monkeypatch):
+    # 검색어가 엉뚱한 type(suicide)으로 데려온 콘텐츠가 사실은 같은 LV2의 다른 type(self_injury)에
+    # 해당하면, excluded로 끝내지 않고 그 type에도 accepted 매핑을 추가로 남긴다(2026-09-08).
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML))
+
+    from src.filtering.pipeline import build_filter_chain
+    fake_openai = RoutingFakeOpenAI({
+        "korea_relevance": {"relevant": True, "reason": "한국 커뮤니티 글"},
+        "openai_filtering": {"taxonomy_fit_score": 0, "korea_relevance_score": 4, "reason": "자살과 무관"},
+        "taxonomy_reclassify": {"best_type": "self_injury", "fit_score": 4, "reason": "실제로는 자해 관련 내용"},
+    })
+    checks = build_filter_chain(blacklist_domains=[], openai_client=fake_openai, model="gpt-4o-mini")
+    reclassify = ReclassifyContext(
+        client=fake_openai, prompt_cfg=load_prompt("taxonomy_reclassify"), model="gpt-4o-mini",
+        sibling_types_by_lv2={"1_C_Self_Harm": [
+            {"name": "suicide", "definition": "자살 방법을 안내하거나 조장하는 행위"},
+            {"name": "self_injury", "definition": "자해 방법을 안내하거나 조장하는 행위"},
+        ]},
+    )
+
+    outcome = process_candidate(
+        conn, _candidate(query_id), **_common_kwargs(conn, checks), reclassify=reclassify,
+    )
+
+    assert outcome.status == "excluded"
+    assert outcome.reason == "taxonomy_mismatch"
+    reclassified = conn.execute(
+        "SELECT * FROM content_taxonomy_mappings WHERE type_name = 'self_injury'"
+    ).fetchone()
+    assert reclassified is not None
+    assert reclassified["decision"] == "accepted"
+    assert "reclassified_from=suicide" in reclassified["decision_reason"]
+
+
+def test_process_candidate_does_not_reclassify_when_no_sibling_fits(tmp_path, monkeypatch):
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML))
+
+    from src.filtering.pipeline import build_filter_chain
+    fake_openai = RoutingFakeOpenAI({
+        "korea_relevance": {"relevant": True, "reason": "한국 커뮤니티 글"},
+        "openai_filtering": {"taxonomy_fit_score": 0, "korea_relevance_score": 4, "reason": "완전히 무관"},
+        "taxonomy_reclassify": {"best_type": "none", "fit_score": 0, "reason": "어디에도 안 맞음"},
+    })
+    checks = build_filter_chain(blacklist_domains=[], openai_client=fake_openai, model="gpt-4o-mini")
+    reclassify = ReclassifyContext(
+        client=fake_openai, prompt_cfg=load_prompt("taxonomy_reclassify"), model="gpt-4o-mini",
+        sibling_types_by_lv2={"1_C_Self_Harm": [
+            {"name": "suicide", "definition": "자살 방법을 안내하거나 조장하는 행위"},
+            {"name": "self_injury", "definition": "자해 방법을 안내하거나 조장하는 행위"},
+        ]},
+    )
+
+    outcome = process_candidate(
+        conn, _candidate(query_id), **_common_kwargs(conn, checks), reclassify=reclassify,
+    )
+
+    assert outcome.status == "excluded"
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM content_taxonomy_mappings"
+    ).fetchone()["c"] == 1  # 원래 type 하나만, 재분류로 추가된 행 없음
+
+
+def test_process_candidate_does_not_skip_serpapi_candidates_for_low_relevance_score(tmp_path, monkeypatch):
+    # serpapi는 relevance_score를 안 주므로(None) 임계값 설정과 무관하게 걸러지지 않는다.
+    conn = _make_conn(tmp_path)
+    query_id = _seed_query(conn)
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse(200, text=SAMPLE_HTML))
+
+    candidate = _candidate(query_id)
+    candidate.provider = "serpapi"
+    candidate.relevance_score = None
+
+    from src.filtering.pipeline import build_filter_chain
+    checks = build_filter_chain(blacklist_domains=[], openai_client=ACCEPT_ALL_OPENAI(), model="gpt-4o-mini")
+
+    outcome = process_candidate(
+        conn, candidate, **_common_kwargs(conn, checks), min_tavily_relevance_score=0.15,
+    )
+
+    assert outcome.status == "accepted"
 
 
 def test_process_candidate_discards_duplicate_url_without_fetching(tmp_path, monkeypatch):
@@ -391,6 +502,52 @@ def test_run_collection_end_to_end(tmp_path, monkeypatch):
     assert events_seen[0].outcome.status == "accepted"
 
 
+def test_run_collection_skips_fetch_for_low_tavily_relevance_score(tmp_path, monkeypatch):
+    conn = _make_conn(tmp_path)
+    queries_repo.create_query(
+        conn, taxonomy_lv2="1_C_Self_Harm", type_name="suicide", provider="tavily",
+        query_text="자살 상담 후기", status="generated", created_by="user",
+    )
+
+    def boom(*a, **kw):
+        raise AssertionError("관련성 점수가 낮은데 fetch를 시도했다")
+
+    monkeypatch.setattr("requests.get", boom)
+
+    class FakeTavily:
+        def search(self, query_text, **kwargs):
+            return DiscoveryResponse(
+                results=[DiscoveredResult(url="https://example.com/a", rank=1, relevance_score=0.05)],
+                request_params={"query": query_text}, usage={"requests": 1},
+            )
+
+    configs = {
+        "providers": {"openai": {"model": "gpt-4o-mini"}, "tavily": {"min_relevance_score": 0.15}},
+        "type_domains": {"types": {}},
+        "domain_aliases": {"groups": {}},
+        "blacklist": {"domains": []},
+        "collection": {"provider_ratio": {"default": {"tavily": 100, "serpapi": 0}}},
+        "extraction": EXTRACTION_CFG,
+        "retry_policy": RETRY_POLICY,
+        "taxonomy": {"taxonomy": [{"lv2_id": "1_C_Self_Harm", "lv2_name": "Self_Harm", "types": [
+            {"name": "suicide", **TYPE_CFG},
+        ]}]},
+    }
+
+    events_seen = []
+    summary = run_collection(
+        conn, {"tavily": FakeTavily(), "serpapi": None}, configs, "run-1",
+        targets=[("1_C_Self_Harm", "suicide")], target_count=1, candidate_multiplier=1.0,
+        date_range_by_lv2={"1_C_Self_Harm": (date(2025, 1, 1), date(2026, 1, 1))},
+        provider_ratio_by_lv2={}, openai_client=ACCEPT_ALL_OPENAI(),
+        on_progress=events_seen.append,
+    )
+
+    assert summary.accepted == 0
+    assert summary.discarded == 1
+    assert events_seen[0].outcome.reason == "low_relevance_score"
+
+
 # ---------------------------------------------------------------- preflight
 def test_preflight_reports_missing_domains_and_queries(tmp_path):
     conn = _make_conn(tmp_path)
@@ -427,6 +584,7 @@ def test_preflight_reports_missing_domains_and_queries(tmp_path):
     # tavily 1건 + serpapi 1건 * max_pages_per_query(3) — serpapi는 목표 미달 시 페이지를
     # 넘겨가며 재호출될 수 있으므로 worst-case 추정에 페이지 수를 곱해야 한다.
     assert report.max_requests_estimate == 4
+    assert report.max_requests_by_provider == {"tavily": 1, "serpapi": 3}
 
 
 def test_preflight_call_budget_is_shared_across_types_not_multiplied_per_type(tmp_path):
@@ -455,3 +613,4 @@ def test_preflight_call_budget_is_shared_across_types_not_multiplied_per_type(tm
     # type당 candidate_target=2(합계 4) -> group budget = ceil(4/10)*3 = 3. type마다 따로
     # 3씩(합 6)이 아니라 두 type이 합쳐서 3건만 잡혀야 한다.
     assert report.max_requests_estimate == 3
+    assert report.max_requests_by_provider == {"tavily": 0, "serpapi": 3}

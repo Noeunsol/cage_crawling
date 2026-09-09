@@ -1,0 +1,51 @@
+# taxonomy_mismatch로 제외된 콘텐츠를 같은 LV2의 형제 type에 재분류해본다.
+# 검색 단계가 엉뚱한 type의 검색어로 콘텐츠를 잘못 데려오는 경우가 있다(2026-09-08 실측:
+# race_and_ethnicity 검색어로 찾은 글이 실제로는 age 판례였음) — 본문 자체는 쓸모 있는데
+# 원래 type엔 안 맞아서 그냥 버려지는 걸 막는다. openai_filter가 taxonomy_mismatch로 판정했을
+# 때만 호출한다(low_korea_relevance는 type을 바꿔도 해결 안 되므로 대상 아님).
+name: taxonomy_reclassify
+version: 1
+
+required_inputs:
+  - title
+  - content
+  - original_type_name
+  - candidate_types    # "- name: definition" 형태로 미리 가공해서 넘긴다
+
+condition:
+  language: ko
+
+system_prompt: |-
+  당신은 콘텐츠가 AI Safety Risk Taxonomy의 어느 type에 해당하는지 재검토하는 어시스턴트입니다.
+  이 콘텐츠는 "{original_type_name}" type에는 해당하지 않는다고 이미 판정됐습니다. 그런데 검색
+  단계가 엉뚱한 type의 검색어로 이 콘텐츠를 잘못 데려왔을 뿐, 사실은 같은 상위 분류(LV2) 안의
+  다른 type에 해당하는 콘텐츠일 수도 있습니다.
+
+  아래 후보 type 목록에 있는 것만 고려하세요 (목록에 없는 type을 지어내지 마세요):
+  {candidate_types}
+
+  - 후보 중 하나의 definition에 명확히 해당하는 구체적인 한국 사례이면 그 type 이름을
+    best_type으로, 0~4점으로 fit_score를 매기세요 (4=명확히 해당, 0=전혀 해당 안 됨).
+  - 후보 어디에도 명확히 해당하지 않으면 best_type은 "none", fit_score는 0으로 답하세요.
+  - 경계선(애매함)이면 best_type은 "none"으로 답하세요 — 확신 없는 재분류는 확신 있는 배제보다
+    해롭습니다.
+
+user_prompt: |-
+  [콘텐츠]
+  제목: {title}
+  본문: {content}
+
+  위 콘텐츠가 아래 후보 type 중 하나에 해당하는지 판단해주세요.
+
+output_schema:
+  type: object
+  properties:
+    best_type:
+      type: string
+    fit_score:
+      type: integer
+      enum: [0, 1, 2, 3, 4]
+    reason:
+      type: string
+  required: [best_type, fit_score, reason]
+  additionalProperties: false

@@ -25,6 +25,7 @@ from src.extraction import duplicates
 from src.extraction.fetcher import FetchError, fetch
 from src.extraction.general_extractor import ExtractedContent, ExtractionError
 from src.extraction.parser_registry import get_parser, get_source_category
+from src.filtering import taxonomy_reclassify
 from src.filtering.pipeline import FilterContext, build_filter_chain, run_filters
 from src.pipeline.result import ProcessOutcome, ProgressEvent, RunSummary, summarize
 from src.query.vocabulary import effective_exclude_criteria
@@ -36,6 +37,7 @@ from src.storage.repositories import near_duplicate_observations as near_dup_obs
 from src.storage.repositories import taxonomy_mappings as mappings_repo
 from src.utils import similarity
 from src.utils.quota import QuotaExceededError, classify as classify_quota_error
+from src.utils.prompts import load_prompt
 from src.utils.retry_policy_helpers import is_immediately_retryable
 from src.utils.text import compute_content_hash
 from src.utils.urls import is_blocklisted_domain, is_homepage_url, normalize_url
@@ -43,6 +45,25 @@ from src.utils.urls import is_blocklisted_domain, is_homepage_url, normalize_url
 
 def _domain(url: str) -> str:
     return urlsplit(url).netloc
+
+
+@dataclass
+class ReclassifyContext:
+    """taxonomy_mismatch로 제외된 콘텐츠를 형제 type에 재분류할 때 필요한 것들을 모았다."""
+    client: object
+    prompt_cfg: dict
+    model: str
+    sibling_types_by_lv2: dict[str, list[dict]]  # lv2_id -> [{"name", "definition"}, ...] (enabled만)
+
+
+def build_sibling_types_by_lv2(taxonomy_cfg: dict) -> dict[str, list[dict]]:
+    return {
+        group["lv2_id"]: [
+            {"name": t["name"], "definition": t["definition"]}
+            for t in group["types"] if t.get("enabled", True)
+        ]
+        for group in taxonomy_cfg["taxonomy"]
+    }
 
 
 def _discard(conn, *, candidate: ScheduledCandidate, run_id: str, normalized_url: str,
@@ -216,6 +237,7 @@ def _finalize_candidate(
     filter_checks: list,
     fingerprint_cache: list[dict],
     near_duplicate_mode: str = "shadow",
+    reclassify: ReclassifyContext | None = None,
 ) -> ProcessOutcome:
     """fetch~extract 이후 나머지(본문 중복 체크·필터·저장)를 순차 실행한다. DB/OpenAI를 건드리는
     전부가 여기 있다 — 동시 실행되지 않는다.
@@ -307,17 +329,60 @@ def _finalize_candidate(
         provider=candidate.provider, returned_url=candidate.url, rank=candidate.rank,
         relevance_score=candidate.relevance_score,
     )
-    taxonomy_outcome = decision.outcomes.get("taxonomy")
+    openai_outcome = decision.outcomes.get("openai")
     openai_usage = (
         {
-            "prompt_tokens": taxonomy_outcome.prompt_tokens,
-            "completion_tokens": taxonomy_outcome.completion_tokens,
-            "elapsed_s": taxonomy_outcome.elapsed_s,
+            "prompt_tokens": openai_outcome.prompt_tokens,
+            "completion_tokens": openai_outcome.completion_tokens,
+            "elapsed_s": openai_outcome.elapsed_s,
         }
-        if taxonomy_outcome is not None else None
+        if openai_outcome is not None else None
     )
+
+    # 검색어가 엉뚱한 type으로 콘텐츠를 잘못 데려온 경우를 구제한다 — taxonomy_mismatch일 때만
+    # (low_korea_relevance는 type을 바꿔도 그대로라 대상이 아니다). 비용은 openai_usage에 합산한다
+    # (두 호출을 구분해서 보여주진 않지만, provider_usage["openai"] 총량은 정확하게 잡힌다).
+    if decision.reason == "taxonomy_mismatch" and reclassify is not None:
+        sibling_types = [
+            t for t in reclassify.sibling_types_by_lv2.get(candidate.lv2_id, [])
+            if t["name"] != candidate.type_name
+        ]
+        reclass_result = taxonomy_reclassify.find_better_type(
+            reclassify.client, reclassify.prompt_cfg, reclassify.model,
+            title=extracted.title, content=extracted.content,
+            original_type_name=candidate.type_name, sibling_types=sibling_types,
+        )
+        openai_usage = {
+            "prompt_tokens": (openai_usage or {}).get("prompt_tokens", 0) + reclass_result.prompt_tokens,
+            "completion_tokens": (openai_usage or {}).get("completion_tokens", 0) + reclass_result.completion_tokens,
+            "elapsed_s": (openai_usage or {}).get("elapsed_s", 0.0) + reclass_result.elapsed_s,
+        }
+        if reclass_result.better_type is not None:
+            mappings_repo.add_mapping(
+                conn, content_id=content_id, taxonomy_lv2=candidate.lv2_id, type_name=reclass_result.better_type,
+                decision="accepted",
+                decision_reason=f"reclassified_from={candidate.type_name} (taxonomy_mismatch 재분류)",
+                prompt_name=None, prompt_version=None, model=None,
+            )
+            discoveries_repo.record_discovery(
+                conn, content_id=content_id, run_id=run_id, query_id=candidate.query_id,
+                provider=candidate.provider, returned_url=candidate.url, rank=candidate.rank,
+                relevance_score=candidate.relevance_score,
+            )
+
     return ProcessOutcome(
         status=decision.status, reason=decision.reason, detail=decision.detail, openai_usage=openai_usage,
+    )
+
+
+def _is_low_relevance(candidate: ScheduledCandidate, min_tavily_relevance_score: float | None) -> bool:
+    """tavily가 매긴 관련성 점수가 임계값 미만이면 fetch 자체를 하지 않는다.
+
+    serpapi(organic_results)는 이런 점수를 안 주므로(relevance_score=None) 여기서 걸러지지 않는다.
+    """
+    return (
+        min_tavily_relevance_score is not None and candidate.provider == "tavily"
+        and candidate.relevance_score is not None and candidate.relevance_score < min_tavily_relevance_score
     )
 
 
@@ -335,6 +400,8 @@ def process_candidate(
     blacklist_domains: list[str] = (),
     fingerprint_cache: list[dict] | None = None,
     near_duplicate_mode: str = "shadow",
+    min_tavily_relevance_score: float | None = None,
+    reclassify: ReclassifyContext | None = None,
 ) -> ProcessOutcome:
     """후보 하나를 fetch부터 저장까지 순차로 한 번에 처리한다 (단발 호출/테스트용).
 
@@ -358,6 +425,12 @@ def process_candidate(
             conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
             reason="homepage_url", retryable=False, detail="사이트 홈페이지라 특정 기사로 신뢰할 수 없어 요청을 보내지 않았습니다.",
         )
+    if _is_low_relevance(candidate, min_tavily_relevance_score):
+        return _discard(
+            conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
+            reason="low_relevance_score", retryable=False,
+            detail=f"tavily 관련성 점수 {candidate.relevance_score:.3f}가 기준({min_tavily_relevance_score}) 미만이라 요청을 보내지 않았습니다.",
+        )
     reused = _reuse_for_new_taxonomy(
         conn, candidate, run_id=run_id, type_cfg=type_cfg, date_from=date_from,
         date_to=date_to, filter_checks=filter_checks,
@@ -377,7 +450,7 @@ def process_candidate(
         return _finalize_candidate(
             conn, candidate, fr, run_id=run_id, type_cfg=type_cfg, date_from=date_from, date_to=date_to,
             filter_checks=filter_checks, fingerprint_cache=fingerprint_cache,
-            near_duplicate_mode=near_duplicate_mode,
+            near_duplicate_mode=near_duplicate_mode, reclassify=reclassify,
         )
     except QuotaExceededError:
         raise  # OpenAI 사용량 초과는 이 후보만의 문제가 아니라 호출부가 처리해야 한다.
@@ -415,7 +488,14 @@ def run_collection(
     max_calls_by_provider는 이번 실행만의 provider별 실제 API 호출 상한이다 (실험용).
     """
     model = configs["providers"]["openai"]["model"]
+    min_tavily_relevance_score = configs["providers"].get("tavily", {}).get("min_relevance_score")
     near_duplicate_mode = configs.get("collection", {}).get("near_duplicate_detection", {}).get("mode", "shadow")
+    reclassify = None
+    if configs["extraction"].get("reclassify_mismatch", {}).get("enabled", False):
+        reclassify = ReclassifyContext(
+            client=openai_client, prompt_cfg=load_prompt("taxonomy_reclassify"), model=model,
+            sibling_types_by_lv2=build_sibling_types_by_lv2(configs["taxonomy"]),
+        )
     scheduler_result = run_scheduler(
         conn, providers, configs, run_id, targets,
         target_count=target_count, candidate_multiplier=candidate_multiplier,
@@ -428,7 +508,7 @@ def run_collection(
         blacklist_domains=configs["blacklist"]["domains"],
         openai_client=openai_client, model=model,
         min_korean_ratio=configs["extraction"]["korea_relevance"]["min_korean_ratio"],
-        enable_taxonomy_filter=configs["extraction"]["taxonomy_filter"]["enabled"],
+        enable_openai_filter=configs["extraction"]["openai_filter"]["enabled"],
     )
     taxonomy_lookup = {
         (g["lv2_id"], t["name"]): t
@@ -486,6 +566,16 @@ def run_collection(
             normalized_url = normalize_url(candidate.url)
             type_cfg = taxonomy_lookup[(candidate.lv2_id, candidate.type_name)]
             date_from, date_to = date_range_by_lv2[candidate.lv2_id]
+            if _is_low_relevance(candidate, min_tavily_relevance_score):
+                pre_resolved[i] = _discard(
+                    conn, candidate=candidate, run_id=run_id, normalized_url=normalized_url,
+                    reason="low_relevance_score", retryable=False,
+                    detail=(
+                        f"tavily 관련성 점수 {candidate.relevance_score:.3f}가 기준"
+                        f"({min_tavily_relevance_score}) 미만이라 요청을 보내지 않았습니다."
+                    ),
+                )
+                continue
             reused = _reuse_for_new_taxonomy(
                 conn, candidate, run_id=run_id, type_cfg=type_cfg,
                 date_from=date_from, date_to=date_to, filter_checks=filter_checks,
@@ -515,6 +605,7 @@ def run_collection(
                         conn, candidate, fr, run_id=run_id, type_cfg=type_cfg,
                         date_from=date_from, date_to=date_to, filter_checks=filter_checks,
                         fingerprint_cache=fingerprint_cache, near_duplicate_mode=near_duplicate_mode,
+                        reclassify=reclassify,
                     )
                 except QuotaExceededError as quota_error:
                     warnings.append(

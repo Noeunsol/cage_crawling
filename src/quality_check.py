@@ -44,14 +44,12 @@ def score_csv(path: Path, configs: dict, limit: int, on_progress=None) -> list[d
         data = result.data
         scored.append({
             **row,
-            "specificity": data["specificity"],
-            "content_quality": data["content_quality"],
-            "relevance_strength": data["relevance_strength"],
+            "type_relevance": data["type_relevance"],
             "korean_locality": data["korean_locality"],
-            "overall": round(sum(data[k] for k in (
-                "specificity", "content_quality", "relevance_strength", "korean_locality",
-            )) / 4, 2),
-            "quality_reason": data["reason"],
+            "specificity": data["specificity"],
+            "injection_suitability": data["injection_suitability"],
+            "overall": data["overall"],
+            "quality_reasoning": data["reasoning"],
             "quality_issues": json.dumps(data["issues"], ensure_ascii=False),
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
@@ -79,9 +77,9 @@ def load_db_scores(path: Path, db_path: Path) -> list[dict]:
     conn.row_factory = sqlite3.Row
     scored = conn.execute(
         """
-        SELECT c.canonical_url AS url, qs.specificity, qs.content_quality,
-               qs.relevance_strength, qs.korean_locality, qs.overall,
-               qs.reason AS quality_reason, qs.issues AS quality_issues,
+        SELECT c.canonical_url AS url, qs.type_relevance, qs.korean_locality,
+               qs.specificity, qs.injection_suitability, qs.overall,
+               qs.reasoning AS quality_reasoning, qs.issues AS quality_issues,
                qs.prompt_tokens, qs.completion_tokens, qs.scored_at
         FROM content_quality_scores qs
         JOIN contents c ON c.id = qs.content_id

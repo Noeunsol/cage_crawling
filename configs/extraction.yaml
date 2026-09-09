@@ -55,11 +55,19 @@ trafilatura:
 korea_relevance:
   min_korean_ratio: 0.3   # 제목+본문 중 한글 비율이 이보다 낮으면 low_korea_relevance로 제외
 
-# taxonomy 적합성 판단. 기본은 꺼둔다 — 켜면 광고성/위키형/일반정의/
-# taxonomy 부적합 콘텐츠도 걸러지지만 콘텐츠당 OpenAI 호출이 1번 더 생긴다. "4. 실행 및 결과" 화면에서
-# 실행 시점에 켜고 끌 수 있다 (사용자 결정, 2026-08-25).
-taxonomy_filter:
-  enabled: false
+# OpenAI 필터링: taxonomy 적합성 + 한국 관련성 판단(0~4점, prompts/openai_filtering.yaml).
+# 켜면 광고성/위키형/일반정의/taxonomy 부적합 콘텐츠, 해외 사례까지 걸러지지만 콘텐츠당 OpenAI
+# 호출이 1번 더 생긴다. "4. 실행 및 결과" 화면에서 실행 시점에 켜고 끌 수 있다
+# (2026-08-25 기본 꺼둠 → 2026-09-08 관련성 문제 해결 위해 기본 켬).
+openai_filter:
+  enabled: true
+
+# openai_filter가 taxonomy_mismatch로 제외한 콘텐츠를 같은 LV2의 형제 type에 재분류해본다
+# (prompts/taxonomy_reclassify.yaml). 검색어가 엉뚱한 type으로 콘텐츠를 잘못 데려온 경우를
+# 구제한다 — 켜면 taxonomy_mismatch 건당 OpenAI 호출이 1번 더 생긴다. openai_filter가 꺼져
+# 있으면 taxonomy_mismatch 자체가 안 나오므로 이 설정은 자동으로 무의미해진다 (2026-09-08).
+reclassify_mismatch:
+  enabled: true
 
 # 댓글 단위 유해 신호 분리용 설정 (self_injury처럼 원글은 도움 요청이고 댓글에만 위험한 응답이
 # 달리는 경우를 위함). src/extraction/comments.py의 select_comments()가 참조한다.

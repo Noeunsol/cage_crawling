@@ -140,10 +140,26 @@ def ensure_queries(conn, configs: dict, targets: list[tuple[str, str]], setup: d
                     elapsed_s=result.elapsed_s,
                 )
                 print(f"    {lv2_id}::{type_name}::{provider} -> {len(result.accepted)}개 생성 ({attempt}/3)")
+            else:
+                # for-else: 3번 다 돌고도 break를 못 만났다 = 재시도 3회로도 목표를 못 채웠다는 뜻.
+                # 검색어가 부족한 채로 조용히 넘어가면 실제 검색(scheduler.py) 단계에서 그 (type,
+                # provider) lane이 예정보다 훨씬 적게 돌게 되므로, 여기서 바로 눈에 띄게 알린다.
+                final_current = len(repository.list_active_queries(
+                    conn, taxonomy_lv2=lv2_id, type_name=type_name, provider=provider,
+                ))
+                if final_current < target:
+                    msg = (
+                        f"{lv2_id}::{type_name}::{provider}: 목표 {target}개 중 {final_current}개만 "
+                        "확보됨 (3회 재시도로도 부족 — 검색어 생성이 계속 거절되고 있을 수 있음)"
+                    )
+                    print(f"    [경고] {msg}")
 
-        results = asyncio.run(asyncio.gather(*(
-            _fill_provider(provider, target) for provider, target in provider_targets.items()
-        ), return_exceptions=True))
+        async def _fill_all():
+            return await asyncio.gather(*(
+                _fill_provider(provider, target) for provider, target in provider_targets.items()
+            ), return_exceptions=True)
+
+        results = asyncio.run(_fill_all())
         for provider, result in zip(provider_targets, results):
             if isinstance(result, BaseException):
                 # 다른 provider가 이미 낸 비용(성공한 생성 결과)까지 취소하지 않는다 —
@@ -197,15 +213,19 @@ def run_one_lv2(
     conn, configs: dict, lv2_id: str, *,
     target_count: int, candidate_multiplier: float, use_adaptive_multiplier: bool = True,
     adaptive_multiplier_snapshot: dict[str, float] | None = None,
+    types_filter: list[str] | None = None, provider_ratio_override: dict | None = None,
 ) -> str | None:
     targets = _lv2_targets(configs, lv2_id)
+    if types_filter:
+        targets = [(lv2, t) for lv2, t in targets if t in types_filter]
     if not targets:
         print(f"[skip] {lv2_id}: 활성화된 type이 없음")
         return None
 
     date_from, date_to = default_date_range(configs["collection"]["defaults"]["date_range_years"])
     setup = {
-        "date_overrides": {}, "provider_ratio_overrides": {},
+        "date_overrides": {},
+        "provider_ratio_overrides": {lv2_id: provider_ratio_override} if provider_ratio_override else {},
         "date_from": date_from, "date_to": date_to,
         "provider_ratio": configs["collection"]["provider_ratio"]["default"],
         "target_count": target_count, "candidate_multiplier": candidate_multiplier,
@@ -220,7 +240,7 @@ def run_one_lv2(
         "adaptive_multiplier": use_adaptive_multiplier,
         "adaptive_multiplier_snapshot": adaptive_multiplier_snapshot or {},
         "targets": [f"{lv2}::{t}" for lv2, t in targets],
-        "experiment": EXPERIMENT_TAG, "experiment_lv2": lv2_id, "taxonomy_filter_enabled": False,
+        "experiment": EXPERIMENT_TAG, "experiment_lv2": lv2_id, "openai_filter_enabled": False,
     })
 
     try:
@@ -245,13 +265,14 @@ def run_one_lv2(
     }
     openai_client = generator.build_client(configs["providers"])
 
-    # 수집 중 accepted/excluded를 가르는 OpenAI taxonomy 적합성 검사는 이 실험에서 끈다.
-    # 품질은 수집 후 score_quality.py(accepted에 영향 없는 별도 점수화)로만 측정한다.
+    # 수집 중 accepted/excluded를 가르는 OpenAI 필터링(taxonomy 적합성 + 한국 관련성)은 이 실험에서 끈다.
+    # 품질은 수집 후 score_quality.py로 측정하며, 2026-09-08부터 overall<3이면 그때 accepted를
+    # 취소한다(2차 검증 게이트) — 더 이상 "accepted에 영향 없는 별도 점수화"가 아니다.
     # save_over_target_results는 기본값(true)을 그대로 쓴다 — 검색 콜은 이미 target_count 기준으로
     # 예산이 정해져 목표 도달 시 새 콜을 안 부르지만, 이미 나간 콜이 돌려준 후보(=이미 비용을 낸
     # 결과)는 target_count를 넘더라도 끝까지 fetch/추출/저장한다(2026-09-01, "이미 쓴 콜은
     # 킵고잉·안 쓴 콜만 stop" 원칙 확인).
-    run_configs = {**configs, "extraction": {**configs["extraction"], "taxonomy_filter": {"enabled": False}}}
+    run_configs = {**configs, "extraction": {**configs["extraction"], "openai_filter": {"enabled": False}}}
 
     def _on_progress(event) -> None:
         print(f"  [{event.processed}/{event.total}] {event.lv2_id}::{event.type_name} -> {event.outcome.status}")
@@ -281,6 +302,8 @@ def main() -> None:
     parser.add_argument("--target-count", type=int, default=30)
     parser.add_argument("--candidate-multiplier", type=float, default=2.0)
     parser.add_argument("--lv2", action="append", help="특정 LV2 id만 실행 (반복 지정 가능). 생략하면 전체 LV2.")
+    parser.add_argument("--type", action="append", help="특정 type만 실행 (반복 지정 가능). 생략하면 해당 LV2의 전체 type.")
+    parser.add_argument("--tavily-only", action="store_true", help="이 실행은 tavily만 쓴다(serpapi 비율 0)")
     parser.add_argument("--confirm", action="store_true", help="실제 API 호출(비용 발생)에 동의")
     parser.add_argument(
         "--fixed-multiplier", action="store_true",
@@ -312,6 +335,8 @@ def main() -> None:
                 conn, configs, lv2_id, target_count=args.target_count, candidate_multiplier=args.candidate_multiplier,
                 use_adaptive_multiplier=not args.fixed_multiplier,
                 adaptive_multiplier_snapshot=adaptive_snapshot,
+                types_filter=args.type,
+                provider_ratio_override={"tavily": 100, "serpapi": 0} if args.tavily_only else None,
             )
             if run_id:
                 run_status = runs_repo.get_run(conn, run_id)["status"]

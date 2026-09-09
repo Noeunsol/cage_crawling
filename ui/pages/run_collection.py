@@ -19,7 +19,8 @@ from src.storage.repositories import discoveries as discoveries_repo
 from src.storage.repositories import runs as runs_repo
 from ui.common import (
     EXCLUSION_REASON_LABELS, PROJECT_ROOT, effective_date_range, effective_provider_ratio,
-    exclusion_reason_label, get_configs, get_db, render_content_box, selected_types, show_missing_api_key_banner,
+    exclusion_reason_label, get_configs, get_db, openai_filter_reason_note, render_content_box, selected_types,
+    show_missing_api_key_banner,
 )
 
 
@@ -137,7 +138,7 @@ def _render_run_results(conn, configs: dict, run_id: str) -> None:
             prompt_tokens * openai_cfg["input_price_per_1m_usd"]
             + completion_tokens * openai_cfg["output_price_per_1m_usd"]
         ) / 1_000_000
-        st.caption("openai(taxonomy_filter) 사용량")
+        st.caption("openai(openai_filter) 사용량")
         col_tok, col_time, col_cost = st.columns(3)
         col_tok.metric("총 토큰(입력+출력)", prompt_tokens + completion_tokens)
         col_time.metric("총 소요시간", f"{elapsed_s:.1f}s")
@@ -156,6 +157,7 @@ def _render_run_results(conn, configs: dict, run_id: str) -> None:
             "type": r["type_name"],
             "상태": r["decision"] or r["status"],
             "제외 사유": exclusion_reason_label(r["decision"], r["decision_reason"]),
+            "openai 필터 판단 근거": openai_filter_reason_note(r["decision_reason"]),
             "원문 게시일": r["published_date"] or "",
             "수집 출처 사이트": r["source_domain"],
             "provider": r["provider"],
@@ -223,19 +225,25 @@ st.dataframe(
     ],
     hide_index=True, width="stretch",
 )
-st.caption(f"최악의 경우 이번 실행에서 최대 {report.max_requests_estimate}건의 검색 요청이 발생할 수 있습니다.")
+tavily_est = report.max_requests_by_provider.get("tavily", 0)
+serpapi_est = report.max_requests_by_provider.get("serpapi", 0)
+st.caption(
+    f"최악의 경우 이번 실행에서 최대 {report.max_requests_estimate:.0f}건의 검색 요청이 발생할 수 있습니다 "
+    f"(tavily 최대 {tavily_est:.0f}건 / serpapi 최대 {serpapi_est:.0f}건)."
+)
 
 for w in report.domain_missing_warnings + report.no_query_warnings:
     st.warning(w)
 
 # ---------------------------------------------------------------- 실행
 st.subheader("② 실행")
-use_taxonomy_filter = st.checkbox(
-    "taxonomy 적합성 검사 사용 (OpenAI 추가 호출)",
-    value=configs["extraction"]["taxonomy_filter"]["enabled"],
+use_openai_filter = st.checkbox(
+    "openai 필터링 사용 (OpenAI 추가 호출)",
+    value=configs["extraction"]["openai_filter"]["enabled"],
     help=(
-        "켜면 광고성·위키형·일반정의·taxonomy 부적합 콘텐츠까지 GPT-4o-mini로 한 번 더 걸러냅니다 "
-        "(콘텐츠당 OpenAI 호출 1회 추가). 끄면 블랙리스트·중복·기간·한국 관련성만 통과해도 채택됩니다."
+        "켜면 광고성·위키형·일반정의·taxonomy 부적합 콘텐츠, 해외 사례까지 GPT-4o-mini로 한 번 더 "
+        "0~4점 채점해서 걸러냅니다 (콘텐츠당 OpenAI 호출 1회 추가). 끄면 블랙리스트·중복·기간·"
+        "한국 관련성(한글 비율)만 통과해도 채택됩니다."
     ),
 )
 limit_calls = st.checkbox(
@@ -262,14 +270,14 @@ if st.button("▶️ 실행 시작", type="primary", disabled=run_disabled):
     openai_client = build_client(configs["providers"])
     run_configs = {
         **configs,
-        "extraction": {**configs["extraction"], "taxonomy_filter": {"enabled": use_taxonomy_filter}},
+        "extraction": {**configs["extraction"], "openai_filter": {"enabled": use_openai_filter}},
     }
 
     runs_repo.create_run(conn, run_id, {
         "target_count": setup["target_count"], "candidate_multiplier": setup["candidate_multiplier"],
         "adaptive_multiplier": True,
         "targets": [f"{lv2}::{t}" for lv2, t in targets],
-        "taxonomy_filter_enabled": use_taxonomy_filter,
+        "openai_filter_enabled": use_openai_filter,
         "max_calls_by_provider": max_calls_by_provider,
     })
 

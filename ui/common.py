@@ -188,6 +188,7 @@ EXCLUSION_REASON_LABELS = {
     "date_out_of_range": "기간 범위 밖",
     "low_korea_relevance": "한국 관련성 낮음",
     "taxonomy_mismatch": "taxonomy 부적합",
+    "low_relevance_score": "관련성 점수 낮음 (tavily, fetch 안 함)",
     "duplicate": "중복",
     "timeout": "요청 시간 초과",
     "temporary_http_error": "일시적 HTTP 오류",
@@ -205,6 +206,18 @@ def exclusion_reason_label(decision: str | None, decision_reason: str | None) ->
         return ""
     code = decision_reason.split(":", 1)[0].strip()
     return EXCLUSION_REASON_LABELS.get(code, code)
+
+
+def openai_filter_reason_note(decision_reason: str | None) -> str:
+    """콘텐츠 목록 표의 'openai 필터 판단 근거' 컬럼용.
+
+    openai_filter.check()의 detail은 "taxonomy_fit=N, korea_relevance=N — {LLM 설명}" 형식이라
+    "—" 뒤의 짧은 설명만 뽑는다. accepted/excluded 둘 다에 detail이 남으므로 사유 없이도 왜 그렇게
+    판단했는지 표에서 바로 보인다 (클릭해서 펼쳐야 보이던 기존 st.info(decision_reason)의 요약판).
+    """
+    if not decision_reason or "—" not in decision_reason:
+        return ""
+    return decision_reason.split("—", 1)[1].split(" | ", 1)[0].strip()
 
 
 def render_content_box(text: str, height: int = 300) -> None:

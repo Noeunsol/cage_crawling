@@ -29,6 +29,7 @@ class PreflightReport:
     domain_missing_warnings: list[str] = field(default_factory=list)
     no_query_warnings: list[str] = field(default_factory=list)
     max_requests_estimate: int = 0   # 후보를 다 못 채워 모든 검색어를 다 쓰는 최악의 경우
+    max_requests_by_provider: dict[str, int] = field(default_factory=dict)  # provider별 내역
 
     @property
     def can_run(self) -> bool:
@@ -94,6 +95,8 @@ def run_preflight(
         page_size = tavily_page_size if provider == "tavily" else serpapi_page_size
         candidate_target = group_candidate_target[(lv2_id, provider)]
         budget_cap = max(1, math.ceil(candidate_target / page_size)) * budget_multiplier
-        report.max_requests_estimate += min(query_worst_case, budget_cap)
+        estimate = min(query_worst_case, budget_cap)
+        report.max_requests_estimate += estimate
+        report.max_requests_by_provider[provider] = report.max_requests_by_provider.get(provider, 0) + estimate
 
     return report

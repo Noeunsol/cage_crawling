@@ -21,6 +21,7 @@ def test_ensure_queries_only_generates_the_missing_count(monkeypatch):
         lambda _conn, *, taxonomy_lv2, type_name, provider: existing[provider],
     )
     monkeypatch.setattr(run_experiment.generator, "build_client", lambda _providers: object())
+    monkeypatch.setattr(run_experiment.generator, "build_async_client", lambda _providers: object())
     monkeypatch.setattr(run_experiment, "load_prompt", lambda name: {"version": 1})
     monkeypatch.setattr(
         run_experiment.vocabulary, "resolve_vocabulary",
@@ -28,11 +29,11 @@ def test_ensure_queries_only_generates_the_missing_count(monkeypatch):
     )
     monkeypatch.setattr(run_experiment.vocabulary, "effective_exclude_criteria", lambda _cfg: [])
 
-    def generate_queries(*args, query_count, **kwargs):
+    async def generate_queries_async(*args, query_count, **kwargs):
         requested.append(query_count)
         return SimpleNamespace(accepted=["q1", "q2"], prompt_tokens=1, completion_tokens=1, elapsed_s=0.1)
 
-    monkeypatch.setattr(run_experiment.generator, "generate_queries", generate_queries)
+    monkeypatch.setattr(run_experiment.generator, "generate_queries_async", generate_queries_async)
     def save_queries(*args, **kwargs):
         existing[kwargs["provider"]].extend(kwargs["query_texts"])
 

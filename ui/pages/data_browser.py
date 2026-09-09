@@ -13,7 +13,7 @@ from src.storage.repositories import runs as runs_repo
 from src.storage.repositories import taxonomy_mappings as mappings_repo
 from ui.common import (
     accepted_counts, exclusion_reason_label, get_configs, get_db, groups_by_lv1, lv1_badge,
-    render_content_box, taxonomy_groups,
+    openai_filter_reason_note, render_content_box, taxonomy_groups,
 )
 
 st.title("📊 5. 데이터 탐색")
@@ -29,12 +29,12 @@ st.caption("이 DB에 지금까지 쌓인 모든 실행을 합친 총 사용량�
 
 exec_calls = exec_repo.count_by_provider(conn)  # tavily/serpapi: 캐시 제외한 실제 호출 수 (정확)
 gen_usage = generation_calls_repo.sum_usage(conn)  # openai: 검색어 생성
-taxonomy_usage = runs_repo.sum_taxonomy_filter_openai_usage(conn)  # openai: taxonomy_filter
+openai_filter_usage = runs_repo.sum_openai_filter_usage(conn)  # openai: openai_filter
 
 openai_cfg = configs["providers"]["openai"]
-total_prompt_tokens = gen_usage.prompt_tokens + taxonomy_usage["prompt_tokens"]
-total_completion_tokens = gen_usage.completion_tokens + taxonomy_usage["completion_tokens"]
-total_openai_calls = gen_usage.calls + taxonomy_usage["calls"]
+total_prompt_tokens = gen_usage.prompt_tokens + openai_filter_usage["prompt_tokens"]
+total_completion_tokens = gen_usage.completion_tokens + openai_filter_usage["completion_tokens"]
+total_openai_calls = gen_usage.calls + openai_filter_usage["calls"]
 total_openai_cost = (
     total_prompt_tokens * openai_cfg["input_price_per_1m_usd"]
     + total_completion_tokens * openai_cfg["output_price_per_1m_usd"]
@@ -43,7 +43,7 @@ total_openai_cost = (
 col1, col2, col3 = st.columns(3)
 col1.metric("tavily 총 호출 수", exec_calls.get("tavily", 0))
 col2.metric("serpapi 총 호출 수", exec_calls.get("serpapi", 0))
-col3.metric("openai 총 호출 수", total_openai_calls, help="검색어 생성 + taxonomy_filter 합산")
+col3.metric("openai 총 호출 수", total_openai_calls, help="검색어 생성 + openai_filter 합산")
 
 col4, col5 = st.columns(2)
 col4.metric("openai 총 토큰(입력+출력)", total_prompt_tokens + total_completion_tokens)
@@ -57,9 +57,9 @@ st.dataframe(
             "소요시간": f"{gen_usage.elapsed_s:.1f}s",
         },
         {
-            "용도": "taxonomy_filter", "호출 수": taxonomy_usage["calls"],
-            "토큰(입력/출력)": f"{taxonomy_usage['prompt_tokens']}/{taxonomy_usage['completion_tokens']}",
-            "소요시간": f"{taxonomy_usage['elapsed_s']:.1f}s",
+            "용도": "openai_filter", "호출 수": openai_filter_usage["calls"],
+            "토큰(입력/출력)": f"{openai_filter_usage['prompt_tokens']}/{openai_filter_usage['completion_tokens']}",
+            "소요시간": f"{openai_filter_usage['elapsed_s']:.1f}s",
         },
     ],
     hide_index=True, width="stretch",
@@ -169,6 +169,7 @@ else:
             "type": r["type_name"],
             "상태": r["decision"] or r["status"],
             "제외 사유": exclusion_reason_label(r["decision"], r["decision_reason"]),
+            "openai 필터 판단 근거": openai_filter_reason_note(r["decision_reason"]),
             "원문 게시일": r["published_date"] or "",
             "수집 출처 사이트": r["source_domain"],
             "provider": r["provider"] or "",

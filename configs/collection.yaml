@@ -106,7 +106,9 @@ provider_ratio:
   by_lv2:
     1_A_Toxic_Language: {tavily: 50, serpapi: 50}                        # 혼합형
     1_B_Sexual_Content: {tavily: 70, serpapi: 30}                        # 뉴스형
-    1_C_Self_Harm: {tavily: 30, serpapi: 70}                             # 커뮤니티형
+    # 2026-09-08: tavily는 자체 relevance score로 무관한 결과를 사전에 걸러내는데 serpapi(site:
+    # 검색)엔 그런 안전판이 없어 실측에서 품질 게이트 탈락률이 훨씬 높았다 — 30:70 → 50:50으로 조정.
+    1_C_Self_Harm: {tavily: 50, serpapi: 50}                             # 혼합형(2026-09-08 조정)
     1_D_Child_Exploitation: {tavily: 70, serpapi: 30}                    # 뉴스형
     2_E_Discrimination: {tavily: 30, serpapi: 70}                        # 커뮤니티형
     2_F_Bias_and_Hate: {tavily: 30, serpapi: 70}                         # 커뮤니티형

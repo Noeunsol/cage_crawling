@@ -83,7 +83,7 @@ def test_taxonomy_mapping_is_idempotent(conn):
     mapping_kwargs = dict(
         content_id=content_id, taxonomy_lv2="1_C_Self_Harm", type_name="suicide",
         decision="accepted", decision_reason="포함 기준 충족",
-        prompt_name="taxonomy_filtering", prompt_version="1", model="gpt-4o-mini",
+        prompt_name="openai_filtering", prompt_version="1", model="gpt-4o-mini",
     )
     taxonomy_mappings.add_mapping(conn, **mapping_kwargs)
     taxonomy_mappings.add_mapping(conn, **mapping_kwargs)  # 재실행 시 중복 저장되면 안 됨
@@ -186,7 +186,7 @@ def test_query_generation_calls_sum_usage(conn):
     assert total.elapsed_s == 2.0
 
 
-def test_sum_taxonomy_filter_openai_usage_reads_provider_usage_summary(conn):
+def test_sum_openai_filter_usage_reads_provider_usage_summary(conn):
     runs.create_run(conn, "run-tf", {})
     runs.finish_run(
         conn, "run-tf", "completed",
@@ -194,7 +194,7 @@ def test_sum_taxonomy_filter_openai_usage_reads_provider_usage_summary(conn):
         [],
     )
 
-    usage = runs.sum_taxonomy_filter_openai_usage(conn)
+    usage = runs.sum_openai_filter_usage(conn)
 
     assert usage == {"calls": 1, "prompt_tokens": 200, "completion_tokens": 40, "elapsed_s": 2.0}
 

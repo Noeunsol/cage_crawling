@@ -320,6 +320,22 @@ def test_get_parser_falls_back_to_general_extractor_when_dedicated_parser_fails(
     assert result.title == "진짜 제목입니다"
 
 
+def test_get_parser_does_not_fall_back_when_dedicated_parser_finds_short_content():
+    # 전용 파서가 컨테이너를 제대로 찾았는데 원문이 min_content_length보다 짧은 경우(정상적인
+    # 단문 게시글) — 여기서 범용 추출기로 대체하면 그 도메인에서 전용 파서를 만든 이유였던
+    # 오탐(목록 페이지를 본문으로 집는 것)이 그대로 재현된다. 그대로 실패해야 한다.
+    def short_content_parser(html, url, min_len, extraction_cfg=None):
+        raise ExtractionError("extraction_too_short")
+
+    parser_registry.register("short.com", short_content_parser)
+    parser = parser_registry.get_parser("short.com")
+    try:
+        parser(SAMPLE_HTML, "https://short.com/a", 10)
+        assert False, "ExtractionError가 발생해야 합니다"
+    except ExtractionError as e:
+        assert e.reason == "extraction_too_short"
+
+
 def test_extract_falls_back_to_title_tag_when_trafilatura_finds_no_title():
     # 본문만 있고 trafilatura가 title로 인식할 h1/og:title이 전혀 없는 페이지.
     html = """

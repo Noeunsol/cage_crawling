@@ -15,6 +15,12 @@ tavily:
   max_results_per_request: 20
   search_depth: basic
   country: south korea   # 한국 관련 결과로 편향 (Tavily 네이티브 파라미터)
+  # Tavily가 돌려주는 관련성 점수(item["score"])가 이 값 미만이면 fetch 자체를 안 한다.
+  # 실측(2026-09-08): 결과를 20건까지 다 받다 보니 rank 10번대부터 score가 0.1 아래로 떨어지며
+  # 검색어와 전혀 무관한 콘텐츠(예: 사이트맵, 무관한 정치 기사)가 섞여 들어와 fetch/추출/openai
+  # 필터 비용만 낭비하고 결국 taxonomy_mismatch로 제외됨 — 공짜로 이미 갖고 있던 신호라 바로 씀.
+  # serpapi(organic_results)는 이런 점수를 안 주므로 이 값은 tavily에만 적용된다.
+  min_relevance_score: 0.15
 
 query_limits:
   # 검색어 검증 상한(핵심어 수/글자수). generator._filter_queries가 강제한다.
