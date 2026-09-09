@@ -291,7 +291,9 @@ def main() -> None:
         if not found:
             continue
         found_run_ids = [rid for rid, _ in found]
-        target_count = sum(tc for _, tc in found)
+        # LV2 목표는 초기 전체 수집 run의 target_count다 — type 보충 재실행은 대개 더 작은
+        # target_count로 돌기 때문에 합산하면 목표가 재실행 횟수만큼 부풀어 오른다(2026-09-09).
+        target_count = max(tc for _, tc in found)
         rows.append(build_row(conn, configs, lv2, found_run_ids, target_count))
     rows.sort(key=lambda r: r["LV2"])
 
